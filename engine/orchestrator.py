@@ -1,0 +1,304 @@
+"""engine/orchestrator.py — Wires all components into the 5-step trading pipeline."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from typing import Dict, Optional, Tuple
+
+from data.market_data_provider import MarketDataProvider
+from data.models import FeatureVector
+from execution.engine import ExecutionEngine
+from execution.models import ExecutionResult, OrderProposal, OrderSubmission
+from portfolio.manager import FillRecord, PortfolioManager
+from risk.engine import RiskEngine
+from engine.feature_engine import FeatureEngine
+from engine.strategy_engine import StrategyEngine, StrategyConfig
+from src.types import ArbLeg, OrderStatus, Platform, StrategyId
+
+logger = logging.getLogger(__name__)
+
+
+class Orchestrator:
+    """
+    Central coordinator for the PMTS trading system.
+
+    Pipeline per tick:
+      1. DATA       MarketDataProvider delivers MarketSnapshot
+      2. FEATURES   FeatureEngine computes FeatureVector
+      3. STRATEGY   StrategyEngine emits OrderProposals
+      4. RISK       RiskEngine evaluates (synchronous gate, < 5ms)
+      5. EXECUTION  ExecutionEngine submits to exchange
+      6. PORTFOLIO  PortfolioManager.record_fill() on every fill
+    """
+
+    def __init__(
+        self,
+        mdp:            MarketDataProvider,
+        portfolio:      PortfolioManager,
+        risk:           RiskEngine,
+        strategy:       StrategyEngine,
+        pm_engine:      ExecutionEngine,
+        op_engine:      ExecutionEngine,
+        markets:        list,
+        enable_trading: bool = True,
+    ) -> None:
+        self._mdp       = mdp
+        self._portfolio = portfolio
+        self._risk      = risk
+        self._strategy  = strategy
+        self._pm_engine = pm_engine
+        self._op_engine = op_engine
+        self._markets   = markets
+        self._trading   = enable_trading
+
+        # Feature engine sits between MDP and StrategyEngine
+        self._fe = FeatureEngine(portfolio=portfolio)
+
+        # ── Wire the pipeline ─────────────────────────────────────────────────
+        self._mdp.add_callback(self._fe.on_snapshot)
+        self._fe.add_callback(self._on_feature_vector)
+        self._strategy.add_proposal_callback(self._on_proposal)
+        self._pm_engine.add_result_callback(self._on_execution_result)
+        self._op_engine.add_result_callback(self._on_execution_result)
+
+        # proposal_id → (strategy_id, size_usdc, platform, leg_group_id)
+        self._in_flight: Dict[str, Tuple[StrategyId, float, Platform, Optional[str]]] = {}
+
+        # leg_group_id → {leg_number_value: proposal_id}
+        self._arb_groups: Dict[str, Dict[int, str]] = {}
+
+        # Metrics
+        self.proposals_evaluated: int = 0
+        self.proposals_approved:  int = 0
+        self.proposals_rejected:  int = 0
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    async def start(self) -> None:
+        logger.info("Orchestrator starting (%d markets)...", len(self._markets))
+        await self._portfolio.start()
+        await self._pm_engine.start()
+        await self._op_engine.start()
+        await self._mdp.start()
+        logger.info(
+            "Orchestrator started. trading=%s markets=%s",
+            self._trading, self._markets,
+        )
+
+    async def stop(self) -> None:
+        logger.info("Orchestrator stopping...")
+        await self._mdp.stop()
+        await self._pm_engine.stop()
+        await self._op_engine.stop()
+        await self._portfolio.stop()
+        logger.info("Orchestrator stopped.")
+
+    async def emergency_stop(self, reason: str) -> None:
+        logger.critical("EMERGENCY STOP: %s", reason)
+        self._risk.manual_activate(reason)
+        await self._cancel_all_open_orders()
+
+    # ── Step 2→3: Feature vector → strategies ────────────────────────────────
+
+    async def _on_feature_vector(self, fv: FeatureVector) -> None:
+        if not self._trading or self._risk.kill_switch_active:
+            return
+        await self._strategy.on_feature_vector(fv)
+
+    # ── Step 3→4: Proposal → risk gate ───────────────────────────────────────
+
+    async def _on_proposal(self, proposal: OrderProposal) -> None:
+        self.proposals_evaluated += 1
+
+        decision = self._risk.evaluate(proposal)   # synchronous, < 5ms
+
+        if decision.rejected:
+            self.proposals_rejected += 1
+            if decision.kill_switch_active:
+                asyncio.create_task(
+                    self._kill_switch_response(),
+                    name="kill-switch-response",
+                )
+            return
+
+        self.proposals_approved += 1
+        await self._route_to_engine(proposal)
+
+    # ── Step 4: Route to ExecutionEngine ─────────────────────────────────────
+
+    async def _route_to_engine(self, proposal: OrderProposal) -> None:
+        engine = (
+            self._pm_engine
+            if proposal.platform == Platform.POLYMARKET
+            else self._op_engine
+        )
+
+        token_qty = round(proposal.size_usdc / proposal.limit_price, 6)
+        if token_qty <= 0:
+            logger.warning(
+                "Zero token_qty for proposal %s — skipping", proposal.proposal_id[:8]
+            )
+            await self._risk.notify_terminal(
+                proposal.proposal_id, proposal.platform, proposal.size_usdc
+            )
+            return
+
+        now        = _now_ms()
+        submission = OrderSubmission(
+            order_id=str(uuid.uuid4()),
+            proposal_id=proposal.proposal_id,
+            market_id=proposal.market_id,
+            platform=proposal.platform,
+            side=proposal.side,
+            size_usdc=proposal.size_usdc,
+            limit_price=proposal.limit_price,
+            order_type=proposal.order_type,
+            strategy_id=proposal.strategy_id,
+            expiry_ms=proposal.expiry_ms,
+            token_quantity=token_qty,
+            submitted_at=now,
+            leg_group_id=proposal.leg_group_id,
+            leg_number=proposal.leg_number,
+            min_fill_ratio=proposal.min_fill_ratio,
+        )
+
+        self._in_flight[proposal.proposal_id] = (
+            proposal.strategy_id,
+            proposal.size_usdc,
+            proposal.platform,
+            proposal.leg_group_id,
+        )
+
+        if proposal.is_arb and proposal.leg_number is not None:
+            grp = self._arb_groups.setdefault(proposal.leg_group_id, {})
+            grp[proposal.leg_number.value] = proposal.proposal_id
+
+        await engine.submit(submission)
+
+    # ── Step 5: ExecutionResult → portfolio update ────────────────────────────
+
+    async def _on_execution_result(self, result: ExecutionResult) -> None:
+        # Record fills
+        if result.filled_size_usdc > 0 and result.fill_price is not None:
+            info = self._in_flight.get(result.proposal_id)
+            if info:
+                _, _, platform, _ = info
+                engine = (
+                    self._pm_engine
+                    if platform == Platform.POLYMARKET
+                    else self._op_engine
+                )
+                tracker = engine.get_tracker(result.proposal_id)
+                if tracker:
+                    fill = FillRecord(
+                        proposal_id=result.proposal_id,
+                        order_id=tracker.submission.order_id,
+                        market_id=tracker.submission.market_id,
+                        platform=tracker.submission.platform,
+                        side=tracker.submission.side.value,
+                        filled_usdc=result.filled_size_usdc,
+                        fill_price=result.fill_price,
+                        ts=result.ts,
+                    )
+                    await self._portfolio.record_fill(fill)
+
+        # Release resources on terminal state
+        if result.is_terminal:
+            await self._on_terminal(result)
+
+    async def _on_terminal(self, result: ExecutionResult) -> None:
+        info = self._in_flight.pop(result.proposal_id, None)
+        if info is None:
+            return
+
+        strategy_id, size_usdc, platform, leg_group_id = info
+
+        await self._risk.notify_terminal(result.proposal_id, platform, size_usdc)
+
+        if strategy_id == StrategyId.ARB:
+            self._strategy.notify_arb_terminal(size_usdc)
+        else:
+            self._strategy.notify_mm_terminal(size_usdc)
+
+        # Arb leg management
+        if leg_group_id and strategy_id == StrategyId.ARB:
+            await self._handle_arb_terminal(result, leg_group_id)
+
+    async def _handle_arb_terminal(
+        self, result: ExecutionResult, leg_group_id: str
+    ) -> None:
+        grp = self._arb_groups.get(leg_group_id)
+        if grp is None:
+            return
+
+        # Find our tracker
+        tracker     = None
+        market_id   = None
+        for eng in [self._pm_engine, self._op_engine]:
+            t = eng.get_tracker(result.proposal_id)
+            if t is not None:
+                tracker   = t
+                market_id = t.submission.market_id
+                break
+
+        if tracker is None or tracker.submission.leg_number is None:
+            return
+
+        # If leg1 failed or filled below min_fill_ratio → cancel leg2
+        if tracker.submission.leg_number == ArbLeg.LEG_1:
+            leg2_pid = grp.get(ArbLeg.LEG_2.value)
+            if leg2_pid:
+                min_ratio     = tracker.submission.min_fill_ratio or 0.80
+                actual_ratio  = tracker.fill_ratio
+                should_abort  = (
+                    result.status != OrderStatus.FILLED or
+                    actual_ratio < min_ratio
+                )
+                if should_abort:
+                    logger.warning(
+                        "ARB leg1 fill_ratio=%.2f < min=%.2f — aborting leg2 %s",
+                        actual_ratio, min_ratio, leg2_pid[:8],
+                    )
+                    for eng in [self._pm_engine, self._op_engine]:
+                        if eng.get_tracker(leg2_pid) is not None:
+                            await eng.cancel(leg2_pid)
+                            break
+
+        # Check if all legs are terminal → clear arb_in_flight
+        all_terminal = all(
+            (
+                self._pm_engine.get_tracker(pid) or
+                self._op_engine.get_tracker(pid) or _NullTracker()
+            ).status.is_terminal
+            for pid in grp.values()
+        )
+        if all_terminal and market_id:
+            self._strategy.notify_arb_cleared(market_id, leg_group_id)
+            self._arb_groups.pop(leg_group_id, None)
+
+    async def _kill_switch_response(self) -> None:
+        logger.critical("Kill switch response: cancelling all open orders")
+        await self._cancel_all_open_orders()
+
+    async def _cancel_all_open_orders(self) -> None:
+        for pid, (_, _, platform, _) in list(self._in_flight.items()):
+            engine = (
+                self._pm_engine if platform == Platform.POLYMARKET else self._op_engine
+            )
+            try:
+                await engine.cancel(pid)
+            except Exception as exc:
+                logger.error("Cancel failed for %s: %s", pid[:8], exc)
+
+
+class _NullTracker:
+    """Sentinel used when tracker lookup fails — always reports terminal."""
+    class _S:
+        is_terminal = True
+    status = _S()
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
