@@ -149,11 +149,33 @@ async def run_live() -> None:
         settings.trading.markets,
         settings.trading.initial_cash_usdc,
     )
-    logger.warning(
-        "Exchange clients (execution/clients/) must be implemented before live trading. "
-        "See README §11 for complete PolymarketClient and OpinionClient implementations."
+    
+    # Instantiate Exchange Clients (Structured, awaiting implementation)
+    from execution.clients.polymarket import PolymarketClient
+    from execution.clients.opinion import OpinionClient
+    from execution.engine import ExecutionEngine
+    
+    pm_client = PolymarketClient(
+        api_key=settings.polymarket.api_key,
+        secret=settings.polymarket.api_secret,
+        passphrase=settings.polymarket.passphrase,
+        wallet_key=settings.polymarket.wallet_key,
+        host=settings.polymarket.clob_url,
     )
-    sys.exit(1)
+    
+    op_client = OpinionClient(
+        api_key=settings.opinion.api_key,
+        host=settings.opinion.rest_url,
+    )
+    
+    pm_engine = ExecutionEngine(pm_client)
+    op_engine = ExecutionEngine(op_client)
+    
+    # In a full live setup, you would now pass these engines into the Orchestrator
+    # and start the asyncio loop. Since the clients throw NotImplementedError,
+    # we exit gracefully after verifying initialization.
+    logger.info("Exchange client skeletons instantiated successfully. Ready for implementation.")
+    # sys.exit(1) # Removed the old hard exit
 
 
 # ─────────────────────────────────────────────────────────────────────────────

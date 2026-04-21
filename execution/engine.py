@@ -356,7 +356,7 @@ class ExecutionEngine:
             if any_urgent and self.poll_fast_s < self.poll_normal_s:
                 extra = self.poll_normal_s - self.poll_fast_s
                 if extra > 0:
-                    await asyncio.sleep(-extra)   # already slept too long; immediate
+                    await asyncio.sleep(0)  # already slept too long; yield immediately
 
             for tracker in live:
                 if self._stopped or tracker.status.is_terminal:
@@ -493,6 +493,8 @@ class ExecutionEngine:
     def _finalise(self, tracker: OrderTracker) -> None:
         if tracker.exchange_order_id:
             self._exch_to_proposal.pop(tracker.exchange_order_id, None)
+        # Remove terminal tracker to prevent unbounded memory growth
+        self._trackers.pop(tracker.proposal_id, None)
 
     async def _dispatch(self, result: ExecutionResult) -> None:
         for cb in self._callbacks:
