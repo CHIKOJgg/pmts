@@ -14,6 +14,9 @@ import logging
 import os
 import sys
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config.settings import get_settings
@@ -159,7 +162,7 @@ async def run_live() -> None:
         api_key=settings.polymarket.api_key,
         secret=settings.polymarket.api_secret,
         passphrase=settings.polymarket.passphrase,
-        wallet_key=settings.polymarket.wallet_key,
+        wallet_private_key=settings.polymarket.wallet_key,
         host=settings.polymarket.clob_url,
     )
     
