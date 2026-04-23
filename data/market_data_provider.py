@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Callable, Coroutine, Optional
+from typing import Callable, Coroutine, List, Optional, Protocol, runtime_checkable
 
 from data.models import MarketSnapshot
 from src.types import Platform
@@ -16,31 +16,58 @@ SIDE_WRITE_TIMEOUT_S: float = 0.050
 
 _SnapshotCB = Callable[[MarketSnapshot], Coroutine]
 
+@runtime_checkable
+class ExchangeAdapter(Protocol):
+    """Protocol for exchange data adapters (REST or WebSocket)."""
+    @property
+    def platform(self) -> Platform: ...
+
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+    def set_snapshot_callback(self, cb: _SnapshotCB) -> None: ...
+
 
 class MarketDataProvider:
     """
     In-process fan-out bus for MarketSnapshot events.
-
+    Manages the lifecycle of exchange adapters.
     Thread-safe reads (dict reads are atomic under GIL).
     All writes come from the asyncio event loop.
     """
 
-    def __init__(self, stream_writer: Optional[Callable] = None) -> None:
+    def __init__(
+        self, 
+        adapters: Optional[List[ExchangeAdapter]] = None,
+        stream_writer: Optional[Callable] = None
+    ) -> None:
         self._index:        dict[tuple[str, Platform], MarketSnapshot] = {}
         self._callbacks:    list[_SnapshotCB] = []
         self._stream_writer = stream_writer
+        self._adapters:     List[ExchangeAdapter] = adapters or []
+
+        for adapter in self._adapters:
+            adapter.set_snapshot_callback(self.ingest)
 
         self.snapshots_received:  int = 0
         self.stale_emitted:       int = 0
         self.dedup_suppressed:    int = 0
 
-    # ── Lifecycle (no-ops; kept so Orchestrator can call uniformly) ───────────
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        pass
+        logger.info("MarketDataProvider starting with %d adapters...", len(self._adapters))
+        for adapter in self._adapters:
+            await adapter.start()
+        logger.info("MarketDataProvider started.")
 
     async def stop(self) -> None:
-        pass
+        logger.info("MarketDataProvider stopping adapters...")
+        for adapter in self._adapters:
+            try:
+                await adapter.stop()
+            except Exception as exc:
+                logger.error("Error stopping adapter %s: %s", adapter.platform.value, exc)
+        logger.info("MarketDataProvider stopped.")
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
 
