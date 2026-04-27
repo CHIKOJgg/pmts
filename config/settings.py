@@ -36,6 +36,7 @@ class OpinionConfig:
     rest_url:      str = field(default_factory=lambda: _e("OP_REST_URL", "https://api.opinion.markets/v1"))
     ws_url:        str = field(default_factory=lambda: _e("OP_WS_URL",   "wss://ws.opinion.markets"))
     api_key:       str = field(default_factory=lambda: _e("OP_API_KEY"))
+    wallet_key:    str = field(default_factory=lambda: _e("OP_WALLET_KEY"))
     taker_fee_bps: int = field(default_factory=lambda: _ei("OP_TAKER_FEE_BPS", 25))
 
 

@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Tuple, Optional
 
 from portfolio.manager import _Position, FillRecord
-from src.types import Platform
+from src.types import Platform, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,14 @@ class SqlitePortfolioStore:
                 CREATE TABLE IF NOT EXISTS state (
                     key TEXT PRIMARY KEY,
                     value REAL
+                )
+            ''')
+            self._conn.execute('''
+                CREATE TABLE IF NOT EXISTS reservations (
+                    proposal_id TEXT PRIMARY KEY,
+                    amount REAL,
+                    platform TEXT,
+                    strategy_id TEXT
                 )
             ''')
 
@@ -152,3 +160,33 @@ class SqlitePortfolioStore:
 
         state["positions"] = positions
         return state
+
+    # ── Risk Reservations ─────────────────────────────────────────────────────
+
+    def save_reservation(self, proposal_id: str, amount: float, platform: Platform, strategy_id: StrategyId) -> None:
+        try:
+            with self._conn:
+                self._conn.execute('''
+                    INSERT OR REPLACE INTO reservations (proposal_id, amount, platform, strategy_id)
+                    VALUES (?, ?, ?, ?)
+                ''', (proposal_id, amount, platform.value, strategy_id.value))
+        except Exception as exc:
+            logger.error("Failed to save reservation to SQLite: %s", exc)
+
+    def remove_reservation(self, proposal_id: str) -> None:
+        try:
+            with self._conn:
+                self._conn.execute('DELETE FROM reservations WHERE proposal_id = ?', (proposal_id,))
+        except Exception as exc:
+            logger.error("Failed to remove reservation from SQLite: %s", exc)
+
+    def load_reservations(self) -> Dict[str, Tuple[float, Platform, StrategyId]]:
+        cur = self._conn.cursor()
+        reservations = {}
+        for row in cur.execute("SELECT proposal_id, amount, platform, strategy_id FROM reservations"):
+            reservations[row["proposal_id"]] = (
+                row["amount"],
+                Platform(row["platform"]),
+                StrategyId(row["strategy_id"])
+            )
+        return reservations

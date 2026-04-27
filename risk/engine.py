@@ -94,18 +94,31 @@ class RiskEngine:
         limits:              RiskLimits = DEFAULT_LIMITS,
         connector_status_fn: Optional[Callable[[Platform], ConnectorStatus]] = None,
         stream_writer:       Optional[Callable] = None,
+        store=None,
     ) -> None:
         self._portfolio        = portfolio
         self._kill_switch      = kill_switch
         self._limits           = limits
         self._connector_status = connector_status_fn
         self._stream_writer    = stream_writer
+        self._store            = store
 
         # Synchronous reservation table — the ONLY source of truth for committed capital
         # proposal_id -> (amount, platform, strategy_id)
         self._reservations: Dict[str, Tuple[float, Platform, StrategyId]] = {}
         self._arb_allocated: float = 0.0
         self._mm_allocated:  float = 0.0
+
+        if self._store:
+            loaded_res = self._store.load_reservations()
+            for pid, (amt, plat, strat) in loaded_res.items():
+                self._reservations[pid] = (amt, plat, strat)
+                if strat == StrategyId.ARB:
+                    self._arb_allocated += amt
+                else:
+                    self._mm_allocated += amt
+            if loaded_res:
+                logger.info("Loaded %d risk reservations from SQLite", len(loaded_res))
 
         # LRU dedup cache
         self._dedup: collections.OrderedDict[str, int] = collections.OrderedDict()
@@ -249,6 +262,11 @@ class RiskEngine:
         else:
             self._mm_allocated += proposal.size_usdc
 
+        if self._store:
+            self._store.save_reservation(
+                proposal.proposal_id, proposal.size_usdc, proposal.platform, proposal.strategy_id
+            )
+
         self.total_approved += 1
         return RiskDecision(
             proposal_id=proposal.proposal_id,
@@ -272,6 +290,10 @@ class RiskEngine:
         info = self._reservations.pop(proposal_id, None)
         if info is None:
             return
+
+        if self._store:
+            self._store.remove_reservation(proposal_id)
+
         reserved_amount, _, strategy_id = info
         if strategy_id == StrategyId.ARB:
             self._arb_allocated = max(0.0, self._arb_allocated - reserved_amount)

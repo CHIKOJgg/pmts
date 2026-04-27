@@ -12,6 +12,8 @@ from execution.models import OrderProposal
 from src.types import Platform, StrategyId
 from strategies.arbitrage import ArbitrageStrategy, ArbConfig
 from strategies.delta_neutral import DeltaNeutralStrategy, DeltaNeutralConfig
+from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
+from ai.signal_context import SignalContext
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,8 @@ class StrategyEngine:
         self._config     = config
         self._arb        = ArbitrageStrategy(config=arb_config)
         self._dn         = DeltaNeutralStrategy(config=dn_config)
+        # Instantiate AI Enhancer with heuristic-only fallback initially
+        self._ai         = AISignalEnhancer(AIEnhancerConfig(use_heuristic_only=True))
         self._arb_alloc: float = 0.0
         self._mm_alloc:  float = 0.0
         self._market:    Dict[str, _MarketState] = {}
@@ -95,16 +99,18 @@ class StrategyEngine:
         st  = self._get_state(fv.market_id)
         proposals: List[OrderProposal] = []
 
+        ctx = await self._ai.enhance(fv)
+
         if self._config.arb_enabled:
-            proposals.extend(await self._eval_arb(fv, st, now))
+            proposals.extend(await self._eval_arb(fv, st, now, ctx))
 
         if self._config.hedge_enabled:
-            hedge = await self._eval_hedge(fv, st, now)
+            hedge = await self._eval_hedge(fv, st, now, ctx)
             if hedge is not None:
                 proposals.append(hedge)
 
-        if self._config.mm_enabled and not st.arb_in_flight:
-            proposals.extend(await self._eval_mm(fv, st, now))
+        if self._config.mm_enabled and not st.arb_in_flight and not ctx.suppress_mm:
+            proposals.extend(await self._eval_mm(fv, st, now, ctx))
 
         for p in proposals:
             await self._emit(p)
@@ -148,7 +154,7 @@ class StrategyEngine:
     # ── Internal evaluators ───────────────────────────────────────────────────
 
     async def _eval_arb(
-        self, fv: FeatureVector, st: _MarketState, now: int
+        self, fv: FeatureVector, st: _MarketState, now: int, ctx: SignalContext
     ) -> List[OrderProposal]:
         if now - st.last_arb_ts < self._config.arb_cooldown_ms:
             self.suppressed_cd += 1
@@ -157,7 +163,7 @@ class StrategyEngine:
             self.suppressed_cfl += 1
             return []
 
-        result = self._arb.evaluate(fv, now_ts=now)
+        result = self._arb.evaluate(fv, now_ts=now, ctx=ctx)
         if not result.accepted or result.leg1_proposal is None:
             return []
 
@@ -174,12 +180,12 @@ class StrategyEngine:
         return [result.leg1_proposal, result.leg2_proposal]
 
     async def _eval_hedge(
-        self, fv: FeatureVector, st: _MarketState, now: int
+        self, fv: FeatureVector, st: _MarketState, now: int, ctx: SignalContext
     ) -> Optional[OrderProposal]:
         if now - st.last_hedge_ts < self._config.hedge_cooldown_ms:
             return None
 
-        result = self._dn.evaluate_hedge(fv)
+        result = self._dn.evaluate_hedge(fv, ctx=ctx)
         if not result.should_hedge or result.proposal is None:
             return None
 
@@ -194,7 +200,7 @@ class StrategyEngine:
         return result.proposal
 
     async def _eval_mm(
-        self, fv: FeatureVector, st: _MarketState, now: int
+        self, fv: FeatureVector, st: _MarketState, now: int, ctx: SignalContext
     ) -> List[OrderProposal]:
         if now - st.last_mm_ts < self._config.mm_cooldown_ms:
             return []
@@ -207,7 +213,7 @@ class StrategyEngine:
 
         proposals: List[OrderProposal] = []
         for platform in self._config.mm_platforms:
-            result = self._dn.evaluate_mm(fv, platform)
+            result = self._dn.evaluate_mm(fv, platform, ctx=ctx)
             if result.suppressed:
                 continue
             if result.bid_proposal:
