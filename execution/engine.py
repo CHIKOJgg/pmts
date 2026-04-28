@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field as dc_field
-from typing import Callable, Coroutine, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Coroutine, List, Optional, Protocol, runtime_checkable
 
 from execution.models import ExecutionResult, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
@@ -264,7 +264,8 @@ class ExecutionEngine:
                 sub_dict['side'] = Side(sub_dict['side'])
                 sub_dict['order_type'] = OrderType(sub_dict['order_type'])
                 sub_dict['strategy_id'] = StrategyId(sub_dict['strategy_id'])
-                if sub_dict.get('leg_number'): sub_dict['leg_number'] = ArbLeg(sub_dict['leg_number'])
+                if sub_dict.get('leg_number'):
+                    sub_dict['leg_number'] = ArbLeg(sub_dict['leg_number'])
                 
                 submission = OrderSubmission(**sub_dict)
                 tracker = OrderTracker(submission)

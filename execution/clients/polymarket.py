@@ -1,9 +1,6 @@
-import hmac
-import hashlib
-import json
 import time
 import logging
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import aiohttp
 from asyncio_throttle import Throttler
@@ -11,12 +8,13 @@ from eth_account import Account
 
 from execution.engine import (
     ExchangeClient,
+    OpenOrder,
     OrderStatusResponse,
     PlacedOrderResponse,
 )
 from execution.models import OrderSubmission
 from src.errors import ExchangeRejected
-from src.types import Platform, Side
+from src.types import Platform
 
 logger = logging.getLogger(__name__)
 

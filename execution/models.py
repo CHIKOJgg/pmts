@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import time
-import uuid as _uuid_mod
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Optional
 
 from src.types import (
-    ArbLeg, EpochMs, FillRatio, OrderStatus, OrderType,
+    ArbLeg, OrderStatus, OrderType,
     Platform, Side, StrategyId,
 )
 

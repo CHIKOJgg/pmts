@@ -4,15 +4,13 @@ import json
 import unittest
 import uuid
 import time
-import sqlite3
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from src.types import Platform, Side, OrderType, StrategyId, OrderStatus, ArbLeg
-from execution.models import OrderSubmission, OrderProposal, ExecutionResult
-from execution.engine import ExecutionEngine, PlacedOrderResponse, OrderStatusResponse, OrderStatusFill, OpenOrder
+from src.types import Platform, Side, OrderType, StrategyId, ArbLeg
+from execution.models import OrderSubmission, OrderProposal
+from execution.engine import ExecutionEngine, PlacedOrderResponse, OpenOrder
 from execution.order_tracker import OrderTracker, TrackerStatus
 from data.adapters.polymarket_ws import PolymarketWSAdapter
-from data.models import MarketSnapshot
 from portfolio.storage import SqlitePortfolioStore
 from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
@@ -198,7 +196,7 @@ class TestFailureModes(unittest.TestCase):
         )
         
         # Mock strategy to return an arb
-        from strategies.arbitrage import ArbLegProposal, ArbResult
+        from strategies.arbitrage import ArbResult
         leg1 = OrderProposal("P1", "M1", Platform.POLYMARKET, Side.BUY_YES, 100.0, 0.50, OrderType.LIMIT, StrategyId.ARB, 0, 0, "G1", ArbLeg.LEG_1, 0.8)
         leg2 = OrderProposal("P2", "M1", Platform.OPINION, Side.BUY_NO, 100.0, 0.50, OrderType.LIMIT, StrategyId.ARB, 0, 0, "G1", ArbLeg.LEG_2)
         mock_strategy.evaluate.return_value = ArbResult(True, 0.05, leg1, leg2)

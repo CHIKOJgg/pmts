@@ -9,12 +9,16 @@ def _e(k: str, d: str = "") -> str:
     return os.environ.get(k, d)
 
 def _ei(k: str, d: int) -> int:
-    try: return int(os.environ.get(k, d))
-    except (ValueError, TypeError): return d
+    try:
+        return int(os.environ.get(k, d))
+    except (ValueError, TypeError):
+        return d
 
 def _ef(k: str, d: float) -> float:
-    try: return float(os.environ.get(k, d))
-    except (ValueError, TypeError): return d
+    try:
+        return float(os.environ.get(k, d))
+    except (ValueError, TypeError):
+        return d
 
 def _eb(k: str, d: bool) -> bool:
     return os.environ.get(k, str(d)).lower() in ("1", "true", "yes", "on")
@@ -130,17 +134,23 @@ class Settings:
 
         # 2. Polymarket Keys
         if self.trading.enable_trading:
-            if not self.polymarket.api_key:    errors.append("PM_API_KEY is missing")
-            if not self.polymarket.api_secret: errors.append("PM_API_SECRET is missing")
-            if not self.polymarket.passphrase: errors.append("PM_PASSPHRASE is missing")
-            if not self.polymarket.wallet_key: errors.append("PM_WALLET_KEY is missing")
+            if not self.polymarket.api_key:
+                errors.append("PM_API_KEY is missing")
+            if not self.polymarket.api_secret:
+                errors.append("PM_API_SECRET is missing")
+            if not self.polymarket.passphrase:
+                errors.append("PM_PASSPHRASE is missing")
+            if not self.polymarket.wallet_key:
+                errors.append("PM_WALLET_KEY is missing")
             
             if self.polymarket.taker_fee_bps < 0:
                 errors.append(f"PM_TAKER_FEE_BPS must be >= 0 (current: {self.polymarket.taker_fee_bps})")
 
             # 3. Opinion Keys
-            if not self.opinion.api_key:    errors.append("OP_API_KEY is missing")
-            if not self.opinion.wallet_key: errors.append("OP_WALLET_KEY is missing")
+            if not self.opinion.api_key:
+                errors.append("OP_API_KEY is missing")
+            if not self.opinion.wallet_key:
+                errors.append("OP_WALLET_KEY is missing")
             
             if self.opinion.taker_fee_bps < 0:
                 errors.append(f"OP_TAKER_FEE_BPS must be >= 0 (current: {self.opinion.taker_fee_bps})")

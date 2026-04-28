@@ -12,31 +12,29 @@ import math
 import sys
 import time
 import uuid
-from typing import Optional
 
 import unittest
-import unittest.mock as mock
 
 # ── Ensure project root is on path ───────────────────────────────────────────
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.types import (
-    ArbLeg, OrderStatus, OrderType, Platform, RejectReason,
-    RiskVerdict, Side, StrategyId,
+    OrderStatus, OrderType, Platform, RejectReason,
+    Side, StrategyId,
 )
 from src.errors import CrossedBookError, NegativeHoldings
 from data.models import FeatureVector, MarketSnapshot
 from execution.models import OrderProposal, OrderSubmission, ExecutionResult
-from execution.order_tracker import OrderTracker, TrackerStatus, FILL_COMPLETE_THRESHOLD
-from portfolio.manager import FillRecord, PortfolioManager, DeltaResult
+from execution.order_tracker import OrderTracker, TrackerStatus
+from portfolio.manager import FillRecord, PortfolioManager
 from risk.kill_switch import KillSwitch
 from risk.limits import RiskLimits, DEFAULT_LIMITS
-from risk.engine import RiskEngine, RiskDecision
-from ai.signal_context import SignalContext, MarketRegime, VolRegime, CONFIDENCE_MIN, CONFIDENCE_MAX
+from risk.engine import RiskEngine
+from ai.signal_context import SignalContext, MarketRegime, VolRegime, CONFIDENCE_MIN
 from ai.heuristic import heuristic_enhance
 from backtest.engine import (
-    BacktestEngine, FillSimulator, LatencyModel, SimFill,
+    BacktestEngine, FillSimulator, LatencyModel,
     build_synthetic_tick_stream, _max_drawdown, _sharpe,
 )
 from strategies.arbitrage import ArbitrageStrategy, ArbConfig, estimate_taker_cost
@@ -927,7 +925,8 @@ class TestStatistics(unittest.TestCase):
         self.assertIsNone(_sharpe([(0, 100), (1, 101)]))
 
     def test_sharpe_computes(self):
-        import random as r; r.seed(1)
+        import random as r
+        r.seed(1)
         eq = 10000.0
         series = [(i * 1000, eq * (1 + r.gauss(0.0001, 0.001))) for i in range(50)]
         result = _sharpe(series)

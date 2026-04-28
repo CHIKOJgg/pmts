@@ -29,7 +29,7 @@ from typing import Optional
 from data.models import FeatureVector
 from ai.signal_context import (
     CONFIDENCE_MIN, CONFIDENCE_MAX,
-    MarketRegime, NEUTRAL_CONTEXT, SignalContext, VolRegime,
+    MarketRegime, SignalContext, VolRegime,
 )
 from ai.heuristic import heuristic_enhance
 
@@ -143,7 +143,8 @@ class AISignalEnhancer:
             "messages":   [{"role": "user", "content": prompt}],
         }).encode()
 
-        import urllib.request, ssl
+        import ssl
+        import urllib.request
 
         def _do_request() -> dict:
             req = urllib.request.Request(

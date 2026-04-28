@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, List, Optional
 
 import websockets
 from data.market_data_provider import _SnapshotCB

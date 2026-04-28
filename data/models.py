@@ -6,12 +6,11 @@ Provides model_copy() and model_dump() for API compatibility.
 """
 from __future__ import annotations
 
-import dataclasses
 import math
-from dataclasses import dataclass, field, fields, asdict
+from dataclasses import dataclass, asdict
 from typing import List, Optional
 
-from src.types import EpochMs, OFI, Platform, ProbPrice
+from src.types import Platform
 from src.errors import CrossedBookError
 
 

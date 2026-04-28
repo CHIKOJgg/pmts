@@ -1,7 +1,6 @@
 """engine/feature_engine.py — Converts MarketSnapshots into FeatureVectors."""
 from __future__ import annotations
 
-import asyncio
 import collections
 import logging
 import math

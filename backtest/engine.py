@@ -14,18 +14,15 @@ Realism:
 """
 from __future__ import annotations
 
-import asyncio
-import dataclasses
 import logging
 import math
 import random
 import statistics
-import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from data.models import MarketSnapshot
+from data.models import FeatureVector, MarketSnapshot
 from execution.models import OrderProposal
 from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
@@ -35,7 +32,7 @@ from engine.feature_engine import FeatureEngine
 from engine.strategy_engine import StrategyEngine, StrategyConfig
 from strategies.arbitrage import ArbConfig
 from strategies.delta_neutral import DeltaNeutralConfig
-from src.types import ArbLeg, OrderStatus, OrderType, Platform, Side, StrategyId
+from src.types import OrderStatus, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
 

@@ -14,8 +14,8 @@ from execution.models import ExecutionResult, OrderProposal, OrderSubmission
 from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
 from engine.feature_engine import FeatureEngine
-from engine.strategy_engine import StrategyEngine, StrategyConfig
-from src.types import ArbLeg, OrderStatus, Platform, StrategyId
+from engine.strategy_engine import StrategyEngine
+from src.types import ArbLeg, Platform, StrategyId
 from ai.enhancer import AISignalEnhancer
 from infrastructure.observability import PROPOSALS_TOTAL
 

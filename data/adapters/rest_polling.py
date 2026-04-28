@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Callable, Coroutine, Optional, Set
+from typing import Optional
 
 import aiohttp
 
@@ -117,7 +117,7 @@ class PolymarketPollingAdapter(RestPollingAdapter):
         async with self._session.get(url) as resp:
             if resp.status != 200:
                 return None
-            data = await resp.json()
+            await resp.json()
             
             # Parse response (mock parsing based on expected CLOB format)
             # We would normally extract the top bids/asks from the order book here.

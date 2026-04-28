@@ -16,7 +16,6 @@ import math
 import time
 import unittest
 import uuid
-from typing import List
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -212,9 +211,8 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
     def test_capital_reservation_is_synchronous(self):
         """Two simultaneous proposals: second must see reduced capital."""
-        from src.types import RejectReason, RiskVerdict
-        p1 = self._proposal(size=9_000.0)  # > cash ($10k), should fail on liquidity
-        p2 = self._proposal(size=8_000.0)
+        self._proposal(size=9_000.0)  # > cash ($10k), should fail on liquidity
+        self._proposal(size=8_000.0)
         # But with 10% liquidity buffer min_free = 10000 * 0.10 = 1000
         # p1: 10000 - 9000 = 1000 >= 1000 → borderline pass
         # Let's use amounts that definitively test reservation
@@ -239,7 +237,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         d2 = risk.evaluate(self._proposal(size=700.0))  # 700+700=1400 > 1000
 
         self.assertTrue(d1.approved, f"p1 rejected: {d1.reject_reason}")
-        self.assertTrue(d2.rejected, f"p2 should be rejected but approved")
+        self.assertTrue(d2.rejected, "p2 should be rejected but approved")
 
     def test_kill_switch_fires_at_drawdown(self):
         """When equity < peak * (1 - kill_pct), kill switch activates."""
@@ -282,8 +280,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
     def test_terminal_notification_releases_reservation(self):
         """After notify_terminal, capital is freed for next proposal."""
-        from src.types import Platform
-        p = self._proposal(size=9_500.0)
+        self._proposal(size=9_500.0)
 
         from risk.limits import RiskLimits
         from risk.kill_switch import KillSwitch
@@ -572,7 +569,8 @@ class TestBacktestSystem(unittest.TestCase):
 
     def test_backtest_produces_positive_pnl(self):
         """Seeded arb opportunities → net positive P&L (uses main.py config)."""
-        import subprocess, sys, json
+        import subprocess
+        import sys
         r = subprocess.run(
             [sys.executable, "main.py", "--mode", "backtest",
              "--ticks", "2000", "--capital", "10000"],
@@ -694,7 +692,6 @@ class TestRegressions(unittest.TestCase):
         """BUG: int() truncation gave 799 instead of 800 bps."""
         # abs(0.46 - 0.50) / 0.50 * 10_000 = 799.9999...
         raw = abs(0.46 - 0.50) / 0.50 * 10_000
-        via_trunc  = int(raw)
         via_round  = int(round(raw))
         self.assertEqual(via_round, 800, "round() should give 800")
         # The backtest engine must use round(), not int()
@@ -853,7 +850,7 @@ class TestOrderTrackerIntegration(unittest.TestCase):
         self.assertFalse(t.status.is_terminal)
 
     def test_submission_to_partial_to_filled(self):
-        from execution.order_tracker import OrderTracker, TrackerStatus
+        from execution.order_tracker import OrderTracker
         from src.types import OrderStatus
         t = OrderTracker(self._sub(size=100.0, price=0.50))
         r1 = t.record_submission("exch-001")

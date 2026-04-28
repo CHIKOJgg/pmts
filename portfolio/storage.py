@@ -1,7 +1,7 @@
 import sqlite3
 import logging
 from typing import Dict, Tuple, Optional, List
-import json
+
 
 from portfolio.manager import _Position, FillRecord
 from src.types import Platform, StrategyId
