@@ -1,0 +1,6 @@
+pydantic
+aiohttp
+websockets
+asyncio-throttle
+eth-account
+pip-tools

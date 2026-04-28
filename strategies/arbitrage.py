@@ -11,6 +11,7 @@ from typing import Optional
 from data.models import FeatureVector
 from execution.models import OrderProposal
 from src.types import ArbLeg, OrderType, Platform, Side, StrategyId
+from ai.signal_context import SignalContext
 
 logger = logging.getLogger(__name__)
 
@@ -133,12 +134,13 @@ class ArbitrageStrategy:
         self.rejected_spread:  int = 0
         self.rejected_depth:   int = 0
 
-    def evaluate(self, fv: FeatureVector, now_ts: Optional[int] = None) -> ArbEvaluation:
+    def evaluate(self, fv: FeatureVector, now_ts: Optional[int] = None, ctx: Optional[SignalContext] = None) -> ArbEvaluation:
         """
         Evaluate arb signal for one FeatureVector.
 
         now_ts: simulated current time in ms (for backtest).  If None,
                 wall-clock time is used (live trading).
+        ctx: AI SignalContext to modulate thresholds.
         """
         self.evaluated += 1
         now           = now_ts if now_ts is not None else _now_ms()
@@ -250,7 +252,11 @@ class ArbitrageStrategy:
         c2_frac = c2.as_fraction(raw_size)
         net_edge = gross_edge - c1_frac - c2_frac
 
-        if net_edge < self._cfg.min_net_edge:
+        min_net_edge = self._cfg.min_net_edge
+        if ctx and ctx.confidence_multiplier > 0:
+            min_net_edge = self._cfg.min_net_edge / ctx.confidence_multiplier
+
+        if net_edge < min_net_edge:
             self.rejected_no_edge += 1
             return ArbEvaluation(
                 market_id=fv.market_id, evaluated_at=now,
@@ -259,13 +265,13 @@ class ArbitrageStrategy:
                 leg1_cost_frac=c1_frac, leg2_cost_frac=c2_frac,
                 net_edge=net_edge, raw_size_usdc=raw_size,
                 rejection_reason=(
-                    f"net_edge={net_edge:.4f}<min={self._cfg.min_net_edge:.4f} "
+                    f"net_edge={net_edge:.4f}<min={min_net_edge:.4f} "
                     f"(gross={gross_edge:.4f} c1={c1_frac:.4f} c2={c2_frac:.4f})"
                 ),
             )
 
         # ── Scale down when edge is borderline ────────────────────────────────
-        edge_buffer = net_edge - self._cfg.min_net_edge
+        edge_buffer = net_edge - min_net_edge
         if edge_buffer < 0.008:
             scale      = 0.5 + (edge_buffer / 0.008) * 0.5
             final_size = max(self._cfg.min_order_usdc, raw_size * scale)

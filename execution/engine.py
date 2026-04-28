@@ -211,12 +211,14 @@ class ExecutionEngine:
         if tracker.status == TrackerStatus.AWAITING:
             result = tracker.record_cancellation()
             self.orders_cancelled += 1
+            self._finalise(tracker)
             await self._dispatch(result)
             return
 
         if tracker.exchange_order_id is None:
             result = tracker.record_cancellation()
             self.orders_cancelled += 1
+            self._finalise(tracker)
             await self._dispatch(result)
             return
 
@@ -232,7 +234,7 @@ class ExecutionEngine:
         if confirmed:
             result = tracker.record_cancellation()
             self.orders_cancelled += 1
-            self._exch_to_proposal.pop(tracker.exchange_order_id, None)
+            self._finalise(tracker)
             await self._dispatch(result)
         else:
             await self._poll_one(tracker)
@@ -290,6 +292,7 @@ class ExecutionEngine:
             except ExchangeRejected as exc:
                 result = tracker.record_rejection(str(exc))
                 self.orders_rejected += 1
+                self._finalise(tracker)
                 await self._dispatch(result)
                 return
             except asyncio.CancelledError:
@@ -307,6 +310,7 @@ class ExecutionEngine:
                 else:
                     result = tracker.record_timeout()
                     self.orders_timed_out += 1
+                    self._finalise(tracker)
                     await self._dispatch(result)
                     return
         else:
@@ -342,21 +346,26 @@ class ExecutionEngine:
 
     async def _poll_worker(self) -> None:
         while not self._stopped:
-            try:
-                await asyncio.sleep(self.poll_normal_s)
-            except asyncio.CancelledError:
-                return
-
             now  = _now_ms()
             live = [t for t in self._trackers.values() if t.status.is_open]
+            
             if not live:
+                try:
+                    await asyncio.sleep(self.poll_normal_s)
+                except asyncio.CancelledError:
+                    return
                 continue
 
             any_urgent = any(t.needs_fast_poll(now) for t in live)
-            if any_urgent and self.poll_fast_s < self.poll_normal_s:
-                extra = self.poll_normal_s - self.poll_fast_s
-                if extra > 0:
-                    await asyncio.sleep(-extra)   # already slept too long; immediate
+            interval = self.poll_fast_s if any_urgent else self.poll_normal_s
+            
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                return
+
+            if self._stopped:
+                break
 
             for tracker in live:
                 if self._stopped or tracker.status.is_terminal:
@@ -493,6 +502,8 @@ class ExecutionEngine:
     def _finalise(self, tracker: OrderTracker) -> None:
         if tracker.exchange_order_id:
             self._exch_to_proposal.pop(tracker.exchange_order_id, None)
+        # Remove terminal tracker to prevent unbounded memory growth
+        self._trackers.pop(tracker.proposal_id, None)
 
     async def _dispatch(self, result: ExecutionResult) -> None:
         for cb in self._callbacks:

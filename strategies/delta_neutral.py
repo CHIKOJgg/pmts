@@ -11,6 +11,7 @@ from typing import Optional
 from data.models import FeatureVector
 from execution.models import OrderProposal
 from src.types import OrderType, Platform, Side, StrategyId
+from ai.signal_context import SignalContext
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class DeltaNeutralStrategy:
 
     # ── Hedge ─────────────────────────────────────────────────────────────────
 
-    def evaluate_hedge(self, fv: FeatureVector) -> HedgeDecision:
+    def evaluate_hedge(self, fv: FeatureVector, ctx: Optional[SignalContext] = None) -> HedgeDecision:
         """
         Decide whether and how to reduce the current delta.
 
@@ -98,6 +99,10 @@ class DeltaNeutralStrategy:
         cfg   = self._cfg
         delta = fv.portfolio_delta
 
+        hedge_threshold = cfg.hedge_threshold
+        if ctx and ctx.hedge_urgency > 0:
+            hedge_threshold = cfg.hedge_threshold * max(0.2, 1.0 - ctx.hedge_urgency)
+
         def _skip(reason: str) -> HedgeDecision:
             self.hedges_skipped += 1
             return HedgeDecision(
@@ -106,8 +111,8 @@ class DeltaNeutralStrategy:
                 proposal=None, should_hedge=False, reason=reason,
             )
 
-        if abs(delta) <= cfg.hedge_threshold:
-            return _skip(f"|delta|={abs(delta):.2f}<=threshold={cfg.hedge_threshold}")
+        if abs(delta) <= hedge_threshold:
+            return _skip(f"|delta|={abs(delta):.2f}<=threshold={hedge_threshold:.2f}")
 
         # Cross-venue correlation warning
         if abs(fv.mid_pm - fv.mid_op) < 0.01:
@@ -174,12 +179,12 @@ class DeltaNeutralStrategy:
             market_id=fv.market_id, current_delta=delta, target_delta=target,
             hedge_tokens=hedge_tokens, hedge_direction=direction,
             venue=venue, proposal=proposal, should_hedge=True,
-            reason=f"|delta|={abs(delta):.2f}>threshold={cfg.hedge_threshold}",
+            reason=f"|delta|={abs(delta):.2f}>threshold={hedge_threshold:.2f}",
         )
 
     # ── Market Making ─────────────────────────────────────────────────────────
 
-    def evaluate_mm(self, fv: FeatureVector, platform: Platform) -> MMQuotes:
+    def evaluate_mm(self, fv: FeatureVector, platform: Platform, ctx: Optional[SignalContext] = None) -> MMQuotes:
         """
         Compute Stoikov reservation-price MM quotes for one venue.
 
@@ -198,6 +203,9 @@ class DeltaNeutralStrategy:
                 reservation_mid=None, spread=None,
                 suppressed=True, suppression_reason=reason,
             )
+
+        if ctx and ctx.suppress_mm:
+            return _suppress("ai_suppression")
 
         if fv.vol_30s is None:
             return _suppress("vol_30s_not_ready")

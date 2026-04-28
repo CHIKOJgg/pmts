@@ -178,6 +178,7 @@ class PortfolioManager:
         initial_cash_usdc: float,
         price_source:      _PriceSource,
         stream_writer:     Optional[Callable] = None,
+        store=None,
     ) -> None:
         if initial_cash_usdc < 0:
             raise ValueError(f"initial_cash_usdc must be ≥ 0, got {initial_cash_usdc}")
@@ -190,6 +191,18 @@ class PortfolioManager:
         self._closed_pnl:    float = 0.0
         self._price_source:  _PriceSource     = price_source
         self._stream_writer: Optional[Callable] = stream_writer
+        self._store = store
+
+        if self._store:
+            state = self._store.load_state()
+            if state["cash_usdc"] is not None:
+                self._cash_usdc = state["cash_usdc"]
+            if state["peak_equity"] is not None:
+                self._peak_equity = state["peak_equity"]
+            self._closed_pnl = state.get("closed_pnl", 0.0)
+            self._positions = state.get("positions", {})
+            logger.info("Loaded portfolio state from SQLite. Cash: $%.2f, Positions: %d", 
+                        self._cash_usdc, len(self._positions))
 
         self._tasks:   list[asyncio.Task] = []
         self._stopped: bool               = False
@@ -239,6 +252,11 @@ class PortfolioManager:
 
             self.fill_count += 1
 
+            if self._store:
+                self._store.save_fill_and_position(
+                    fill, self._positions[key], self._cash_usdc, self._peak_equity, self._closed_pnl
+                )
+
         asyncio.create_task(
             self._publish_snapshot(),
             name=f"snap-{fill.proposal_id[:8]}",
@@ -261,6 +279,13 @@ class PortfolioManager:
             if equity > self._peak_equity:
                 self._peak_equity = equity
             self.redemption_count += 1
+            
+            if self._store:
+                pos_to_save = None if pos.is_flat else pos
+                self._store.save_redemption(
+                    redemption.market_id, redemption.platform,
+                    self._cash_usdc, self._peak_equity, self._closed_pnl, pos_to_save
+                )
 
     # ── Capital reservation (called synchronously by RiskEngine) ─────────────
 

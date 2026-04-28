@@ -36,6 +36,7 @@ class OpinionConfig:
     rest_url:      str = field(default_factory=lambda: _e("OP_REST_URL", "https://api.opinion.markets/v1"))
     ws_url:        str = field(default_factory=lambda: _e("OP_WS_URL",   "wss://ws.opinion.markets"))
     api_key:       str = field(default_factory=lambda: _e("OP_API_KEY"))
+    wallet_key:    str = field(default_factory=lambda: _e("OP_WALLET_KEY"))
     taker_fee_bps: int = field(default_factory=lambda: _ei("OP_TAKER_FEE_BPS", 25))
 
 
@@ -81,6 +82,41 @@ class Settings:
     trading:    TradingConfig    = field(default_factory=TradingConfig)
     ai:         AIConfig         = field(default_factory=AIConfig)
     logging:    LoggingConfig    = field(default_factory=LoggingConfig)
+
+    def validate(self) -> None:
+        """Strict validation of all configuration before startup."""
+        errors = []
+
+        # 1. Trading Config
+        if not self.trading.markets:
+            errors.append("MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).")
+        
+        if self.trading.min_order_usdc <= 0:
+            errors.append(f"MIN_ORDER_USDC must be > 0 (current: {self.trading.min_order_usdc})")
+        
+        if self.trading.max_order_usdc < self.trading.min_order_usdc:
+            errors.append(f"MAX_ORDER_USDC ({self.trading.max_order_usdc}) must be >= MIN_ORDER_USDC ({self.trading.min_order_usdc})")
+
+        if not (0 < self.trading.drawdown_kill_pct < 1):
+            errors.append(f"DRAWDOWN_KILL_PCT must be between 0 and 1 (current: {self.trading.drawdown_kill_pct})")
+
+        if self.trading.drawdown_warn_pct >= self.trading.drawdown_kill_pct:
+             errors.append(f"DRAWDOWN_WARN_PCT ({self.trading.drawdown_warn_pct}) must be < DRAWDOWN_KILL_PCT ({self.trading.drawdown_kill_pct})")
+
+        # 2. Polymarket Keys
+        if self.trading.enable_trading:
+            if not self.polymarket.api_key:    errors.append("PM_API_KEY is missing")
+            if not self.polymarket.api_secret: errors.append("PM_API_SECRET is missing")
+            if not self.polymarket.passphrase: errors.append("PM_PASSPHRASE is missing")
+            if not self.polymarket.wallet_key: errors.append("PM_WALLET_KEY is missing")
+
+            # 3. Opinion Keys
+            if not self.opinion.api_key:    errors.append("OP_API_KEY is missing")
+            if not self.opinion.wallet_key: errors.append("OP_WALLET_KEY is missing")
+
+        if errors:
+            msg = "\n".join(f"  - {err}" for err in errors)
+            raise ValueError(f"Configuration validation failed:\n{msg}")
 
 
 _settings: Optional[Settings] = None
