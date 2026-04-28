@@ -320,6 +320,13 @@ class RiskEngine:
     def kill_switch_active(self) -> bool:
         return self._kill_switch.is_active
 
+    @property
+    def current_drawdown(self) -> float:
+        """Return current portfolio drawdown calculated from peak equity."""
+        mtm  = self._portfolio.get_portfolio_mtm()
+        peak = self._portfolio.peak_equity
+        return _drawdown(peak, mtm.total_equity_usdc)
+
     def reload_limits(self, new_limits: RiskLimits) -> None:
         self._limits = new_limits
         logger.info("RiskEngine limits reloaded")

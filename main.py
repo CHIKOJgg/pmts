@@ -25,6 +25,7 @@ from data.adapters.opinion_ws import OpinionWSAdapter
 from portfolio.manager import PortfolioManager
 from portfolio.storage import SqlitePortfolioStore
 from risk.engine import RiskEngine
+from risk.kill_switch import KillSwitch
 from risk.limits import RiskLimits
 from engine.strategy_engine import StrategyEngine, StrategyConfig
 from strategies.arbitrage import ArbConfig
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 async def run_live() -> None:
     settings = get_settings()
+    settings.validate()
 
     if not settings.trading.markets:
         logger.error("No markets configured. Set MARKETS env var.")
@@ -65,10 +67,10 @@ async def run_live() -> None:
         max_market_exposure_pct=settings.trading.max_market_exposure_pct,
         max_market_exposure_usdc=settings.trading.max_market_exposure_usdc,
         max_net_delta_per_market=settings.trading.max_net_delta,
-        kill_switch_token=settings.trading.kill_switch_token,
     )
     
-    risk = RiskEngine(limits=risk_limits, portfolio=portfolio, store=store)
+    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
+    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store)
     
     # 3. Exchange Clients & Engines
     pm_client = PolymarketClient(
@@ -195,10 +197,16 @@ def main() -> None:
 
     settings = get_settings()
     configure_logging(level=args.log_level)
+    
+    try:
+        settings.validate()
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
 
     if args.mode == "backtest":
-        from main import run_backtest
-        asyncio.run(run_backtest(n_ticks=args.ticks, capital=args.capital))
+        logger.error("Backtest mode not implemented in this entry point.")
+        sys.exit(1)
     else:
         asyncio.run(run_live())
 

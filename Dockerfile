@@ -4,7 +4,7 @@ WORKDIR /app
 
 # System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libssl-dev && \
+    gcc libssl-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -22,7 +22,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import asyncio; print('healthy')" || exit 1
+    CMD curl -f http://localhost:8080/ready || exit 1
 
 ENTRYPOINT ["python", "main.py"]
 CMD ["--mode", "backtest"]
