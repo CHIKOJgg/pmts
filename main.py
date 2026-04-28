@@ -34,21 +34,14 @@ from execution.clients.polymarket import PolymarketClient
 from execution.clients.opinion import OpinionClient
 from execution.engine import ExecutionEngine
 from engine.orchestrator import Orchestrator
-from infrastructure.observability import ObservabilityServer
+from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
+from infrastructure.observability import ObservabilityServer, HealthMonitor
 
 logger = logging.getLogger(__name__)
 
 async def run_live() -> None:
     settings = get_settings()
     settings.validate()
-
-    if not settings.trading.markets:
-        logger.error("No markets configured. Set MARKETS env var.")
-        sys.exit(1)
-
-    if settings.trading.kill_switch_token in ("CHANGE-ME", "CHANGE-ME-USE-A-SECURE-RANDOM-STRING", ""):
-        logger.error("KILL_SWITCH_TOKEN not set correctly. Refusing to start.")
-        sys.exit(1)
 
     logger.info("Live trading initializing: markets=%s", settings.trading.markets)
     
@@ -79,15 +72,17 @@ async def run_live() -> None:
         passphrase=settings.polymarket.passphrase,
         wallet_private_key=settings.polymarket.wallet_key,
         host=settings.polymarket.clob_url,
+        sandbox=settings.polymarket.sandbox,
     )
     op_client = OpinionClient(
         api_key=settings.opinion.api_key,
         wallet_private_key=settings.opinion.wallet_key,
         host=settings.opinion.rest_url,
+        sandbox=settings.opinion.sandbox,
     )
     
-    pm_engine = ExecutionEngine(pm_client)
-    op_engine = ExecutionEngine(op_client)
+    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store)
+    op_engine = ExecutionEngine(op_client, risk=risk, store=store)
     
     # 4. Strategy Engine
     strat_cfg = StrategyConfig(
@@ -127,6 +122,15 @@ async def run_live() -> None:
     
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws])
     
+    # 5.5 AI Signal Enhancer
+    ai_cfg = AIEnhancerConfig(
+        enabled=settings.ai.enabled,
+        use_heuristic_only=settings.ai.heuristic_only,
+        api_timeout_ms=settings.ai.api_timeout_ms,
+        cache_ttl_ms=settings.ai.cache_ttl_ms
+    )
+    ai_enhancer = AISignalEnhancer(config=ai_cfg)
+    
     # 6. Orchestrator
     orchestrator = Orchestrator(
         mdp=mdp,
@@ -136,11 +140,24 @@ async def run_live() -> None:
         pm_engine=pm_engine,
         op_engine=op_engine,
         markets=settings.trading.markets,
+        ai_enhancer=ai_enhancer,
         enable_trading=settings.trading.enable_trading
     )
     
-    # 7. Observability
     obs_server = ObservabilityServer(port=8080)
+    
+    # 7. Health & Observability
+    monitor = HealthMonitor(
+        mdp=mdp,
+        engines=[pm_engine, op_engine],
+        risk=risk,
+        store=store,
+        kill_switch=kill_switch,
+        obs_server=obs_server
+    )
+    
+    obs_server.set_health_monitor(monitor)
+    
     obs_server.register_provider(lambda: {
         "orchestrator": {
             "proposals_evaluated": orchestrator.proposals_evaluated,
@@ -171,7 +188,22 @@ async def run_live() -> None:
 
     # START
     await obs_server.start()
+    
+    # Step 6: Reconciliation (Issue #3)
+    logger.info("Performing startup reconciliation...")
+    await pm_engine.reconcile()
+    await op_engine.reconcile()
+    risk.reconcile_reservations()
+    
     await orchestrator.start()
+    
+    # Liveness background task
+    async def liveness_tick_loop():
+        while True:
+            monitor.tick_liveness()
+            await asyncio.sleep(5)
+    
+    liveness_task = asyncio.create_task(liveness_tick_loop(), name="liveness-tick")
     
     logger.info("SYSTEM LIVE and trading.")
     
@@ -181,6 +213,7 @@ async def run_live() -> None:
         pass
     
     logger.info("Shutting down...")
+    liveness_task.cancel()
     await orchestrator.stop()
     await obs_server.stop()
     await pm_client.close()

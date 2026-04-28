@@ -3,7 +3,7 @@ import hashlib
 import json
 import time
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import aiohttp
 from asyncio_throttle import Throttler
@@ -32,6 +32,8 @@ _EIP712_DOMAIN = {
     "verifyingContract": "0x4bFb9717C5521096C6E419519A619717C5521096" 
 }
 
+_SANDBOX_HOST: str = "https://clob-sandbox.polymarket.com"
+
 class PolymarketClient:
     """
     Polymarket CLOB REST client implementation.
@@ -46,22 +48,34 @@ class PolymarketClient:
         secret:              str,
         passphrase:          str,
         wallet_private_key:  str,
-        host:                str = _DEFAULT_HOST,
+        host:                Optional[str] = None,
         rate_limit_per_s:    int = 10,
+        sandbox:             bool = False,
     ) -> None:
         self._api_key            = api_key
         self._secret             = secret
         self._passphrase         = passphrase
         self._wallet_private_key = wallet_private_key
-        self._host               = host.rstrip("/")
+        self._sandbox            = sandbox
+        
+        if host:
+            self._host = host.rstrip("/")
+        else:
+            self._host = _SANDBOX_HOST if sandbox else _DEFAULT_HOST
+
         self._address            = Account.from_key(wallet_private_key).address
         
+        # Update chainId for EIP-712 if sandbox (Polygon Amoy is 80002)
+        self._domain = _EIP712_DOMAIN.copy()
+        if sandbox:
+            self._domain["chainId"] = 80002
+
         self._session: Optional[aiohttp.ClientSession] = None
         self._throttler = Throttler(rate_limit_per_s)
 
         logger.info(
-            "PolymarketClient initialized: host=%s, address=%s, api_key=%.8s...",
-            self._host, self._address, self._api_key
+            "PolymarketClient initialized: host=%s, address=%s, sandbox=%s",
+            self._host, self._address, self._sandbox
         )
 
     @property
@@ -132,7 +146,7 @@ class PolymarketClient:
                 ],
                 **types
             },
-            "domain": _EIP712_DOMAIN,
+            "domain": self._domain,
             "primaryType": "Order",
             "message": order_to_sign,
         }
@@ -141,7 +155,7 @@ class PolymarketClient:
         return signed.signature.hex()
 
     async def place_order(
-        self, submission: OrderSubmission, effective_price: float
+        self, submission: OrderSubmission, effective_price: float, nonce: Optional[int] = None
     ) -> PlacedOrderResponse:
         """Submit a limit order to Polymarket CLOB."""
         async with self._throttler:
@@ -155,6 +169,9 @@ class PolymarketClient:
                 maker_amount = tokens
                 taker_amount = usdc_amount
 
+            # Use provided nonce for idempotency, fallback to timestamp
+            final_nonce = nonce if nonce is not None else int(time.time() * 1000)
+
             order_params = {
                 "maker": self._address,
                 "signer": self._address,
@@ -163,7 +180,7 @@ class PolymarketClient:
                 "takerAmount": str(taker_amount),
                 "side": "BUY" if "BUY" in submission.side.value else "SELL",
                 "expiration": str(int(time.time()) + 3600),
-                "nonce": str(int(time.time() * 1000)),
+                "nonce": str(final_nonce),
             }
             
             order_params["signature"] = self._sign_order(order_params)
@@ -240,9 +257,50 @@ class PolymarketClient:
                     new_fills=[] 
                 )
 
-def _assert_protocol_compat() -> None:
-    dummy = PolymarketClient.__new__(PolymarketClient)
-    if not isinstance(dummy, ExchangeClient):
-        raise TypeError("PolymarketClient does not satisfy ExchangeClient protocol")
+    async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
+        """Fetch all open orders from Polymarket CLOB."""
+        async with self._throttler:
+            # Polymarket GET /orders returns open orders
+            # Query params can include market_id
+            path = "/orders"
+            if market_ids and len(market_ids) == 1:
+                path += f"?market_id={market_ids[0]}"
+            
+            headers = self._get_auth_headers("GET", path)
+            session = await self._get_session()
+            
+            async with session.get(path, headers=headers) as resp:
+                resp.raise_for_status()
+                raw = await resp.json()
+                
+                # Polymarket returns a list of order objects
+                orders = []
+                for o in raw:
+                    orders.append(OpenOrder(
+                        exchange_order_id=o["orderID"],
+                        market_id=o["tokenId"],
+                        side=o["side"],
+                        size_usdc=float(o.get("originalSize", 0.0)),
+                        filled_usdc=float(o.get("originalSize", 0.0)) - float(o.get("remainingSize", 0.0)),
+                        limit_price=float(o.get("price", 0.0)),
+                        ts=int(time.time() * 1000) # Fallback ts
+                    ))
+                return orders
 
-_assert_protocol_compat()
+    async def verify_connectivity(self) -> bool:
+        """Verify API keys by fetching the account profile."""
+        try:
+            headers = self._get_auth_headers("GET", "/profile")
+            session = await self._get_session()
+            async with session.get("/profile", headers=headers) as resp:
+                if resp.status == 200:
+                    logger.info("Polymarket connectivity verified.")
+                    return True
+                logger.error("Polymarket connectivity failed: %d %s", resp.status, await resp.text())
+                return False
+        except Exception as exc:
+            logger.error("Polymarket connectivity error: %s", exc)
+            return False
+
+if TYPE_CHECKING:
+    _: ExchangeClient = PolymarketClient(api_key="", secret="", passphrase="", wallet_private_key="0x" + "0"*64)

@@ -1,6 +1,7 @@
 import sqlite3
 import logging
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
+import json
 
 from portfolio.manager import _Position, FillRecord
 from src.types import Platform, StrategyId
@@ -20,6 +21,14 @@ class SqlitePortfolioStore:
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
+
+    def is_healthy(self) -> bool:
+        """Check if SQLite is reachable."""
+        try:
+            self._conn.execute("SELECT 1")
+            return True
+        except Exception:
+            return False
 
     def _init_db(self) -> None:
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -61,6 +70,13 @@ class SqlitePortfolioStore:
                     amount REAL,
                     platform TEXT,
                     strategy_id TEXT
+                )
+            ''')
+            self._conn.execute('''
+                CREATE TABLE IF NOT EXISTS active_orders (
+                    proposal_id TEXT PRIMARY KEY,
+                    exchange_order_id TEXT,
+                    submission_json TEXT
                 )
             ''')
 
@@ -161,6 +177,29 @@ class SqlitePortfolioStore:
         state["positions"] = positions
         return state
 
+    # ── Kill Switch Persistence ───────────────────────────────────────────────
+
+    def save_kill_switch(self, active: bool) -> None:
+        """Persist kill switch status to the state table."""
+        try:
+            with self._conn:
+                self._conn.execute('''
+                    INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)
+                ''', ("kill_switch_active", 1.0 if active else 0.0))
+        except Exception as exc:
+            logger.error("Failed to save kill switch state to SQLite: %s", exc)
+
+    def load_kill_switch(self) -> bool:
+        """Load kill switch status from the state table."""
+        try:
+            cur = self._conn.cursor()
+            cur.execute("SELECT value FROM state WHERE key = ?", ("kill_switch_active",))
+            row = cur.fetchone()
+            return bool(row["value"]) if row else False
+        except Exception as exc:
+            logger.error("Failed to load kill switch state from SQLite: %s", exc)
+            return False
+
     # ── Risk Reservations ─────────────────────────────────────────────────────
 
     def save_reservation(self, proposal_id: str, amount: float, platform: Platform, strategy_id: StrategyId) -> None:
@@ -190,3 +229,39 @@ class SqlitePortfolioStore:
                 StrategyId(row["strategy_id"])
             )
         return reservations
+
+    # ── Active Orders Persistence ─────────────────────────────────────────────
+
+    def save_order(self, proposal_id: str, submission_json: str, exchange_order_id: Optional[str] = None) -> None:
+        try:
+            with self._conn:
+                self._conn.execute('''
+                    INSERT OR REPLACE INTO active_orders (proposal_id, exchange_order_id, submission_json)
+                    VALUES (?, ?, ?)
+                ''', (proposal_id, exchange_order_id, submission_json))
+        except Exception as exc:
+            logger.error("Failed to save order to SQLite: %s", exc)
+
+    def update_order_exchange_id(self, proposal_id: str, exchange_order_id: str) -> None:
+        try:
+            with self._conn:
+                self._conn.execute('''
+                    UPDATE active_orders SET exchange_order_id = ? WHERE proposal_id = ?
+                ''', (exchange_order_id, proposal_id))
+        except Exception as exc:
+            logger.error("Failed to update order exchange ID in SQLite: %s", exc)
+
+    def remove_order(self, proposal_id: str) -> None:
+        try:
+            with self._conn:
+                self._conn.execute('DELETE FROM active_orders WHERE proposal_id = ?', (proposal_id,))
+        except Exception as exc:
+            logger.error("Failed to remove order from SQLite: %s", exc)
+
+    def load_active_orders(self) -> List[Tuple[str, Optional[str], str]]:
+        """Returns List[(proposal_id, exchange_order_id, submission_json)]"""
+        cur = self._conn.cursor()
+        orders = []
+        for row in cur.execute("SELECT proposal_id, exchange_order_id, submission_json FROM active_orders"):
+            orders.append((row["proposal_id"], row["exchange_order_id"], row["submission_json"]))
+        return orders

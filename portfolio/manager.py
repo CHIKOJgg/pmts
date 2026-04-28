@@ -10,6 +10,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 from src.errors import NegativeHoldings
 from src.types import Outcome, Platform, Side
+from infrastructure.observability import OPEN_EXPOSURE_USDC
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,10 @@ class PortfolioManager:
                 self._peak_equity = equity
 
             self.fill_count += 1
+            
+            # Update exposure metric
+            exposure = self.get_market_exposure_usdc(fill.market_id)
+            OPEN_EXPOSURE_USDC.labels(market_id=fill.market_id).set(exposure)
 
             if self._store:
                 self._store.save_fill_and_position(
@@ -279,6 +284,10 @@ class PortfolioManager:
             if equity > self._peak_equity:
                 self._peak_equity = equity
             self.redemption_count += 1
+            
+            # Update exposure metric
+            exposure = self.get_market_exposure_usdc(redemption.market_id)
+            OPEN_EXPOSURE_USDC.labels(market_id=redemption.market_id).set(exposure)
             
             if self._store:
                 pos_to_save = None if pos.is_flat else pos

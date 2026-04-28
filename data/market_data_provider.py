@@ -120,6 +120,24 @@ class MarketDataProvider:
     def get_all_markets(self) -> set[str]:
         return {mid for (mid, _) in self._index}
 
+    def get_health(self) -> dict:
+        """Check if adapters have received recent data."""
+        now = _now_ms()
+        health = {}
+        for plat in Platform:
+            # Check if we have ANY snapshot for this platform within threshold
+            last_ts = 0
+            for snap in self._index.values():
+                if snap.platform == plat:
+                    last_ts = max(last_ts, snap.ts)
+            
+            is_alive = (last_ts > 0) and (now - last_ts < STALE_THRESHOLD_MS * 5)
+            health[plat.value] = {
+                "alive": is_alive,
+                "last_msg_age_ms": now - last_ts if last_ts > 0 else -1
+            }
+        return health
+
     # ── Subscription ─────────────────────────────────────────────────────────
 
     def add_callback(self, cb: _SnapshotCB) -> None:

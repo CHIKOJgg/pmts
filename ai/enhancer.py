@@ -42,7 +42,7 @@ API_URL        = "https://api.anthropic.com/v1/messages"
 
 @dataclass
 class AIEnhancerConfig:
-    enabled:                  bool  = True
+    enabled:                  bool  = False
     api_timeout_ms:           int   = 200
     cache_ttl_ms:             int   = 3_000
     cache_invalidation_delta: float = 0.005

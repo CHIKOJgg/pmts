@@ -16,6 +16,8 @@ from risk.engine import RiskEngine
 from engine.feature_engine import FeatureEngine
 from engine.strategy_engine import StrategyEngine, StrategyConfig
 from src.types import ArbLeg, OrderStatus, Platform, StrategyId
+from ai.enhancer import AISignalEnhancer
+from infrastructure.observability import PROPOSALS_TOTAL
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,7 @@ class Orchestrator:
         pm_engine:      ExecutionEngine,
         op_engine:      ExecutionEngine,
         markets:        list,
+        ai_enhancer:    Optional[AISignalEnhancer] = None,
         enable_trading: bool = True,
     ) -> None:
         self._mdp       = mdp
@@ -50,6 +53,7 @@ class Orchestrator:
         self._strategy  = strategy
         self._pm_engine = pm_engine
         self._op_engine = op_engine
+        self._ai        = ai_enhancer
         self._markets   = markets
         self._trading   = enable_trading
 
@@ -68,6 +72,9 @@ class Orchestrator:
 
         # leg_group_id → {leg_number_value: proposal_id}
         self._arb_groups: Dict[str, Dict[int, str]] = {}
+        
+        # Per-market lock to prevent concurrent evaluation races
+        self._market_locks: Dict[str, asyncio.Lock] = {}
 
         # Metrics
         self.proposals_evaluated: int = 0
@@ -105,7 +112,18 @@ class Orchestrator:
     async def _on_feature_vector(self, fv: FeatureVector) -> None:
         if not self._trading or self._risk.kill_switch_active:
             return
-        await self._strategy.on_feature_vector(fv)
+        
+        # Lock per market to prevent concurrent evaluation races (Issue #1)
+        if fv.market_id not in self._market_locks:
+            self._market_locks[fv.market_id] = asyncio.Lock()
+            
+        async with self._market_locks[fv.market_id]:
+            # Step 2.5: AI Signal Enhancement (Explicit and Wired)
+            context = None
+            if self._ai:
+                context = await self._ai.enhance(fv)
+                
+            await self._strategy.on_feature_vector(fv, context=context)
 
     # ── Step 3→4: Proposal → risk gate ───────────────────────────────────────
 
@@ -113,6 +131,8 @@ class Orchestrator:
         self.proposals_evaluated += 1
 
         decision = self._risk.evaluate(proposal)   # synchronous, < 5ms
+        verdict = "approved" if decision.approved else "rejected"
+        PROPOSALS_TOTAL.labels(strategy=proposal.strategy_id.value, verdict=verdict).inc()
 
         if decision.rejected:
             self.proposals_rejected += 1
