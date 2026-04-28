@@ -10,7 +10,9 @@ from typing import Callable, Coroutine, List, Optional, Protocol, runtime_checka
 from execution.models import ExecutionResult, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
 from src.errors import ExchangeRejected
-from src.types import OrderStatus, Platform, Side, StrategyId
+from src.types import OrderStatus, Platform, Side, StrategyId, OrderType, ArbLeg
+from infrastructure.observability import FILLS_TOTAL, FILL_USDC_TOTAL, ORDER_LATENCY, API_ERRORS_TOTAL
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,17 @@ class OrderStatusResponse:
     tx_hash:           Optional[str]         = None
 
 
+@dataclass
+class OpenOrder:
+    exchange_order_id: str
+    market_id:         str
+    side:              str
+    size_usdc:         float
+    filled_usdc:       float
+    limit_price:       float
+    ts:                int
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ExchangeClient Protocol
 # ─────────────────────────────────────────────────────────────────────────────
@@ -78,7 +91,7 @@ class ExchangeClient(Protocol):
     def platform(self) -> Platform: ...
 
     async def place_order(
-        self, submission: OrderSubmission, effective_price: float
+        self, submission: OrderSubmission, effective_price: float, nonce: Optional[int] = None
     ) -> PlacedOrderResponse: ...
 
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool: ...
@@ -86,6 +99,20 @@ class ExchangeClient(Protocol):
     async def get_order_status(
         self, exchange_order_id: str, market_id: str
     ) -> OrderStatusResponse: ...
+
+    async def verify_connectivity(self) -> bool:
+        """
+        Perform a minimal authenticated request to verify API credentials
+        and connectivity to the exchange (supports sandbox/testnet).
+        """
+        ...
+
+    async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
+        """
+        Fetch all open orders for the account, optionally filtered by market.
+        Used for startup reconciliation.
+        """
+        ...
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,10 +153,14 @@ class ExecutionEngine:
     def __init__(
         self,
         client:         ExchangeClient,
-        mdb=None,       # MarketDataProvider — used for aggressive pricing
+        risk:           Optional[Any] = None, # RiskEngine
+        store:          Optional[Any] = None, # SqlitePortfolioStore
+        mdb:            Optional[Any] = None, # MarketDataProvider
         max_concurrent: int = 5,
     ) -> None:
         self._client    = client
+        self._risk      = risk
+        self._store     = store
         self._mdb       = mdb
 
         # Per-order trackers
@@ -161,6 +192,7 @@ class ExecutionEngine:
         self.orders_timed_out:  int   = 0
         self.total_filled_usdc: float = 0.0
         self.submit_retries:    int   = 0
+        self.reconciliation_complete: bool = False
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -186,6 +218,12 @@ class ExecutionEngine:
 
     async def stop(self) -> None:
         self._stopped = True
+        logger.info("ExecutionEngine stopping (%s). Draining queue...", self._client.platform.value)
+        
+        # Step 5: Wait for queue to drain before cancelling workers (Issue #5)
+        while not self._queue.empty():
+            await asyncio.sleep(0.1)
+            
         for t in self._tasks:
             t.cancel()
         if self._tasks:
@@ -193,13 +231,98 @@ class ExecutionEngine:
         self._tasks.clear()
         logger.info("ExecutionEngine stopped (%s)", self._client.platform.value)
 
+    async def reconcile(self) -> None:
+        """
+        Reconstruct state from exchange and persistent store (Step 6).
+        Must be called before the engine is marked as ready.
+        """
+        if not self._store:
+            logger.warning("No store provided, skipping reconciliation for %s", self._client.platform.value)
+            return
+
+        logger.info("Starting reconciliation for %s...", self._client.platform.value)
+        
+        # 1. Load active orders from DB
+        db_orders = self._store.load_active_orders()
+        db_map = {proposal_id: (exch_id, sub_json) for proposal_id, exch_id, sub_json in db_orders}
+        
+        # 2. Query exchange for open orders
+        try:
+            exch_orders = await self._client.get_open_orders()
+            exch_map = {o.exchange_order_id: o for o in exch_orders}
+        except Exception as exc:
+            logger.error("Failed to fetch open orders from %s: %s", self._client.platform.value, exc)
+            return
+
+        # 3. Reconcile
+        for proposal_id, (exch_id, sub_json) in db_map.items():
+            try:
+                # Deserialize submission
+                sub_dict = json.loads(sub_json)
+                # Helper to reconstruct Enums
+                sub_dict['platform'] = Platform(sub_dict['platform'])
+                sub_dict['side'] = Side(sub_dict['side'])
+                sub_dict['order_type'] = OrderType(sub_dict['order_type'])
+                sub_dict['strategy_id'] = StrategyId(sub_dict['strategy_id'])
+                if sub_dict.get('leg_number'): sub_dict['leg_number'] = ArbLeg(sub_dict['leg_number'])
+                
+                submission = OrderSubmission(**sub_dict)
+                tracker = OrderTracker(submission)
+                
+                if exch_id and exch_id in exch_map:
+                    # Order is still live on exchange
+                    o = exch_map[exch_id]
+                    logger.info("Re-found live order %s (proposal %s), filled=%.2f/%.2f", 
+                                exch_id, proposal_id[:8], o.filled_usdc, o.size_usdc)
+                    
+                    tracker.exchange_order_id = exch_id
+                    tracker.status = TrackerStatus.SUBMITTED
+                    
+                    if o.filled_usdc > 0:
+                        # Record a synthetic fill to account for what happened while we were down
+                        tracker.record_fill(
+                            o.filled_usdc, o.limit_price, 
+                            o.filled_usdc / o.limit_price if o.limit_price > 0 else 0,
+                            o.ts
+                        )
+                    
+                    self._trackers[proposal_id] = tracker
+                    self._exch_to_proposal[exch_id] = proposal_id
+
+                    if tracker.status.is_terminal:
+                        self._finalise(tracker)
+                else:
+                    # Order not on exchange, maybe terminal while we were down
+                    logger.info("Order %s (proposal %s) not on exchange, checking final status...", exch_id or "N/A", proposal_id[:8])
+                    if exch_id:
+                        tracker.exchange_order_id = exch_id
+                        tracker.status = TrackerStatus.SUBMITTED
+                        await self._poll_one(tracker)
+                    else:
+                        # Never submitted or failed during submission
+                        result = tracker.record_rejection("Lost during crash")
+                        self._finalise(tracker)
+                        await self._dispatch(result)
+            except Exception as exc:
+                logger.error("Reconciliation failed for proposal %s: %s", proposal_id, exc, exc_info=True)
+
+        self.reconciliation_complete = True
+        logger.info("Reconciliation complete for %s. Trackers: %d", self._client.platform.value, len(self._trackers))
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def submit(self, submission: OrderSubmission) -> None:
-        """Enqueue for submission. ARB orders get priority 0, others get 1."""
         priority = 0 if submission.strategy_id == StrategyId.ARB else 1
         self._seq += 1
         self._trackers[submission.proposal_id] = OrderTracker(submission)
+        
+        if self._store:
+            # Step 6: Persist submission before trying to send it
+            self._store.save_order(
+                submission.proposal_id, 
+                json.dumps(submission.model_dump())
+            )
+
         await self._queue.put(_QueueEntry(priority, self._seq, submission))
 
     async def cancel(self, proposal_id: str) -> None:
@@ -287,10 +410,11 @@ class ExecutionEngine:
             if tracker.status.is_terminal:
                 return
             try:
-                placed = await self._client.place_order(submission, effective_price)
+                placed = await self._client.place_order(submission, effective_price, nonce=tracker.nonce)
                 break
             except ExchangeRejected as exc:
                 result = tracker.record_rejection(str(exc))
+                API_ERRORS_TOTAL.labels(platform=self._client.platform.value, error_type="rejected").inc()
                 self.orders_rejected += 1
                 self._finalise(tracker)
                 await self._dispatch(result)
@@ -309,6 +433,7 @@ class ExecutionEngine:
                     await asyncio.sleep(delay)
                 else:
                     result = tracker.record_timeout()
+                    API_ERRORS_TOTAL.labels(platform=self._client.platform.value, error_type="timeout").inc()
                     self.orders_timed_out += 1
                     self._finalise(tracker)
                     await self._dispatch(result)
@@ -319,6 +444,11 @@ class ExecutionEngine:
         # Register ACK
         submit_result = tracker.record_submission(placed.exchange_order_id)
         self._exch_to_proposal[placed.exchange_order_id] = submission.proposal_id
+        
+        if self._store:
+            # Step 6: Update with exchange_order_id
+            self._store.update_order_exchange_id(submission.proposal_id, placed.exchange_order_id)
+
         self.orders_submitted += 1
         await self._dispatch(submit_result)
 
@@ -332,6 +462,10 @@ class ExecutionEngine:
             result = tracker.record_fill(
                 fill.fill_usdc, fill.fill_price, fill.fill_tokens, fill.ts
             )
+            FILLS_TOTAL.labels(platform=self._client.platform.value, strategy=tracker.submission.strategy_id.value).inc()
+            FILL_USDC_TOTAL.labels(platform=self._client.platform.value).inc(fill.fill_usdc)
+            ORDER_LATENCY.labels(platform=self._client.platform.value).observe(result.latency_ms / 1000.0)
+            
             self.total_filled_usdc += fill.fill_usdc
             if result.status == OrderStatus.FILLED:
                 self.orders_filled += 1
@@ -402,6 +536,10 @@ class ExecutionEngine:
             result = tracker.record_fill(
                 fill.fill_usdc, fill.fill_price, fill.fill_tokens, fill.ts
             )
+            FILLS_TOTAL.labels(platform=self._client.platform.value, strategy=tracker.submission.strategy_id.value).inc()
+            FILL_USDC_TOTAL.labels(platform=self._client.platform.value).inc(fill.fill_usdc)
+            ORDER_LATENCY.labels(platform=self._client.platform.value).observe(result.latency_ms / 1000.0)
+            
             self.total_filled_usdc += fill.fill_usdc
             if result.status == OrderStatus.FILLED:
                 self.orders_filled += 1
@@ -504,6 +642,11 @@ class ExecutionEngine:
             self._exch_to_proposal.pop(tracker.exchange_order_id, None)
         # Remove terminal tracker to prevent unbounded memory growth
         self._trackers.pop(tracker.proposal_id, None)
+        
+        if self._store:
+            # Step 6: Remove from active orders in DB
+            self._store.remove_order(tracker.proposal_id)
+
 
     async def _dispatch(self, result: ExecutionResult) -> None:
         for cb in self._callbacks:

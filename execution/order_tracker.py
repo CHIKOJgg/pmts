@@ -55,7 +55,7 @@ class OrderTracker:
     __slots__ = (
         "submission", "status", "exchange_order_id",
         "fills", "created_at", "submitted_at", "last_poll_at",
-        "tx_hash", "_last_latency_ms",
+        "tx_hash", "_last_latency_ms", "nonce",
     )
 
     def __init__(self, submission: OrderSubmission) -> None:
@@ -68,6 +68,8 @@ class OrderTracker:
         self.last_poll_at:       Optional[int]        = None
         self.tx_hash:            Optional[str]        = None
         self._last_latency_ms:   int                  = 0
+        # Microsecond resolution to prevent nonce collisions (Issue #1)
+        self.nonce:              int                  = int(time.time() * 1_000_000)
 
     # ── Computed properties ───────────────────────────────────────────────────
 

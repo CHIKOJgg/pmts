@@ -1,6 +1,7 @@
-pydantic
-aiohttp
-websockets
-asyncio-throttle
-eth-account
-pip-tools
+pydantic==2.7.1
+aiohttp==3.9.5
+websockets==12.0
+asyncio-throttle==1.0.2
+eth-account==0.11.2
+pip-tools==7.4.1
+prometheus-client==0.20.0

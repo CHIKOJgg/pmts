@@ -8,6 +8,7 @@ import websockets
 from data.market_data_provider import _SnapshotCB
 from data.models import MarketSnapshot
 from src.types import Platform
+from infrastructure.observability import FEED_LAST_TS, RECONNECT_TOTAL, API_ERRORS_TOTAL
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ class OpinionWSAdapter:
     async def _run_loop(self) -> None:
         retry_delay = 1.0
         while self._running:
+            RECONNECT_TOTAL.labels(platform=self.PLATFORM.value).inc()
             try:
                 async with websockets.connect(self._ws_url) as ws:
                     retry_delay = 1.0
@@ -82,6 +84,7 @@ class OpinionWSAdapter:
                 if not self._running:
                     break
                 logger.error("Opinion WS error: %s. Retrying in %.1fs...", exc, retry_delay)
+                API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type=type(exc).__name__).inc()
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, 60.0)
 
@@ -124,9 +127,12 @@ class OpinionWSAdapter:
                 ts=ts,
                 received_ts=int(time.time() * 1000)
             )
+            
+            FEED_LAST_TS.labels(platform=self.PLATFORM.value, market_id=market_id).set(ts / 1000.0)
 
             if self._callback:
                 await self._callback(snapshot)
         except Exception as exc:
+            API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type="parse_error").inc()
             logger.debug("Error handling Opinion WS message: %s", exc)
 

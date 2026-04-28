@@ -41,6 +41,10 @@ class KillSwitch:
         self._activations: list[ActivationRecord] = []
         self._resets:      list[ResetRecord]      = []
 
+    def sync_state(self, active: bool) -> None:
+        """Update active status silently (no logs/audit) — used for startup restoration."""
+        self._active = active
+
     @property
     def is_active(self) -> bool:
         return self._active

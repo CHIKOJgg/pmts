@@ -4,7 +4,7 @@ import json
 import time
 import uuid
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import aiohttp
 from asyncio_throttle import Throttler
@@ -34,6 +34,8 @@ _EIP712_DOMAIN = {
     # "verifyingContract": "0x..." # This is dynamic per quote token
 }
 
+_SANDBOX_HOST: str = "https://openapi-testnet.opinion.trade/openapi"
+
 class OpinionClient:
     """
     Opinion Markets REST API Client implementation.
@@ -46,22 +48,34 @@ class OpinionClient:
         self,
         api_key:             str,
         wallet_private_key:  str,
-        host:                str = _DEFAULT_HOST,
+        host:                Optional[str] = None,
         rate_limit_per_s:    int = 5,
         ctf_exchange_addr:   str = "0x0000000000000000000000000000000000000000", # Placeholder
+        sandbox:             bool = False,
     ) -> None:
         self._api_key            = api_key
         self._wallet_private_key = wallet_private_key
-        self._host               = host.rstrip("/")
+        self._sandbox            = sandbox
+        
+        if host:
+            self._host = host.rstrip("/")
+        else:
+            self._host = _SANDBOX_HOST if sandbox else _DEFAULT_HOST
+
         self._address            = Account.from_key(wallet_private_key).address
         self._ctf_exchange_addr  = ctf_exchange_addr
         
+        # Update chainId for EIP-712 if sandbox (BSC Testnet is 97)
+        self._domain = _EIP712_DOMAIN.copy()
+        if sandbox:
+            self._domain["chainId"] = 97
+
         self._session: Optional[aiohttp.ClientSession] = None
         self._throttler = Throttler(rate_limit_per_s)
 
         logger.info(
-            "OpinionClient initialized: host=%s, address=%s",
-            self._host, self._address
+            "OpinionClient initialized: host=%s, address=%s, sandbox=%s",
+            self._host, self._address, self._sandbox
         )
 
     @property
@@ -115,7 +129,7 @@ class OpinionClient:
                 ],
                 **types
             },
-            "domain": domain,
+            "domain": self._domain,
             "primaryType": "Order",
             "message": order,
         }
@@ -124,7 +138,7 @@ class OpinionClient:
         return signed.signature.hex()
 
     async def place_order(
-        self, submission: OrderSubmission, effective_price: float
+        self, submission: OrderSubmission, effective_price: float, nonce: Optional[int] = None
     ) -> PlacedOrderResponse:
         """Submit an order to Opinion Markets."""
         async with self._throttler:
@@ -137,6 +151,9 @@ class OpinionClient:
             
             maker_amount, taker_amount = (usdc_amount, tokens) if side_val == 0 else (tokens, usdc_amount)
 
+            # Use provided nonce for idempotency
+            final_nonce = nonce if nonce is not None else int(time.time() * 1000)
+
             order_msg = {
                 "salt": int(uuid.uuid4().int >> 64),
                 "maker": self._address,
@@ -146,7 +163,7 @@ class OpinionClient:
                 "makerAmount": maker_amount,
                 "takerAmount": taker_amount,
                 "expiration": int(time.time()) + 3600,
-                "nonce": int(time.time() * 1000),
+                "nonce": final_nonce,
                 "feeRateBps": 0, # Placeholder
                 "side": side_val,
                 "signatureType": 1, # EIP-712
@@ -213,9 +230,43 @@ class OpinionClient:
                     new_fills=[]
                 )
 
-def _assert_protocol_compat() -> None:
-    dummy = OpinionClient.__new__(OpinionClient)
-    if not isinstance(dummy, ExchangeClient):
-        raise TypeError("OpinionClient does not satisfy ExchangeClient protocol")
+    async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
+        """Fetch all open orders from Opinion Markets."""
+        async with self._throttler:
+            session = await self._get_session()
+            path = "/orders/open"
+            async with session.get(path) as resp:
+                resp.raise_for_status()
+                raw = await resp.json()
+                
+                # Assume raw is a list of open orders
+                orders = []
+                for o in raw:
+                    orders.append(OpenOrder(
+                        exchange_order_id=o["orderId"],
+                        market_id=o["marketId"],
+                        side="BUY" if o["side"] == 0 else "SELL",
+                        size_usdc=float(o.get("originalAmount", 0.0)),
+                        filled_usdc=float(o.get("originalAmount", 0.0)) - float(o.get("remainingAmount", 0.0)),
+                        limit_price=float(o.get("price", 0.0)),
+                        ts=int(time.time() * 1000)
+                    ))
+                return orders
 
-_assert_protocol_compat()
+    async def verify_connectivity(self) -> bool:
+        """Verify API keys by fetching the user profile or listing orders."""
+        try:
+            session = await self._get_session()
+            # Fetching open orders as a connectivity check
+            async with session.get("/orders/open") as resp:
+                if resp.status == 200:
+                    logger.info("Opinion connectivity verified.")
+                    return True
+                logger.error("Opinion connectivity failed: %d %s", resp.status, await resp.text())
+                return False
+        except Exception as exc:
+            logger.error("Opinion connectivity error: %s", exc)
+            return False
+
+if TYPE_CHECKING:
+    _: ExchangeClient = OpinionClient(api_key="", wallet_private_key="0x" + "0"*64)

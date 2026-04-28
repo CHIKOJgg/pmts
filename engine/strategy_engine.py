@@ -12,8 +12,7 @@ from execution.models import OrderProposal
 from src.types import Platform, StrategyId
 from strategies.arbitrage import ArbitrageStrategy, ArbConfig
 from strategies.delta_neutral import DeltaNeutralStrategy, DeltaNeutralConfig
-from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
-from ai.signal_context import SignalContext
+from ai.signal_context import SignalContext, NEUTRAL_CONTEXT
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +68,6 @@ class StrategyEngine:
         self._config     = config
         self._arb        = ArbitrageStrategy(config=arb_config)
         self._dn         = DeltaNeutralStrategy(config=dn_config)
-        # Instantiate AI Enhancer with heuristic-only fallback initially
-        self._ai         = AISignalEnhancer(AIEnhancerConfig(use_heuristic_only=True))
         self._arb_alloc: float = 0.0
         self._mm_alloc:  float = 0.0
         self._market:    Dict[str, _MarketState] = {}
@@ -88,7 +85,10 @@ class StrategyEngine:
         self._callbacks.append(cb)
 
     async def on_feature_vector(
-        self, fv: FeatureVector, now_ts: Optional[int] = None
+        self, 
+        fv: FeatureVector, 
+        now_ts: Optional[int] = None,
+        context: Optional[SignalContext] = None
     ) -> None:
         """
         Process one FeatureVector through all enabled strategies.
@@ -99,7 +99,7 @@ class StrategyEngine:
         st  = self._get_state(fv.market_id)
         proposals: List[OrderProposal] = []
 
-        ctx = await self._ai.enhance(fv)
+        ctx = context or NEUTRAL_CONTEXT
 
         if self._config.arb_enabled:
             proposals.extend(await self._eval_arb(fv, st, now, ctx))

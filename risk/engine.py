@@ -22,6 +22,7 @@ from risk.limits import RiskLimits, DEFAULT_LIMITS
 from src.types import (
     ConnectorStatus, Platform, RejectReason, RiskVerdict, Side, StrategyId,
 )
+from infrastructure.observability import DRAWDOWN_PCT, KILL_SWITCH_ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,13 @@ class RiskEngine:
             if loaded_res:
                 logger.info("Loaded %d risk reservations from SQLite", len(loaded_res))
 
+            # Load persistent kill switch state
+            if self._store.load_kill_switch():
+                logger.warning("Restoring ACTIVE kill switch state from SQLite")
+                self._kill_switch.sync_state(True)
+        
+        self.reconciliation_complete: bool = False
+
         # LRU dedup cache
         self._dedup: collections.OrderedDict[str, int] = collections.OrderedDict()
 
@@ -147,6 +155,9 @@ class RiskEngine:
         committed = sum(r[0] for r in self._reservations.values())
         available = max(0.0, cash - committed)
         drawdown  = _drawdown(peak, equity)
+        
+        DRAWDOWN_PCT.set(drawdown)
+        KILL_SWITCH_ACTIVE.set(1.0 if self._kill_switch.is_active else 0.0)
 
         def reject(reason: RejectReason, detail: str) -> RiskDecision:
             return self._reject(
@@ -289,6 +300,9 @@ class RiskEngine:
         """Release reservation when order reaches terminal state."""
         info = self._reservations.pop(proposal_id, None)
         if info is None:
+            # Check if it's in the store (reconciliation case)
+            if self._store:
+                self._store.remove_reservation(proposal_id)
             return
 
         if self._store:
@@ -301,6 +315,30 @@ class RiskEngine:
             self._mm_allocated = max(0.0, self._mm_allocated - reserved_amount)
         await self._portfolio.release_capital(reserved_amount)
 
+    def reconcile_reservations(self) -> None:
+        """
+        Sync SQLite reservations with memory and purge orphaned ones.
+        Called after ExecutionEngine reconciliation.
+        """
+        if not self._store:
+            return
+            
+        logger.info("Reconciling risk reservations...")
+        db_res = self._store.load_reservations()
+        
+        # Memory is empty on startup, so we populate it from DB
+        for pid, (amt, plat, strat) in db_res.items():
+            if pid not in self._reservations:
+                self._reservations[pid] = (amt, plat, strat)
+                if strat == StrategyId.ARB:
+                    self._arb_allocated += amt
+                else:
+                    self._mm_allocated += amt
+                    
+        # Any PID in memory that is NOT in ExecutionEngine trackers (after its reconcile)
+        # will be handled by the notify_terminal calls triggered by reconcile failures.
+        self.reconciliation_complete = True
+
     # ── Kill switch control ───────────────────────────────────────────────────
 
     def manual_activate(self, reason: str = "operator_manual") -> None:
@@ -310,11 +348,18 @@ class RiskEngine:
             _drawdown(peak, mtm.total_equity_usdc),
             peak, mtm.total_equity_usdc, None,
         )
+        if self._store:
+            self._store.save_kill_switch(True)
 
     def reset_kill_switch(
         self, confirmation_token: str, operator_id: Optional[str] = None
     ) -> bool:
-        return self._kill_switch.reset(confirmation_token, operator_id)
+        success = self._kill_switch.reset(confirmation_token, operator_id)
+        if success:
+            KILL_SWITCH_ACTIVE.set(0.0)
+            if self._store:
+                self._store.save_kill_switch(False)
+        return success
 
     @property
     def kill_switch_active(self) -> bool:
@@ -384,6 +429,9 @@ class RiskEngine:
             mtm_drawdown=drawdown, peak_equity=peak,
             current_equity=equity, triggering_id=triggering_id,
         )
+        KILL_SWITCH_ACTIVE.set(1.0)
+        if self._store:
+            self._store.save_kill_switch(True)
         if self._stream_writer:
             try:
                 self._stream_writer("risk_events", {
