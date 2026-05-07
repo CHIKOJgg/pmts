@@ -22,6 +22,18 @@ from config.logging_setup import configure_logging
 logger = logging.getLogger(__name__)
 
 DEFAULT_BACKTEST_MARKETS = ["BTC-Q4", "ETH-Q1", "SOL-Q2"]
+BACKTEST_RISK_LIMITS = {
+    "drawdown_kill_pct": 0.20,
+    "drawdown_warn_pct": 0.15,
+    "max_market_exposure_pct": 1.0,
+    "max_market_exposure_usdc": 10_000.0,
+    "max_arb_capital_usdc": 10_000.0,
+    "max_mm_capital_usdc": 10_000.0,
+    "max_net_delta_per_market": 10_000.0,
+    "max_single_order_usdc": 200.0,
+    "min_single_order_usdc": 1.0,
+    "min_free_capital_pct": 0.0,
+}
 
 async def run_live() -> None:
     from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
@@ -225,6 +237,7 @@ async def run_live() -> None:
 
 async def run_backtest(ticks: int, capital: float) -> None:
     from backtest.engine import BacktestEngine, build_synthetic_tick_stream
+    from risk.limits import RiskLimits
 
     settings = get_settings()
     market_ids = settings.trading.markets or DEFAULT_BACKTEST_MARKETS
@@ -244,6 +257,7 @@ async def run_backtest(ticks: int, capital: float) -> None:
     engine = BacktestEngine(
         tick_streams=streams,
         initial_capital=capital,
+        risk_limits=RiskLimits(**BACKTEST_RISK_LIMITS),
         seed=42,
     )
     result = await engine.run()
