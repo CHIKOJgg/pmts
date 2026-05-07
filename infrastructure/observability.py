@@ -1,8 +1,43 @@
+from __future__ import annotations
+
 import logging
 import time
 from typing import Dict, Any, Callable, List, Optional
-from aiohttp import web
-from prometheus_client import Gauge, Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
+
+try:
+    from aiohttp import web
+except Exception:  # pragma: no cover - import guard for backtest/offline environments
+    web = None
+
+try:
+    from prometheus_client import Gauge, Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
+except Exception:  # pragma: no cover - import guard for backtest/offline environments
+    CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
+
+    class _NoOpMetric:
+        def labels(self, *args, **kwargs):
+            return self
+
+        def set(self, *args, **kwargs):
+            return None
+
+        def inc(self, *args, **kwargs):
+            return None
+
+        def observe(self, *args, **kwargs):
+            return None
+
+    def Gauge(*args, **kwargs):  # type: ignore[misc]
+        return _NoOpMetric()
+
+    def Counter(*args, **kwargs):  # type: ignore[misc]
+        return _NoOpMetric()
+
+    def Histogram(*args, **kwargs):  # type: ignore[misc]
+        return _NoOpMetric()
+
+    def generate_latest(*args, **kwargs):  # type: ignore[misc]
+        return b""
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +168,8 @@ class ObservabilityServer:
     and a /metrics/json endpoint for JSON export.
     """
     def __init__(self, port: int = 8080):
+        if web is None:
+            raise RuntimeError("aiohttp.web is required to start ObservabilityServer")
         self.port = port
         self.app = web.Application()
         self.app.router.add_get('/health', self.handle_liveness)

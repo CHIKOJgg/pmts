@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import json
 import time
 import logging
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -302,3 +305,16 @@ class PolymarketClient:
 
 if TYPE_CHECKING:
     _: ExchangeClient = PolymarketClient(api_key="", secret="", passphrase="", wallet_private_key="0x" + "0"*64)
+
+
+def _assert_protocol_compat() -> None:
+    """Import-time guard used by tests to ensure protocol shape stays aligned."""
+    client = PolymarketClient(
+        api_key="",
+        secret="",
+        passphrase="",
+        wallet_private_key="0x" + "ab" * 32,
+        host="https://placeholder.invalid",
+    )
+    if not isinstance(client, ExchangeClient):
+        raise TypeError("PolymarketClient does not satisfy ExchangeClient protocol")

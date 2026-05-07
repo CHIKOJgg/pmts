@@ -19,27 +19,29 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config.settings import get_settings
 from config.logging_setup import configure_logging
 
-from data.market_data_provider import MarketDataProvider
-from data.adapters.polymarket_ws import PolymarketWSAdapter
-from data.adapters.opinion_ws import OpinionWSAdapter
-from portfolio.manager import PortfolioManager
-from portfolio.storage import SqlitePortfolioStore
-from risk.engine import RiskEngine
-from risk.kill_switch import KillSwitch
-from risk.limits import RiskLimits
-from engine.strategy_engine import StrategyEngine, StrategyConfig
-from strategies.arbitrage import ArbConfig
-from strategies.delta_neutral import DeltaNeutralConfig
-from execution.clients.polymarket import PolymarketClient
-from execution.clients.opinion import OpinionClient
-from execution.engine import ExecutionEngine
-from engine.orchestrator import Orchestrator
-from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
-from infrastructure.observability import ObservabilityServer, HealthMonitor
-
 logger = logging.getLogger(__name__)
 
+DEFAULT_BACKTEST_MARKETS = ["BTC-Q4", "ETH-Q1", "SOL-Q2"]
+
 async def run_live() -> None:
+    from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
+    from data.adapters.opinion_ws import OpinionWSAdapter
+    from data.adapters.polymarket_ws import PolymarketWSAdapter
+    from data.market_data_provider import MarketDataProvider
+    from engine.orchestrator import Orchestrator
+    from engine.strategy_engine import StrategyEngine, StrategyConfig
+    from execution.clients.opinion import OpinionClient
+    from execution.clients.polymarket import PolymarketClient
+    from execution.engine import ExecutionEngine
+    from infrastructure.observability import HealthMonitor, ObservabilityServer
+    from portfolio.manager import PortfolioManager
+    from portfolio.storage import SqlitePortfolioStore
+    from risk.engine import RiskEngine
+    from risk.kill_switch import KillSwitch
+    from risk.limits import RiskLimits
+    from strategies.arbitrage import ArbConfig
+    from strategies.delta_neutral import DeltaNeutralConfig
+
     settings = get_settings()
     settings.validate()
 
@@ -220,27 +222,59 @@ async def run_live() -> None:
     await op_client.close()
     logger.info("Shutdown complete.")
 
+
+async def run_backtest(ticks: int, capital: float) -> None:
+    from backtest.engine import BacktestEngine, build_synthetic_tick_stream
+
+    settings = get_settings()
+    market_ids = settings.trading.markets or DEFAULT_BACKTEST_MARKETS
+    selected_markets = market_ids[: max(1, min(len(market_ids), ticks))]
+    market_count = max(1, len(selected_markets))
+    per_market_ticks = max(1, ticks // market_count)
+
+    streams = {
+        market_id: build_synthetic_tick_stream(
+            market_id,
+            n_ticks=per_market_ticks,
+            seed=42,
+        )
+        for market_id in selected_markets
+    }
+
+    engine = BacktestEngine(
+        tick_streams=streams,
+        initial_capital=capital,
+        seed=42,
+    )
+    result = await engine.run()
+    print(result.summary())
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="PMTS — Prediction Market Trading System")
     parser.add_argument("--mode", choices=["backtest", "live"], default="backtest")
     parser.add_argument("--ticks", type=int, default=2000)
     parser.add_argument("--capital", type=float, default=10000.0)
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     settings = get_settings()
-    configure_logging(level=args.log_level)
-    
-    try:
-        settings.validate()
-    except ValueError as e:
-        logger.error(str(e))
-        sys.exit(1)
+    if args.verbose and args.log_level == "INFO":
+        args.log_level = "DEBUG"
+    configure_logging(
+        level=args.log_level,
+        fmt=settings.logging.fmt,
+        file_path=settings.logging.file_path,
+    )
 
     if args.mode == "backtest":
-        logger.error("Backtest mode not implemented in this entry point.")
-        sys.exit(1)
+        asyncio.run(run_backtest(args.ticks, args.capital))
     else:
+        try:
+            settings.validate()
+        except ValueError as e:
+            logger.error(str(e))
+            sys.exit(1)
         asyncio.run(run_live())
 
 if __name__ == "__main__":

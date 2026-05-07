@@ -1,6 +1,7 @@
 """config/settings.py — All configuration from environment variables. Zero deps."""
 from __future__ import annotations
 import os
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -20,6 +21,15 @@ def _ef(k: str, d: float) -> float:
     except (ValueError, TypeError):
         return d
 
+def _secret(k: str, file_k: str, d: str = "") -> str:
+    file_path = os.environ.get(file_k, "").strip()
+    if file_path:
+        try:
+            return Path(file_path).read_text(encoding="utf-8").strip()
+        except OSError:
+            return d
+    return os.environ.get(k, d)
+
 def _eb(k: str, d: bool) -> bool:
     return os.environ.get(k, str(d)).lower() in ("1", "true", "yes", "on")
 
@@ -28,10 +38,10 @@ def _eb(k: str, d: bool) -> bool:
 class PolymarketConfig:
     clob_url:      str = field(default_factory=lambda: _e("PM_CLOB_URL", "https://clob.polymarket.com"))
     ws_url:        str = field(default_factory=lambda: _e("PM_WS_URL",   "wss://ws-subscriptions-clob.polymarket.com/ws/market"))
-    api_key:       str = field(default_factory=lambda: _e("PM_API_KEY"))
-    api_secret:    str = field(default_factory=lambda: _e("PM_API_SECRET"))
-    passphrase:    str = field(default_factory=lambda: _e("PM_PASSPHRASE"))
-    wallet_key:    str = field(default_factory=lambda: _e("PM_WALLET_KEY"))
+    api_key:       str = field(default_factory=lambda: _secret("PM_API_KEY", "PM_API_KEY_FILE"))
+    api_secret:    str = field(default_factory=lambda: _secret("PM_API_SECRET", "PM_API_SECRET_FILE"))
+    passphrase:    str = field(default_factory=lambda: _secret("PM_PASSPHRASE", "PM_PASSPHRASE_FILE"))
+    wallet_key:    str = field(default_factory=lambda: _secret("PM_WALLET_KEY", "PM_WALLET_KEY_FILE"))
     taker_fee_bps: int = field(default_factory=lambda: _ei("PM_TAKER_FEE_BPS", 20))
     sandbox:       bool = field(default_factory=lambda: _eb("PM_SANDBOX", False))
 
@@ -40,8 +50,8 @@ class PolymarketConfig:
 class OpinionConfig:
     rest_url:      str = field(default_factory=lambda: _e("OP_REST_URL", "https://api.opinion.markets/v1"))
     ws_url:        str = field(default_factory=lambda: _e("OP_WS_URL",   "wss://ws.opinion.markets"))
-    api_key:       str = field(default_factory=lambda: _e("OP_API_KEY"))
-    wallet_key:    str = field(default_factory=lambda: _e("OP_WALLET_KEY"))
+    api_key:       str = field(default_factory=lambda: _secret("OP_API_KEY", "OP_API_KEY_FILE"))
+    wallet_key:    str = field(default_factory=lambda: _secret("OP_WALLET_KEY", "OP_WALLET_KEY_FILE"))
     taker_fee_bps: int = field(default_factory=lambda: _ei("OP_TAKER_FEE_BPS", 25))
     sandbox:       bool = field(default_factory=lambda: _eb("OP_SANDBOX", False))
 
@@ -56,7 +66,7 @@ class TradingConfig:
     enable_hedge:        bool       = field(default_factory=lambda: _eb("ENABLE_HEDGE",         True))
     arb_budget_usdc:     float      = field(default_factory=lambda: _ef("ARB_BUDGET_USDC",     2_000.0))
     mm_budget_usdc:      float      = field(default_factory=lambda: _ef("MM_BUDGET_USDC",      3_000.0))
-    kill_switch_token:   str        = field(default_factory=lambda: _e("KILL_SWITCH_TOKEN",    "CHANGE-ME"))
+    kill_switch_token:   str        = field(default_factory=lambda: _secret("KILL_SWITCH_TOKEN", "KILL_SWITCH_TOKEN_FILE", "CHANGE-ME"))
     drawdown_kill_pct:   float      = field(default_factory=lambda: _ef("DRAWDOWN_KILL_PCT",    0.20))
     drawdown_warn_pct:   float      = field(default_factory=lambda: _ef("DRAWDOWN_WARN_PCT",    0.15))
     max_order_usdc:      float      = field(default_factory=lambda: _ef("MAX_ORDER_USDC",       200.0))
