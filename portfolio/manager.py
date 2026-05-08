@@ -79,6 +79,7 @@ class _Position:
         "yes_qty", "no_qty",
         "avg_cost_yes", "avg_cost_no",
         "realised_pnl",
+        "last_price_ts",
     )
 
     def __init__(self, market_id: str, platform: Platform) -> None:
@@ -89,6 +90,7 @@ class _Position:
         self.avg_cost_yes: Optional[float] = None
         self.avg_cost_no:  Optional[float] = None
         self.realised_pnl: float          = 0.0
+        self.last_price_ts: int           = 0
 
     @property
     def net_delta(self) -> float:
@@ -345,6 +347,21 @@ class PortfolioManager:
                 if prices:
                     total += pos.mtm(*prices)
         return total
+
+    def record_price_timestamp(self, market_id: str, platform: Platform, price_ts: int) -> None:
+        pos = self._positions.get((market_id, platform))
+        if pos is not None:
+            pos.last_price_ts = price_ts
+
+    def get_price_age_ms(self) -> int:
+        latest = 0
+        for pos in self._positions.values():
+            if pos.last_price_ts <= 0:
+                return 10**18
+            latest = max(latest, pos.last_price_ts)
+        if latest <= 0:
+            return 0
+        return max(0, _now_ms() - latest)
 
     def get_all_deltas(self) -> Dict[str, float]:
         markets = {mid for (mid, _) in self._positions}

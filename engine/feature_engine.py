@@ -56,6 +56,9 @@ class FeatureEngine:
         # Update vol history
         hist = self._history.setdefault(snap.market_id, collections.deque())
         hist.append((snap.received_ts or snap.ts, snap.yes_mid))
+        self._portfolio.record_price_timestamp(
+            snap.market_id, snap.platform, snap.received_ts or snap.ts
+        )
 
         # Get counterpart snapshot
         other_plat = (

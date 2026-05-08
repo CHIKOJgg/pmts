@@ -184,7 +184,7 @@ class DeltaNeutralStrategy:
 
     # ── Market Making ─────────────────────────────────────────────────────────
 
-    def evaluate_mm(self, fv: FeatureVector, platform: Platform, ctx: Optional[SignalContext] = None) -> MMQuotes:
+    def evaluate_mm(self, fv: FeatureVector, platform: Platform, ctx: Optional[SignalContext] = None) -> Optional[MMQuotes]:
         """
         Compute Stoikov reservation-price MM quotes for one venue.
 
@@ -211,11 +211,15 @@ class DeltaNeutralStrategy:
             return _suppress("vol_30s_not_ready")
 
         days = fv.days_to_resolution
+        if days is not None and days < 1.0:
+            return _suppress("near_expiry:<1d")
+
         if days is not None and days <= cfg.min_days_to_resolution:
             return _suppress(f"near_resolution:{days:.1f}d<={cfg.min_days_to_resolution}d")
 
-        if platform in fv.stale_markets:
-            return _suppress(f"{platform.value}_stale")
+        counterpart = Platform.OPINION if platform == Platform.POLYMARKET else Platform.POLYMARKET
+        if platform in fv.stale_markets or counterpart in fv.stale_markets:
+            return None
 
         mid = fv.mid_pm if platform == Platform.POLYMARKET else fv.mid_op
         if mid < 0.05 or mid > 0.95:

@@ -226,8 +226,12 @@ class ArbitrageStrategy:
             gross_edge         = gross_b
 
         # ── Guard 5: Depth / fillable size ────────────────────────────────────
-        fillable1 = min(self._cfg.max_order_usdc, l1_depth * self._cfg.fill_certainty)
-        fillable2 = min(self._cfg.max_order_usdc, l2_depth * self._cfg.fill_certainty)
+        max_order_usdc = self._cfg.max_order_usdc
+        if fv.days_to_resolution is not None and fv.days_to_resolution < 1.0:
+            max_order_usdc *= 0.5
+
+        fillable1 = min(max_order_usdc, l1_depth * self._cfg.fill_certainty)
+        fillable2 = min(max_order_usdc, l2_depth * self._cfg.fill_certainty)
         raw_size  = min(fillable1, fillable2)
 
         if raw_size < self._cfg.min_order_usdc:
@@ -253,8 +257,8 @@ class ArbitrageStrategy:
         net_edge = gross_edge - c1_frac - c2_frac
 
         min_net_edge = self._cfg.min_net_edge
-        if ctx and ctx.confidence_multiplier > 0:
-            min_net_edge = self._cfg.min_net_edge / ctx.confidence_multiplier
+        if ctx is not None:
+            min_net_edge *= max(0.1, 1.0 + ctx.confidence_adjustment)
 
         if net_edge < min_net_edge:
             self.rejected_no_edge += 1

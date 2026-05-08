@@ -147,6 +147,19 @@ class RiskEngine:
         """
         self.total_evaluated += 1
         now    = _now_ms()
+        mtm_age_ms = self._portfolio.get_price_age_ms()
+        if mtm_age_ms > self._limits.max_mtm_age_ms:
+            return self._reject(
+                proposal,
+                RejectReason.STALE_MTM,
+                f"MTM price {mtm_age_ms}ms old > limit {self._limits.max_mtm_age_ms}ms",
+                available=0.0,
+                committed=sum(r[0] for r in self._reservations.values()),
+                drawdown=0.0,
+                peak=self._portfolio.peak_equity,
+                equity=self._portfolio.peak_equity,
+                now=now,
+            )
         mtm    = self._portfolio.get_portfolio_mtm()
         peak   = self._portfolio.peak_equity
         equity = mtm.total_equity_usdc

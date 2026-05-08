@@ -80,6 +80,11 @@ class SignalContext:
         """Combined modifier applied to arb edge threshold."""
         return max(0.1, self.arb_quality * self.confidence_multiplier)
 
+    @property
+    def confidence_adjustment(self) -> float:
+        """Convenience delta used to scale arb thresholds from the neutral baseline."""
+        return self.confidence_multiplier - 1.0
+
 
 # Neutral sentinel — no AI adjustment
 NEUTRAL_CONTEXT = SignalContext(

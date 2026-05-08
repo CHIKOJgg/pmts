@@ -119,7 +119,8 @@ async def run_live() -> None:
     strategy = StrategyEngine(
         config=strat_cfg,
         arb_config=arb_cfg,
-        dn_config=dn_cfg
+        dn_config=dn_cfg,
+        ai_enhancer=ai_enhancer,
     )
     
     # 5. Data Adapters & Provider

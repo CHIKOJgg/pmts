@@ -8,6 +8,7 @@ from typing import Callable, Coroutine, Dict, List, Optional
 
 from data.models import FeatureVector
 from execution.models import OrderProposal
+from ai.enhancer import AISignalEnhancer
 from src.types import Platform
 from strategies.arbitrage import ArbitrageStrategy, ArbConfig
 from strategies.delta_neutral import DeltaNeutralStrategy, DeltaNeutralConfig
@@ -63,10 +64,12 @@ class StrategyEngine:
         config:     StrategyConfig      = StrategyConfig(),
         arb_config: ArbConfig           = ArbConfig(),
         dn_config:  DeltaNeutralConfig  = DeltaNeutralConfig(),
+        ai_enhancer: Optional[AISignalEnhancer] = None,
     ) -> None:
         self._config     = config
         self._arb        = ArbitrageStrategy(config=arb_config)
         self._dn         = DeltaNeutralStrategy(config=dn_config)
+        self._ai         = ai_enhancer
         self._arb_alloc: float = 0.0
         self._mm_alloc:  float = 0.0
         self._market:    Dict[str, _MarketState] = {}
@@ -98,7 +101,12 @@ class StrategyEngine:
         st  = self._get_state(fv.market_id)
         proposals: List[OrderProposal] = []
 
-        ctx = context or NEUTRAL_CONTEXT
+        ctx = context
+        if ctx is None:
+            if self._ai is not None:
+                ctx = await self._ai.enhance(fv)
+            else:
+                ctx = NEUTRAL_CONTEXT
 
         if self._config.arb_enabled:
             proposals.extend(await self._eval_arb(fv, st, now, ctx))
@@ -222,6 +230,8 @@ class StrategyEngine:
         proposals: List[OrderProposal] = []
         for platform in self._config.mm_platforms:
             result = self._dn.evaluate_mm(fv, platform, ctx=ctx)
+            if result is None:
+                continue
             if result.suppressed:
                 continue
             if result.bid_proposal:

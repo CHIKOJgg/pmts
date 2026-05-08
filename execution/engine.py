@@ -27,6 +27,7 @@ TICK_SIZE:           float = 0.001   # 1 probability tick
 DEFAULT_POLL_NORMAL_S:  float = 2.0
 DEFAULT_POLL_FAST_S:    float = 0.5
 DEFAULT_EXPIRY_CHECK_S: float = 0.25
+TRACKER_RETENTION_MS:   int   = 10 * 60 * 1000
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -157,6 +158,7 @@ class ExecutionEngine:
         store:          Optional[Any] = None, # SqlitePortfolioStore
         mdb:            Optional[Any] = None, # MarketDataProvider
         max_concurrent: int = 5,
+        tracker_retention_ms: int = TRACKER_RETENTION_MS,
     ) -> None:
         self._client    = client
         self._risk      = risk
@@ -171,6 +173,7 @@ class ExecutionEngine:
         self._queue:     asyncio.PriorityQueue = asyncio.PriorityQueue()
         self._seq:       int                   = 0
         self._semaphore: asyncio.Semaphore     = asyncio.Semaphore(max_concurrent)
+        self._tracker_retention_ms = tracker_retention_ms
 
         # Timing — overridable in tests
         self.poll_normal_s    = DEFAULT_POLL_NORMAL_S
@@ -213,6 +216,10 @@ class ExecutionEngine:
         self._tasks.append(asyncio.create_task(
             self._expiry_worker(),
             name=f"exec-expiry-{self._client.platform.value}",
+        ))
+        self._tasks.append(asyncio.create_task(
+            self._prune_worker(),
+            name=f"exec-prune-{self._client.platform.value}",
         ))
         logger.info("ExecutionEngine started (%s)", self._client.platform.value)
 
@@ -606,6 +613,30 @@ class ExecutionEngine:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
+    async def _prune_worker(self) -> None:
+        while not self._stopped:
+            try:
+                await asyncio.sleep(300)
+            except asyncio.CancelledError:
+                return
+            self._prune_terminal_trackers()
+
+    def _prune_terminal_trackers(self) -> int:
+        cutoff = _now_ms() - self._tracker_retention_ms
+        stale = [
+            pid for pid, tracker in self._trackers.items()
+            if tracker.status.is_terminal
+            and tracker.terminal_at is not None
+            and tracker.terminal_at < cutoff
+        ]
+        for pid in stale:
+            tracker = self._trackers.pop(pid, None)
+            if tracker and tracker.exchange_order_id:
+                self._exch_to_proposal.pop(tracker.exchange_order_id, None)
+        if stale:
+            logger.debug("Pruned %d terminal trackers", len(stale))
+        return len(stale)
+
     def _effective_price(self, submission: OrderSubmission, now: int) -> float:
         """
         ARB orders near expiry cross spread by 1 tick to improve fill odds.
@@ -641,9 +672,6 @@ class ExecutionEngine:
     def _finalise(self, tracker: OrderTracker) -> None:
         if tracker.exchange_order_id:
             self._exch_to_proposal.pop(tracker.exchange_order_id, None)
-        # Remove terminal tracker to prevent unbounded memory growth
-        self._trackers.pop(tracker.proposal_id, None)
-        
         if self._store:
             # Step 6: Remove from active orders in DB
             self._store.remove_order(tracker.proposal_id)

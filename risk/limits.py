@@ -18,6 +18,7 @@ class RiskLimits:
     min_free_capital_pct:     float = 0.10
     dedup_window_s:           int   = 60
     dedup_cache_size:         int   = 10_000
+    max_mtm_age_ms:           int   = 10_000
 
     def __post_init__(self) -> None:
         errs = []
@@ -32,6 +33,8 @@ class RiskLimits:
             errs.append("min_single_order_usdc must be < max_single_order_usdc")
         if not (0.0 <= self.min_free_capital_pct < 1.0):
             errs.append("min_free_capital_pct must be in [0, 1)")
+        if self.max_mtm_age_ms <= 0:
+            errs.append("max_mtm_age_ms must be > 0")
         if errs:
             raise ValueError("Invalid RiskLimits:\n" + "\n".join(f"  {e}" for e in errs))
 

@@ -461,6 +461,303 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         self.assertEqual(strategy_state.last_mm_ts, 0)
         self.assertEqual(strategy_state.last_hedge_ts, 0)
 
+    def test_ai_confidence_tightens_arb_threshold(self):
+        """StrategyEngine should call AI and tighten arb acceptance when confidence rises."""
+        from ai.signal_context import SignalContext, MarketRegime, VolRegime
+        from data.models import FeatureVector
+        from engine.strategy_engine import StrategyEngine, StrategyConfig
+        from strategies.arbitrage import ArbConfig
+        from strategies.delta_neutral import DeltaNeutralConfig
+
+        class _FakeAI:
+            def __init__(self):
+                self.calls = 0
+
+            async def enhance(self, fv):
+                self.calls += 1
+                return SignalContext(
+                    market_id=fv.market_id,
+                    confidence_multiplier=2.0,
+                    regime=MarketRegime.STABLE,
+                    vol_regime=VolRegime.NORMAL,
+                    suppress_mm=False,
+                    arb_quality=0.5,
+                    hedge_urgency=0.0,
+                    model_version="test",
+                    inference_ms=1.0,
+                    feature_count=1,
+                    is_fallback=True,
+                )
+
+        ai = _FakeAI()
+        strategy = StrategyEngine(
+            config=StrategyConfig(
+                arb_enabled=True,
+                mm_enabled=False,
+                hedge_enabled=False,
+                arb_budget_usdc=10_000.0,
+                mm_budget_usdc=0.0,
+            ),
+            arb_config=ArbConfig(min_net_edge=0.006),
+            dn_config=DeltaNeutralConfig(),
+            ai_enhancer=ai,
+        )
+
+        emitted = []
+
+        async def collect(proposal):
+            emitted.append(proposal)
+
+        strategy.add_proposal_callback(collect)
+        ts = now_ms()
+        fv = FeatureVector(
+            market_id="BTC-Q4",
+            ts=ts,
+            computed_ts=ts + 1,
+            arb_signal=0.20,
+            stale_markets=[],
+            mid_pm=0.41,
+            mid_op=0.50,
+            spread_pm=0.02,
+            spread_op=0.02,
+            ofi_pm=0.0,
+            ofi_op=0.0,
+            vol_30s=0.01,
+            days_to_resolution=30.0,
+            portfolio_delta=0.0,
+            bid_depth_pm=1000.0,
+            ask_depth_pm=1000.0,
+            bid_depth_op=1000.0,
+            ask_depth_op=1000.0,
+        )
+
+        run(strategy.on_feature_vector(fv))
+        self.assertEqual(ai.calls, 1)
+        self.assertEqual(emitted, [], "AI confidence should tighten the arb threshold enough to reject this edge")
+
+    def test_ai_suppress_mm_blocks_quotes(self):
+        """AI suppress_mm should prevent MM quotes for the tick."""
+        from ai.signal_context import SignalContext, MarketRegime, VolRegime
+        from data.models import FeatureVector
+        from engine.strategy_engine import StrategyEngine, StrategyConfig
+        from strategies.arbitrage import ArbConfig
+        from strategies.delta_neutral import DeltaNeutralConfig
+
+        class _FakeAI:
+            def __init__(self, suppress_mm: bool):
+                self.suppress_mm = suppress_mm
+                self.calls = 0
+
+            async def enhance(self, fv):
+                self.calls += 1
+                return SignalContext(
+                    market_id=fv.market_id,
+                    confidence_multiplier=1.0,
+                    regime=MarketRegime.STABLE,
+                    vol_regime=VolRegime.NORMAL,
+                    suppress_mm=self.suppress_mm,
+                    arb_quality=0.5,
+                    hedge_urgency=0.0,
+                    model_version="test",
+                    inference_ms=1.0,
+                    feature_count=1,
+                    is_fallback=True,
+                )
+
+        ts = now_ms()
+        fv = FeatureVector(
+            market_id="BTC-Q4",
+            ts=ts,
+            computed_ts=ts + 1,
+            arb_signal=0.0,
+            stale_markets=[],
+            mid_pm=0.50,
+            mid_op=0.51,
+            spread_pm=0.02,
+            spread_op=0.02,
+            ofi_pm=0.0,
+            ofi_op=0.0,
+            vol_30s=0.01,
+            days_to_resolution=30.0,
+            portfolio_delta=0.0,
+            bid_depth_pm=1000.0,
+            ask_depth_pm=1000.0,
+            bid_depth_op=1000.0,
+            ask_depth_op=1000.0,
+        )
+
+        baseline = StrategyEngine(
+            config=StrategyConfig(
+                arb_enabled=False,
+                mm_enabled=True,
+                hedge_enabled=False,
+                arb_budget_usdc=0.0,
+                mm_budget_usdc=10_000.0,
+            ),
+            arb_config=ArbConfig(min_net_edge=0.006),
+            dn_config=DeltaNeutralConfig(),
+        )
+        baseline_emitted = []
+
+        async def collect_baseline(proposal):
+            baseline_emitted.append(proposal)
+
+        baseline.add_proposal_callback(collect_baseline)
+        run(baseline.on_feature_vector(fv))
+        self.assertGreater(len(baseline_emitted), 0, "Control case should emit MM quotes without suppression")
+
+        suppressed = StrategyEngine(
+            config=StrategyConfig(
+                arb_enabled=False,
+                mm_enabled=True,
+                hedge_enabled=False,
+                arb_budget_usdc=0.0,
+                mm_budget_usdc=10_000.0,
+            ),
+            arb_config=ArbConfig(min_net_edge=0.006),
+            dn_config=DeltaNeutralConfig(),
+            ai_enhancer=_FakeAI(suppress_mm=True),
+        )
+        suppressed_emitted = []
+
+        async def collect_suppressed(proposal):
+            suppressed_emitted.append(proposal)
+
+        suppressed.add_proposal_callback(collect_suppressed)
+        run(suppressed.on_feature_vector(fv))
+        self.assertEqual(suppressed_emitted, [], "AI suppress_mm should block MM quotes for the tick")
+
+    def test_stale_mtm_blocks_new_proposals(self):
+        """RiskEngine should reject new proposals when MTM pricing is stale."""
+        from portfolio.manager import FillRecord, PortfolioManager
+        from risk.engine import RiskEngine
+        from risk.kill_switch import KillSwitch
+        from risk.limits import RiskLimits
+        from src.types import Platform
+
+        def price_source(m, p):
+            return (0.50, 0.50)
+
+        portfolio = PortfolioManager(10_000.0, price_source)
+        run(portfolio.start())
+        run(portfolio.record_fill(FillRecord(
+            proposal_id=str(uuid.uuid4()),
+            order_id=str(uuid.uuid4()),
+            market_id="BTC-Q4",
+            platform=Platform.POLYMARKET,
+            side="buy_yes",
+            filled_usdc=100.0,
+            fill_price=0.50,
+            ts=now_ms(),
+        )))
+        portfolio.record_price_timestamp("BTC-Q4", Platform.POLYMARKET, now_ms() - 20_000)
+
+        risk = RiskEngine(
+            portfolio=portfolio,
+            kill_switch=KillSwitch("test-token"),
+            limits=RiskLimits(
+                min_free_capital_pct=0.0,
+                max_single_order_usdc=10_000.0,
+                max_market_exposure_usdc=100_000.0,
+                max_market_exposure_pct=1.0,
+                max_net_delta_per_market=100_000.0,
+                max_arb_capital_usdc=100_000.0,
+                max_mm_capital_usdc=100_000.0,
+                max_mtm_age_ms=1_000,
+            ),
+        )
+
+        d = risk.evaluate(self._proposal(size=50.0))
+        self.assertTrue(d.rejected)
+        self.assertEqual(d.reject_reason.value, "stale_mtm")
+        run(portfolio.stop())
+
+    def test_mm_requires_both_venues_fresh(self):
+        """DeltaNeutralStrategy should refuse MM quotes if either venue is stale."""
+        from data.models import FeatureVector
+        from strategies.delta_neutral import DeltaNeutralStrategy
+        from src.types import Platform
+
+        ts = now_ms()
+        fresh = FeatureVector(
+            market_id="BTC-Q4",
+            ts=ts,
+            computed_ts=ts + 1,
+            arb_signal=0.0,
+            stale_markets=[],
+            mid_pm=0.50,
+            mid_op=0.51,
+            spread_pm=0.02,
+            spread_op=0.02,
+            ofi_pm=0.0,
+            ofi_op=0.0,
+            vol_30s=0.01,
+            days_to_resolution=30.0,
+            portfolio_delta=0.0,
+            bid_depth_pm=1000.0,
+            ask_depth_pm=1000.0,
+            bid_depth_op=1000.0,
+            ask_depth_op=1000.0,
+        )
+        stale_counterpart = FeatureVector(
+            market_id="BTC-Q4",
+            ts=ts,
+            computed_ts=ts + 1,
+            arb_signal=math.nan,
+            stale_markets=[Platform.OPINION],
+            mid_pm=0.50,
+            mid_op=0.51,
+            spread_pm=0.02,
+            spread_op=0.02,
+            ofi_pm=0.0,
+            ofi_op=0.0,
+            vol_30s=0.01,
+            days_to_resolution=30.0,
+            portfolio_delta=0.0,
+            bid_depth_pm=1000.0,
+            ask_depth_pm=1000.0,
+            bid_depth_op=1000.0,
+            ask_depth_op=1000.0,
+        )
+
+        strat = DeltaNeutralStrategy()
+        self.assertIsNotNone(strat.evaluate_mm(fresh, Platform.POLYMARKET))
+        self.assertIsNone(strat.evaluate_mm(stale_counterpart, Platform.POLYMARKET))
+
+    def test_mm_disabled_near_expiry(self):
+        """DeltaNeutralStrategy should suppress MM quotes when expiry is within one day."""
+        from data.models import FeatureVector
+        from strategies.delta_neutral import DeltaNeutralStrategy
+        from src.types import Platform
+
+        ts = now_ms()
+        fv = FeatureVector(
+            market_id="BTC-Q4",
+            ts=ts,
+            computed_ts=ts + 1,
+            arb_signal=0.0,
+            stale_markets=[],
+            mid_pm=0.50,
+            mid_op=0.51,
+            spread_pm=0.02,
+            spread_op=0.02,
+            ofi_pm=0.0,
+            ofi_op=0.0,
+            vol_30s=0.01,
+            days_to_resolution=0.5,
+            portfolio_delta=0.0,
+            bid_depth_pm=1000.0,
+            ask_depth_pm=1000.0,
+            bid_depth_op=1000.0,
+            ask_depth_op=1000.0,
+        )
+
+        strat = DeltaNeutralStrategy()
+        result = strat.evaluate_mm(fv, Platform.POLYMARKET)
+        self.assertIsNotNone(result)
+        self.assertTrue(result.suppressed)
+        self.assertIn("near_expiry", result.suppression_reason)
+
     def test_dedup_blocks_repeated_proposal_id(self):
         """Same proposal_id within dedup window is rejected."""
         from src.types import RejectReason
@@ -473,6 +770,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
     def test_terminal_notification_releases_reservation(self):
         """After notify_terminal, capital is freed for next proposal."""
+        from src.types import Platform
         self._proposal(size=9_500.0)
 
         from risk.limits import RiskLimits
@@ -738,6 +1036,43 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
         # With simulated time = fv.ts, age = 0 → should pass
         result = arb.evaluate(fv, now_ts=fv.ts)
         self.assertTrue(result.accepted or result.rejection_reason != "signal_age")
+
+    def test_near_expiry_halves_arb_size(self):
+        """When days_to_resolution < 1, arb size should be cut in half."""
+        from data.models import FeatureVector
+        from strategies.arbitrage import ArbitrageStrategy, ArbConfig
+        arb = ArbitrageStrategy(ArbConfig(min_net_edge=0.003, max_order_usdc=200.0))
+        long_dated = self._fv(
+            arb_signal=0.20, age_ms=50, depth=1000.0,
+            spread=0.02, mid_pm=0.35, mid_op=0.62,
+        )
+        near_expiry = FeatureVector(
+            market_id=long_dated.market_id,
+            ts=long_dated.ts,
+            computed_ts=long_dated.computed_ts,
+            arb_signal=long_dated.arb_signal,
+            stale_markets=list(long_dated.stale_markets),
+            mid_pm=long_dated.mid_pm,
+            mid_op=long_dated.mid_op,
+            spread_pm=long_dated.spread_pm,
+            spread_op=long_dated.spread_op,
+            ofi_pm=long_dated.ofi_pm,
+            ofi_op=long_dated.ofi_op,
+            vol_30s=long_dated.vol_30s,
+            days_to_resolution=0.5,
+            portfolio_delta=long_dated.portfolio_delta,
+            bid_depth_pm=long_dated.bid_depth_pm,
+            ask_depth_pm=long_dated.ask_depth_pm,
+            bid_depth_op=long_dated.bid_depth_op,
+            ask_depth_op=long_dated.ask_depth_op,
+        )
+
+        result_long = arb.evaluate(long_dated)
+        result_short = arb.evaluate(near_expiry)
+        self.assertTrue(result_long.accepted, result_long.rejection_reason)
+        self.assertTrue(result_short.accepted, result_short.rejection_reason)
+        self.assertLess(result_short.final_size_usdc, result_long.final_size_usdc)
+        self.assertAlmostEqual(result_short.final_size_usdc, result_long.final_size_usdc * 0.5, delta=1.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1109,6 +1444,45 @@ class TestOrderTrackerIntegration(unittest.TestCase):
         t = OrderTracker(sub)
         t.record_submission("exch-003")
         self.assertTrue(t.is_expired(now_ms()))
+
+
+class TestExecutionEngineRetention(unittest.TestCase):
+
+    def test_prunes_old_terminal_trackers(self):
+        from execution.engine import ExecutionEngine
+        from execution.models import OrderSubmission
+        from execution.order_tracker import OrderTracker
+        from src.types import Platform, Side, OrderType, StrategyId
+
+        class _DummyClient:
+            platform = Platform.POLYMARKET
+
+        engine = ExecutionEngine(client=_DummyClient(), tracker_retention_ms=1_000)
+        sub = OrderSubmission(
+            order_id=str(uuid.uuid4()),
+            proposal_id=str(uuid.uuid4()),
+            market_id="BTC-Q4",
+            platform=Platform.POLYMARKET,
+            side=Side.BUY_YES,
+            size_usdc=100.0,
+            limit_price=0.50,
+            order_type=OrderType.LIMIT,
+            strategy_id=StrategyId.MM,
+            expiry_ms=now_ms() + 30_000,
+            token_quantity=200.0,
+            submitted_at=now_ms(),
+        )
+        tracker = OrderTracker(sub)
+        tracker.record_submission("exch-004")
+        tracker.record_cancellation()
+        tracker.terminal_at = now_ms() - 2_000
+        engine._trackers[tracker.proposal_id] = tracker
+        engine._exch_to_proposal[tracker.exchange_order_id] = tracker.proposal_id
+
+        pruned = engine._prune_terminal_trackers()
+        self.assertEqual(pruned, 1)
+        self.assertEqual(engine._trackers, {})
+        self.assertEqual(engine._exch_to_proposal, {})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

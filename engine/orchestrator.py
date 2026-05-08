@@ -124,12 +124,7 @@ class Orchestrator:
             self._market_locks[fv.market_id] = asyncio.Lock()
             
         async with self._market_locks[fv.market_id]:
-            # Step 2.5: AI Signal Enhancement (Explicit and Wired)
-            context = None
-            if self._ai:
-                context = await self._ai.enhance(fv)
-                
-            await self._strategy.on_feature_vector(fv, context=context)
+            await self._strategy.on_feature_vector(fv)
 
     # ── Step 3→4: Proposal → risk gate ───────────────────────────────────────
 

@@ -55,7 +55,7 @@ class OrderTracker:
     __slots__ = (
         "submission", "status", "exchange_order_id",
         "fills", "created_at", "submitted_at", "last_poll_at",
-        "tx_hash", "_last_latency_ms", "nonce",
+        "tx_hash", "_last_latency_ms", "nonce", "terminal_at",
     )
 
     def __init__(self, submission: OrderSubmission) -> None:
@@ -68,6 +68,7 @@ class OrderTracker:
         self.last_poll_at:       Optional[int]        = None
         self.tx_hash:            Optional[str]        = None
         self._last_latency_ms:   int                  = 0
+        self.terminal_at:        Optional[int]        = None
         # Microsecond resolution to prevent nonce collisions (Issue #1)
         self.nonce:              int                  = int(time.time() * 1_000_000)
 
@@ -146,6 +147,7 @@ class OrderTracker:
 
         if self.fill_ratio >= FILL_COMPLETE_THRESHOLD:
             self.status   = TrackerStatus.FILLED
+            self.terminal_at = _now_ms()
             final_status  = OrderStatus.FILLED
         else:
             self.status   = TrackerStatus.PARTIAL
@@ -162,16 +164,19 @@ class OrderTracker:
     def record_cancellation(self) -> ExecutionResult:
         assert not self.status.is_terminal, f"Already terminal: {self.status}"
         self.status = TrackerStatus.CANCELLED
+        self.terminal_at = _now_ms()
         return self._terminal(OrderStatus.CANCELLED)
 
     def record_expiry(self) -> ExecutionResult:
         assert not self.status.is_terminal, f"Already terminal: {self.status}"
         self.status = TrackerStatus.EXPIRED
+        self.terminal_at = _now_ms()
         return self._terminal(OrderStatus.CANCELLED)
 
     def record_rejection(self, error: str) -> ExecutionResult:
         assert not self.status.is_terminal, f"Already terminal: {self.status}"
         self.status = TrackerStatus.REJECTED
+        self.terminal_at = _now_ms()
         return ExecutionResult(
             proposal_id=self.proposal_id,
             exchange_order_id=self.exchange_order_id or "unknown",
@@ -189,6 +194,7 @@ class OrderTracker:
     def record_timeout(self) -> ExecutionResult:
         assert not self.status.is_terminal, f"Already terminal: {self.status}"
         self.status = TrackerStatus.TIMEOUT
+        self.terminal_at = _now_ms()
         return ExecutionResult(
             proposal_id=self.proposal_id,
             exchange_order_id="unknown",
