@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
+import re
 import time
 import unittest
 import uuid
@@ -578,6 +580,27 @@ class TestBacktestSystem(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 0, f"main.py failed:\n{r.stderr}")
         self.assertIn("+", r.stdout, "Expected positive P&L in output")
+
+    def test_backtest_cli_emits_trades(self):
+        """Regression: the CLI backtest must not silently drift to zero trades."""
+        import subprocess
+        import sys
+
+        env = os.environ.copy()
+        r = subprocess.run(
+            [sys.executable, "main.py", "--mode", "backtest",
+             "--ticks", "2000", "--capital", "10000", "--log-level", "WARNING"],
+            capture_output=True, text=True, cwd=".", env=env,
+        )
+
+        self.assertEqual(r.returncode, 0, f"main.py failed:\n{r.stderr}")
+        self.assertNotIn("$+0.00", r.stdout, "Backtest P&L regressed to zero")
+
+        fills = re.search(r"Fills:\s+(\d+)\s+full\s+\|\s+(\d+)\s+partial", r.stdout)
+        self.assertIsNotNone(fills, f"Could not parse fills from output:\n{r.stdout}")
+        full = int(fills.group(1))
+        partial = int(fills.group(2))
+        self.assertGreater(full + partial, 0, f"Backtest produced no trades:\n{r.stdout}")
 
     def test_backtest_is_deterministic(self):
         """Same seed → identical P&L."""
