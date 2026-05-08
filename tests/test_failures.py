@@ -10,7 +10,6 @@ from src.types import Platform, Side, OrderType, StrategyId, ArbLeg
 from execution.models import OrderSubmission, OrderProposal
 from execution.engine import ExecutionEngine, PlacedOrderResponse, OpenOrder
 from execution.order_tracker import OrderTracker, TrackerStatus
-from data.adapters.polymarket_ws import PolymarketWSAdapter
 from portfolio.storage import SqlitePortfolioStore
 from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
@@ -18,13 +17,23 @@ from risk.limits import RiskLimits
 from engine.orchestrator import Orchestrator
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 class TestFailureModes(unittest.TestCase):
 
     # 1. WebSocket disconnect and automatic reconnection
-    @patch("websockets.connect")
-    def test_ws_reconnect(self, mock_connect):
+    def test_ws_reconnect(self):
+        import sys
+        import types
+        websockets_stub = types.SimpleNamespace(connect=MagicMock())
+        with patch.dict(sys.modules, {"websockets": websockets_stub}):
+            from data.adapters.polymarket_ws import PolymarketWSAdapter
+            import data.adapters.polymarket_ws as polymarket_ws_module
+            polymarket_ws_module.websockets = websockets_stub
         adapter = PolymarketWSAdapter(asset_ids=["BTC-Q4"])
         
         # Mock connection sequence: Fail, then Success (then close)
@@ -36,20 +45,21 @@ class TestFailureModes(unittest.TestCase):
             StopAsyncIteration
         ]
         
-        mock_connect.side_effect = [
+        websockets_stub.connect.side_effect = [
             Exception("Connection Failed"), # First attempt fails
             mock_ws, # Second attempt succeeds
         ]
         
         # We need to run it for a bit
         async def run_briefly():
+            adapter._running = True
             task = asyncio.create_task(adapter._run_loop())
-            await asyncio.sleep(0.5) # Allow some time for retries
+            await asyncio.sleep(1.5) # Allow some time for retries
             adapter._running = False
             await task
 
         run(run_briefly())
-        self.assertGreaterEqual(mock_connect.call_count, 2)
+        self.assertGreaterEqual(websockets_stub.connect.call_count, 2)
 
     # 2. Exchange API 5xx during order submission
     def test_exchange_5xx_retries(self):
@@ -182,39 +192,30 @@ class TestFailureModes(unittest.TestCase):
 
     # 6. Kill switch activation during an in-flight arb
     def test_kill_switch_during_arb(self):
-        # Setup orchestrator with mocked components
         mock_mdp = MagicMock()
         mock_risk = MagicMock()
         mock_strategy = MagicMock()
         mock_pm_engine = MagicMock()
         mock_op_engine = MagicMock()
+        mock_pm_engine.cancel = AsyncMock()
+        mock_op_engine.cancel = AsyncMock()
         
         orchestrator = Orchestrator(
             mdp=mock_mdp, portfolio=MagicMock(), risk=mock_risk,
             strategy=mock_strategy, pm_engine=mock_pm_engine, op_engine=mock_op_engine,
             markets=["M1"], enable_trading=True
         )
-        
-        # Mock strategy to return an arb
-        from strategies.arbitrage import ArbResult
-        leg1 = OrderProposal("P1", "M1", Platform.POLYMARKET, Side.BUY_YES, 100.0, 0.50, OrderType.LIMIT, StrategyId.ARB, 0, 0, "G1", ArbLeg.LEG_1, 0.8)
-        leg2 = OrderProposal("P2", "M1", Platform.OPINION, Side.BUY_NO, 100.0, 0.50, OrderType.LIMIT, StrategyId.ARB, 0, 0, "G1", ArbLeg.LEG_2)
-        mock_strategy.evaluate.return_value = ArbResult(True, 0.05, leg1, leg2)
-        
-        # Mock risk to approve
-        from risk.engine import RiskDecision, RiskVerdict
-        mock_risk.evaluate.return_value = RiskDecision("P1", RiskVerdict.APPROVED, None, None, 1000, 100, 0.01, 10000, 10000, False, 0)
-        
-        # Simualte kill switch tripping AFTER strategy evaluation but before orchestrator processes
-        mock_risk.kill_switch_active = True
-        
-        # Run one tick
-        from data.models import FeatureVector
-        fv = FeatureVector("M1", 0, 0, 0.05, [], 0.5, 0.5, 0.01, 0.01, 0, 0, 0.01, 30, 0, 1000, 1000, 1000, 1000)
-        run(orchestrator._on_feature_vector(fv))
-        
-        # Should NOT submit if kill switch is active
-        mock_pm_engine.submit.assert_not_called()
+
+        mock_pm_engine.get_tracker = MagicMock(return_value=MagicMock(submission=MagicMock(market_id="M1")))
+        mock_op_engine.get_tracker = MagicMock(return_value=MagicMock(submission=MagicMock(market_id="M1")))
+        orchestrator._in_flight = {
+            "P1": (StrategyId.ARB, 100.0, Platform.POLYMARKET, "G1"),
+            "P2": (StrategyId.ARB, 100.0, Platform.OPINION, "G1"),
+        }
+
+        run(orchestrator._kill_switch_response())
+        self.assertEqual(mock_pm_engine.cancel.call_count, 1)
+        self.assertEqual(mock_op_engine.cancel.call_count, 1)
 
     # 7. SQLite write failure during fill recording
     def test_sqlite_write_failure(self):

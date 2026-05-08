@@ -285,8 +285,33 @@ class PolymarketClient:
                         filled_usdc=float(o.get("originalSize", 0.0)) - float(o.get("remainingSize", 0.0)),
                         limit_price=float(o.get("price", 0.0)),
                         ts=int(time.time() * 1000) # Fallback ts
-                    ))
+                        ))
                 return orders
+
+    async def get_market(self, condition_id: str) -> Optional[Dict[str, Any]]:
+        """Best-effort market lookup used by the resolution monitor."""
+        async with self._throttler:
+            session = await self._get_session()
+            path = f"/markets/{condition_id}"
+            headers = self._get_auth_headers("GET", path)
+            async with session.get(path, headers=headers) as resp:
+                if resp.status == 404:
+                    return None
+                resp.raise_for_status()
+                raw = await resp.json()
+                return raw
+
+    async def redeem_market(self, condition_id: str) -> bool:
+        """Best-effort redemption call for a resolved market."""
+        async with self._throttler:
+            session = await self._get_session()
+            path = f"/markets/{condition_id}/redeem"
+            headers = self._get_auth_headers("POST", path)
+            async with session.post(path, headers=headers) as resp:
+                if resp.status in (200, 202, 204, 404):
+                    return True
+                resp.raise_for_status()
+                return True
 
     async def verify_connectivity(self) -> bool:
         """Verify API keys by fetching the account profile."""

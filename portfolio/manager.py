@@ -10,7 +10,13 @@ from typing import Callable, Dict, Optional, Tuple
 
 from src.errors import NegativeHoldings
 from src.types import Outcome, Platform, Side
-from infrastructure.observability import OPEN_EXPOSURE_USDC
+from infrastructure.observability import (
+    OPEN_EXPOSURE_USDC,
+    PORTFOLIO_MTM_USDC,
+    PORTFOLIO_REALISED_PNL_USDC,
+    STRATEGY_FILL_USDC_TOTAL,
+    CAPITAL_UTILIZATION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +40,7 @@ class FillRecord:
     filled_usdc: float
     fill_price:  float
     ts:          int
+    strategy_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -254,6 +261,9 @@ class PortfolioManager:
                 self._peak_equity = equity
 
             self.fill_count += 1
+
+            if fill.strategy_id:
+                STRATEGY_FILL_USDC_TOTAL.labels(strategy=fill.strategy_id).inc(fill.filled_usdc)
             
             # Update exposure metric
             exposure = self.get_market_exposure_usdc(fill.market_id)
@@ -331,6 +341,11 @@ class PortfolioManager:
             if prices:
                 total_pos += pos.mtm(*prices)
         equity = self._cash_usdc + total_pos
+        PORTFOLIO_MTM_USDC.set(equity)
+        PORTFOLIO_REALISED_PNL_USDC.set(self._closed_pnl)
+        CAPITAL_UTILIZATION.set(
+            (self._reserved_usdc / equity) if equity > 0 else 0.0
+        )
         return PortfolioMTM(
             total_cash_usdc=self._cash_usdc,
             total_positions_mtm=total_pos,
@@ -409,6 +424,8 @@ class PortfolioManager:
         total_real  = (
             sum(p.realised_pnl for p in self._positions.values()) + self._closed_pnl
         )
+        PORTFOLIO_MTM_USDC.set(total_mtm)
+        PORTFOLIO_REALISED_PNL_USDC.set(total_real)
         return {
             "snapshot_id": str(uuid.uuid4()),
             "ts": _now_ms(),

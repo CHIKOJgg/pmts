@@ -22,7 +22,7 @@ from risk.limits import RiskLimits, DEFAULT_LIMITS
 from src.types import (
     ConnectorStatus, Platform, RejectReason, RiskVerdict, Side, StrategyId,
 )
-from infrastructure.observability import DRAWDOWN_PCT, KILL_SWITCH_ACTIVE
+from infrastructure.observability import DRAWDOWN_PCT, KILL_SWITCH_ACTIVE, CAPITAL_UTILIZATION
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,7 @@ class RiskEngine:
         
         DRAWDOWN_PCT.set(drawdown)
         KILL_SWITCH_ACTIVE.set(1.0 if self._kill_switch.is_active else 0.0)
+        CAPITAL_UTILIZATION.set(committed / equity if equity > 0 else 0.0)
 
         def reject(reason: RejectReason, detail: str) -> RiskDecision:
             return self._reject(

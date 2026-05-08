@@ -1,28 +1,20 @@
-# Kill Switch Activation & Reset
+# Kill Switch Runbook
 
-Use this runbook when the system exhibits erratic behavior or during extreme market volatility.
+Owner: Risk Officer
 
-## 1. Manual Activation
-If the bot is running but you need to stop trading immediately:
-- [ ] Trigger the emergency stop via the management endpoint (if available) or by sending a `POST` request with the `KILL_SWITCH_TOKEN`.
-- [ ] Alternatively, manually update the SQLite state:
-  ```bash
-  sqlite3 pmts.db "UPDATE kill_switch SET active = 1, reason = 'Manual intervention' WHERE id = 'global';"
-  ```
+Use this runbook whenever drawdown, stale data, or manual intervention requires an immediate trading stop.
 
-## 2. Verification
-- [ ] Check logs for `EMERGENCY STOP` or `Kill switch active`.
-- [ ] Verify `/ready` endpoint returns `503 Service Unavailable`.
-- [ ] Confirm all open orders are being cancelled.
-
-## 3. Investigation
-- [ ] Resolve the root cause (exchange error, data feed lag, etc.).
-- [ ] Check `pmts_drawdown_pct` in metrics to see if it was an auto-trip.
-
-## 4. Reset Procedure
-The bot will **NOT** resume automatically after a kill switch trip.
-- [ ] Deactivate the switch in SQLite:
-  ```bash
-  sqlite3 pmts.db "UPDATE kill_switch SET active = 0, reason = NULL WHERE id = 'global';"
-  ```
-- [ ] Restart the bot process to reload the state and perform reconciliation.
+1. Activate the kill switch.
+   - Use the operator endpoint or the management path wired to `RiskEngine.manual_activate()`.
+2. Verify the stop.
+   - `/ready` should return `503`.
+   - Logs should show `KILL SWITCH ACTIVATED` and open-order cancellation activity.
+3. Investigate the trigger.
+   - Check `pmts_drawdown_pct`.
+   - Check feed freshness and exchange error rates.
+4. Reset only after the cause is fixed.
+   - Call `RiskEngine.reset_kill_switch(token, operator_id=...)`.
+   - The reset clears reservations and portfolio state and flushes arb in-flight bookkeeping.
+5. Re-verify trading recovery.
+   - Confirm new proposals are flowing again for the affected markets.
+   - Confirm the system did not retain stale in-flight state.

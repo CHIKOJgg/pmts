@@ -102,6 +102,38 @@ class Orchestrator:
         await self._portfolio.stop()
         logger.info("Orchestrator stopped.")
 
+    def get_active_markets(self) -> list[str]:
+        return list(self._markets)
+
+    def remove_market(self, market_id: str) -> bool:
+        if market_id not in self._markets:
+            return False
+        self._markets = [m for m in self._markets if m != market_id]
+        return True
+
+    async def cancel_market_orders(self, market_id: str) -> int:
+        cancelled = 0
+        for pid, (_, _, platform, _) in list(self._in_flight.items()):
+            tracker = self._pm_engine.get_tracker(pid) or self._op_engine.get_tracker(pid)
+            if tracker is None or tracker.submission.market_id != market_id:
+                continue
+            engine = self._pm_engine if platform == Platform.POLYMARKET else self._op_engine
+            await engine.cancel(pid)
+            cancelled += 1
+        return cancelled
+
+    async def handle_market_resolution(self, market_id: str, outcome: Optional[str] = None) -> int:
+        removed = self.remove_market(market_id)
+        cancelled = await self.cancel_market_orders(market_id)
+        logger.critical(
+            "Market resolved market=%s outcome=%s removed=%s cancelled=%d",
+            market_id,
+            outcome or "unknown",
+            removed,
+            cancelled,
+        )
+        return cancelled
+
     async def emergency_stop(self, reason: str) -> None:
         logger.critical("EMERGENCY STOP: %s", reason)
         self._risk.manual_activate(reason)
@@ -227,6 +259,7 @@ class Orchestrator:
                         filled_usdc=result.filled_size_usdc,
                         fill_price=result.fill_price,
                         ts=result.ts,
+                        strategy_id=tracker.submission.strategy_id.value,
                     )
                     await self._portfolio.record_fill(fill)
 

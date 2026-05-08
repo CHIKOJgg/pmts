@@ -1,19 +1,19 @@
-# Graceful Shutdown Procedure
+# Shutdown Runbook
 
-Proper shutdown ensures all risk reservations are released and orders are handled.
+Owner: Ops Primary
 
-## 1. Initiate Shutdown
-- [ ] Send `SIGINT` (Ctrl+C) to the process.
-- [ ] **Do NOT** force kill (`SIGKILL`) unless the system hangs for > 30s.
+Use this runbook for planned shutdowns or operator-driven stops.
 
-## 2. Monitor Termination Sequence
-- [ ] Verify `Orchestrator stopping...` appears in logs.
-- [ ] Ensure `MarketDataProvider` stops first (prevents new signals).
-- [ ] Wait for `ExecutionEngine` to finish any pending cancellations.
-
-## 3. Verify State
-- [ ] Check logs for `Orchestrator stopped.`
-- [ ] Ensure the SQLite WAL file is merged (database file size may change).
-
-## 4. Post-Mortem (Optional)
-- [ ] If shutdown was due to an error, check `log_file` (if configured) before restarting.
+1. Pause trading intent if needed.
+   - Set `ENABLE_TRADING=false` for paper-only continuation, or stop data flow if you are ending the session.
+2. Stop the process cleanly.
+   - Send `SIGINT` first.
+   - Avoid `SIGKILL` unless the process is hung.
+3. Confirm shutdown logs.
+   - `Orchestrator stopping...`
+   - `ExecutionEngine stopped`
+   - `Orchestrator stopped.`
+4. Confirm persistence.
+   - SQLite should contain the latest reservations, fills, and terminal order state.
+5. Confirm restart readiness.
+   - A fresh boot should reconcile open orders and reservations before trading resumes.

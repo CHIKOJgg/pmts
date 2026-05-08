@@ -18,12 +18,17 @@ import re
 import time
 import unittest
 import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def run(coro):
     """Run a coroutine synchronously (stdlib-only, no pytest-asyncio needed)."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 def now_ms() -> int:
@@ -1488,6 +1493,233 @@ class TestExecutionEngineRetention(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────────────────────
 # IX. Config and logging smoke tests
 # ─────────────────────────────────────────────────────────────────────────────
+
+class TestProductionValidationScenarios(unittest.TestCase):
+
+    def _arb_setup(self, fill_ratio: float):
+        from engine.orchestrator import Orchestrator
+        from execution.models import OrderSubmission, OrderProposal
+        from execution.order_tracker import OrderTracker
+        from risk.engine import RiskEngine
+        from risk.kill_switch import KillSwitch
+        from risk.limits import RiskLimits
+        from portfolio.manager import PortfolioManager
+        from strategies.arbitrage import ArbConfig
+        from strategies.delta_neutral import DeltaNeutralConfig
+        from engine.strategy_engine import StrategyEngine, StrategyConfig
+        from src.types import Platform, Side, OrderType, StrategyId, ArbLeg
+
+        class _DummyMDP:
+            def add_callback(self, cb):
+                self.cb = cb
+
+            async def start(self):
+                return None
+
+            async def stop(self):
+                return None
+
+        class _DummyEngine:
+            def __init__(self, platform):
+                self.platform = platform
+                self.submit = AsyncMock()
+                self.cancel = AsyncMock()
+                self._trackers = {}
+
+            def add_result_callback(self, cb):
+                self.cb = cb
+
+            async def start(self):
+                return None
+
+            async def stop(self):
+                return None
+
+            def get_tracker(self, proposal_id):
+                return self._trackers.get(proposal_id)
+
+        def price_source(m, p):
+            return (0.50, 0.50)
+
+        portfolio = PortfolioManager(10_000.0, price_source)
+        risk = RiskEngine(
+            portfolio=portfolio,
+            kill_switch=KillSwitch("test-token"),
+            limits=RiskLimits(
+                min_free_capital_pct=0.0,
+                max_single_order_usdc=10_000.0,
+                max_market_exposure_usdc=100_000.0,
+                max_market_exposure_pct=1.0,
+                max_net_delta_per_market=100_000.0,
+                max_arb_capital_usdc=100_000.0,
+                max_mm_capital_usdc=100_000.0,
+            ),
+        )
+        strategy = StrategyEngine(
+            config=StrategyConfig(
+                arb_enabled=True,
+                mm_enabled=False,
+                hedge_enabled=False,
+                arb_budget_usdc=10_000.0,
+                mm_budget_usdc=0.0,
+            ),
+            arb_config=ArbConfig(min_net_edge=0.003),
+            dn_config=DeltaNeutralConfig(),
+        )
+        pm_engine = _DummyEngine(Platform.POLYMARKET)
+        op_engine = _DummyEngine(Platform.OPINION)
+        orchestrator = Orchestrator(
+            mdp=_DummyMDP(),
+            portfolio=portfolio,
+            risk=risk,
+            strategy=strategy,
+            pm_engine=pm_engine,
+            op_engine=op_engine,
+            markets=["BTC-Q4"],
+            enable_trading=True,
+        )
+
+        leg1 = OrderProposal(
+            proposal_id="leg-1",
+            market_id="BTC-Q4",
+            platform=Platform.POLYMARKET,
+            side=Side.BUY_YES,
+            size_usdc=100.0,
+            limit_price=0.50,
+            order_type=OrderType.LIMIT,
+            strategy_id=StrategyId.ARB,
+            expiry_ms=now_ms() + 30_000,
+            source_ts=now_ms(),
+            leg_group_id="group-1",
+            leg_number=ArbLeg.LEG_1,
+            min_fill_ratio=0.80,
+        )
+        leg2 = OrderProposal(
+            proposal_id="leg-2",
+            market_id="BTC-Q4",
+            platform=Platform.OPINION,
+            side=Side.BUY_NO,
+            size_usdc=100.0,
+            limit_price=0.50,
+            order_type=OrderType.LIMIT,
+            strategy_id=StrategyId.ARB,
+            expiry_ms=now_ms() + 30_000,
+            source_ts=now_ms(),
+            leg_group_id="group-1",
+            leg_number=ArbLeg.LEG_2,
+        )
+
+        tracker = OrderTracker(OrderSubmission(
+            order_id="order-1",
+            proposal_id=leg1.proposal_id,
+            market_id="BTC-Q4",
+            platform=Platform.POLYMARKET,
+            side=Side.BUY_YES,
+            size_usdc=100.0,
+            limit_price=0.50,
+            order_type=OrderType.LIMIT,
+            strategy_id=StrategyId.ARB,
+            expiry_ms=now_ms() + 30_000,
+            token_quantity=200.0,
+            submitted_at=now_ms(),
+            leg_group_id="group-1",
+            leg_number=ArbLeg.LEG_1,
+            min_fill_ratio=0.80,
+        ))
+        tracker.record_submission("exch-leg1")
+        tracker.record_fill(100.0 * fill_ratio, 0.50, 200.0 * fill_ratio, now_ms())
+        pm_engine._trackers[leg1.proposal_id] = tracker
+        orchestrator._arb_groups["group-1"] = {"leg2_proposal": leg2, 1: leg1.proposal_id}
+
+        return orchestrator, pm_engine, op_engine, tracker, leg1, leg2
+
+    def test_normal_arb_leg2_submits_after_leg1_fill(self):
+        from execution.models import ExecutionResult
+        from src.types import OrderStatus
+
+        orchestrator, _, op_engine, _, leg1, leg2 = self._arb_setup(fill_ratio=1.0)
+        result = ExecutionResult(
+            proposal_id=leg1.proposal_id,
+            exchange_order_id="exch-leg1",
+            status=OrderStatus.FILLED,
+            ts=now_ms(),
+            filled_size_usdc=100.0,
+            fill_price=0.50,
+            fill_ratio=1.0,
+        )
+
+        run(orchestrator._handle_arb_terminal(result, "group-1"))
+        self.assertEqual(op_engine.submit.await_count, 1)
+        submitted = op_engine.submit.await_args.args[0]
+        self.assertEqual(submitted.proposal_id, leg2.proposal_id)
+        self.assertAlmostEqual(submitted.size_usdc, 100.0)
+
+    def test_partial_leg1_below_min_ratio_skips_leg2(self):
+        from execution.models import ExecutionResult
+        from src.types import OrderStatus
+
+        orchestrator, pm_engine, _, _, leg1, _ = self._arb_setup(fill_ratio=0.4)
+        result = ExecutionResult(
+            proposal_id=leg1.proposal_id,
+            exchange_order_id="exch-leg1",
+            status=OrderStatus.PARTIAL,
+            ts=now_ms(),
+            filled_size_usdc=40.0,
+            fill_price=0.50,
+            fill_ratio=0.4,
+        )
+
+        run(orchestrator._handle_arb_terminal(result, "group-1"))
+        self.assertEqual(pm_engine.submit.await_count, 0)
+
+    def test_kill_switch_cancels_all_open_orders(self):
+        from src.types import StrategyId, Platform
+
+        orchestrator, pm_engine, op_engine, _, _, _ = self._arb_setup(fill_ratio=1.0)
+        orchestrator._in_flight = {
+            "pid-pm": (StrategyId.ARB, 100.0, Platform.POLYMARKET, "group-1"),
+            "pid-op": (StrategyId.MM, 50.0, Platform.OPINION, None),
+        }
+
+        run(orchestrator._kill_switch_response())
+        self.assertEqual(pm_engine.cancel.await_count, 1)
+        self.assertEqual(op_engine.cancel.await_count, 1)
+
+    def test_market_resolution_auto_removes_market(self):
+        from engine.market_monitor import MarketMonitor
+        from src.types import StrategyId, Platform
+
+        orchestrator, pm_engine, op_engine, _, _, _ = self._arb_setup(fill_ratio=1.0)
+        orchestrator._markets = ["BTC-Q4", "ETH-Q1"]
+        orchestrator._in_flight = {
+            "leg-1": (StrategyId.ARB, 100.0, Platform.POLYMARKET, "group-1"),
+        }
+
+        class _ResolvedClient:
+            async def get_market(self, condition_id):
+                return {
+                    "condition_id": condition_id,
+                    "resolved": condition_id == "BTC-Q4",
+                    "outcome": "yes",
+                }
+
+            async def redeem_market(self, condition_id):
+                return True
+
+        monitor = MarketMonitor(
+            client=_ResolvedClient(),
+            orchestrator=orchestrator,
+            markets=["BTC-Q4", "ETH-Q1"],
+            poll_interval_s=0.01,
+        )
+
+        resolved = run(monitor.poll_once())
+        self.assertEqual(resolved, 1)
+        self.assertNotIn("BTC-Q4", orchestrator.get_active_markets())
+        self.assertIn("ETH-Q1", orchestrator.get_active_markets())
+        self.assertEqual(pm_engine.cancel.await_count, 1)
+        self.assertEqual(op_engine.cancel.await_count, 0)
+
 
 class TestConfigSmoke(unittest.TestCase):
 

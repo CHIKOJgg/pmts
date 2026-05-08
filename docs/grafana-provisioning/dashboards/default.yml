@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: PMTS
+    orgId: 1
+    folder: PMTS
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

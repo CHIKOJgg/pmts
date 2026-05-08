@@ -11,7 +11,13 @@ from execution.models import ExecutionResult, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
 from src.errors import ExchangeRejected
 from src.types import OrderStatus, Platform, Side, StrategyId, OrderType, ArbLeg
-from infrastructure.observability import FILLS_TOTAL, FILL_USDC_TOTAL, ORDER_LATENCY, API_ERRORS_TOTAL
+from infrastructure.observability import (
+    FILLS_TOTAL,
+    FILL_USDC_TOTAL,
+    ORDER_LATENCY,
+    API_ERRORS_TOTAL,
+    ACTIVE_ORDERS_COUNT,
+)
 import json
 
 logger = logging.getLogger(__name__)
@@ -323,6 +329,7 @@ class ExecutionEngine:
         priority = 0 if submission.strategy_id == StrategyId.ARB else 1
         self._seq += 1
         self._trackers[submission.proposal_id] = OrderTracker(submission)
+        self._update_active_order_metric()
         
         if self._store:
             # Step 6: Persist submission before trying to send it
@@ -344,6 +351,7 @@ class ExecutionEngine:
             self.orders_cancelled += 1
             self._finalise(tracker)
             await self._dispatch(result)
+            self._update_active_order_metric()
             return
 
         if tracker.exchange_order_id is None:
@@ -351,6 +359,7 @@ class ExecutionEngine:
             self.orders_cancelled += 1
             self._finalise(tracker)
             await self._dispatch(result)
+            self._update_active_order_metric()
             return
 
         try:
@@ -367,6 +376,7 @@ class ExecutionEngine:
             self.orders_cancelled += 1
             self._finalise(tracker)
             await self._dispatch(result)
+            self._update_active_order_metric()
         else:
             await self._poll_one(tracker)
 
@@ -483,6 +493,7 @@ class ExecutionEngine:
 
         if tracker.status == TrackerStatus.FILLED:
             self._finalise(tracker)
+        self._update_active_order_metric()
 
     # ── Poll worker ───────────────────────────────────────────────────────────
 
@@ -577,6 +588,7 @@ class ExecutionEngine:
 
         if tracker.status.is_terminal:
             self._finalise(tracker)
+        self._update_active_order_metric()
         return had_fill
 
     # ── Expiry worker ─────────────────────────────────────────────────────────
@@ -610,6 +622,7 @@ class ExecutionEngine:
                 self.orders_expired += 1
                 self._finalise(tracker)
                 await self._dispatch(result)
+                self._update_active_order_metric()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -675,6 +688,10 @@ class ExecutionEngine:
         if self._store:
             # Step 6: Remove from active orders in DB
             self._store.remove_order(tracker.proposal_id)
+        self._update_active_order_metric()
+
+    def _update_active_order_metric(self) -> None:
+        ACTIVE_ORDERS_COUNT.labels(platform=self._client.platform.value).set(self.live_order_count)
 
 
     async def _dispatch(self, result: ExecutionResult) -> None:

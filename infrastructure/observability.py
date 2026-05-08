@@ -51,9 +51,28 @@ PROPOSALS_TOTAL = Counter("pmts_proposals_total", "Total order proposals", ["str
 # Counters for fills and volume
 FILLS_TOTAL = Counter("pmts_fills_total", "Total fills", ["platform", "strategy"])
 FILL_USDC_TOTAL = Counter("pmts_fill_usdc_total", "Total filled USDC", ["platform"])
+STRATEGY_FILL_USDC_TOTAL = Counter(
+    "pmts_strategy_fill_usdc_total",
+    "Total filled USDC attributed to strategy flow",
+    ["strategy"],
+)
 
 # Gauge for exposure per market
 OPEN_EXPOSURE_USDC = Gauge("pmts_open_exposure_usdc", "Current open exposure in USDC", ["market_id"])
+PORTFOLIO_MTM_USDC = Gauge("pmts_portfolio_mtm_usdc", "Current portfolio MTM in USDC")
+PORTFOLIO_REALISED_PNL_USDC = Gauge(
+    "pmts_total_realised_pnl_usdc",
+    "Total realised PnL in USDC",
+)
+CAPITAL_UTILIZATION = Gauge(
+    "pmts_capital_utilization",
+    "Capital utilization ratio (reserved / equity)",
+)
+ACTIVE_ORDERS_COUNT = Gauge(
+    "pmts_active_orders_count",
+    "Active open orders count",
+    ["platform"],
+)
 
 # Risk metrics
 DRAWDOWN_PCT = Gauge("pmts_drawdown_pct", "Current portfolio drawdown percentage")

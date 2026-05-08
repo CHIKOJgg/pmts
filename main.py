@@ -40,6 +40,7 @@ async def run_live() -> None:
     from data.adapters.opinion_ws import OpinionWSAdapter
     from data.adapters.polymarket_ws import PolymarketWSAdapter
     from data.market_data_provider import MarketDataProvider
+    from engine.market_monitor import MarketMonitor
     from engine.orchestrator import Orchestrator
     from engine.strategy_engine import StrategyEngine, StrategyConfig
     from execution.clients.opinion import OpinionClient
@@ -59,27 +60,9 @@ async def run_live() -> None:
 
     logger.info("Live trading initializing: markets=%s", settings.trading.markets)
     
-    # 1. State Persistence
     db_path = getattr(settings.trading, "db_path", "portfolio.db")
     store = SqlitePortfolioStore(db_path=db_path)
-    
-    # 2. Portfolio & Risk
-    portfolio = PortfolioManager(initial_cash_usdc=settings.trading.initial_cash_usdc)
-    
-    risk_limits = RiskLimits(
-        drawdown_kill_pct=settings.trading.drawdown_kill_pct,
-        drawdown_warn_pct=settings.trading.drawdown_warn_pct,
-        max_single_order_usdc=settings.trading.max_order_usdc,
-        min_single_order_usdc=settings.trading.min_order_usdc,
-        max_market_exposure_pct=settings.trading.max_market_exposure_pct,
-        max_market_exposure_usdc=settings.trading.max_market_exposure_usdc,
-        max_net_delta_per_market=settings.trading.max_net_delta,
-    )
-    
-    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
-    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store)
-    
-    # 3. Exchange Clients & Engines
+
     pm_client = PolymarketClient(
         api_key=settings.polymarket.api_key,
         secret=settings.polymarket.api_secret,
@@ -94,36 +77,6 @@ async def run_live() -> None:
         host=settings.opinion.rest_url,
         sandbox=settings.opinion.sandbox,
     )
-    
-    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store)
-    op_engine = ExecutionEngine(op_client, risk=risk, store=store)
-    
-    # 4. Strategy Engine
-    strat_cfg = StrategyConfig(
-        arb_enabled=settings.trading.enable_arb,
-        mm_enabled=settings.trading.enable_mm,
-        hedge_enabled=settings.trading.enable_hedge,
-        arb_budget_usdc=settings.trading.arb_budget_usdc,
-        mm_budget_usdc=settings.trading.mm_budget_usdc,
-    )
-    arb_cfg = ArbConfig(
-        min_net_edge=0.006, 
-        max_order_usdc=settings.trading.max_order_usdc,
-        min_order_usdc=settings.trading.min_order_usdc
-    )
-    dn_cfg = DeltaNeutralConfig(
-        hedge_threshold=10.0,
-        mm_quote_size_usdc=25.0
-    )
-    
-    strategy = StrategyEngine(
-        config=strat_cfg,
-        arb_config=arb_cfg,
-        dn_config=dn_cfg,
-        ai_enhancer=ai_enhancer,
-    )
-    
-    # 5. Data Adapters & Provider
     pm_ws = PolymarketWSAdapter(
         asset_ids=settings.trading.markets,
         ws_url=settings.polymarket.ws_url,
@@ -136,8 +89,30 @@ async def run_live() -> None:
     )
     
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws])
+
+    def price_source(market_id: str, platform) -> tuple[float, float]:
+        mid = mdp.get_mid_prices(market_id, platform)
+        return mid if mid is not None else (0.50, 0.50)
+
+    portfolio = PortfolioManager(
+        initial_cash_usdc=settings.trading.initial_cash_usdc,
+        price_source=price_source,
+        store=store,
+    )
+
+    risk_limits = RiskLimits(
+        drawdown_kill_pct=settings.trading.drawdown_kill_pct,
+        drawdown_warn_pct=settings.trading.drawdown_warn_pct,
+        max_single_order_usdc=settings.trading.max_order_usdc,
+        min_single_order_usdc=settings.trading.min_order_usdc,
+        max_market_exposure_pct=settings.trading.max_market_exposure_pct,
+        max_market_exposure_usdc=settings.trading.max_market_exposure_usdc,
+        max_net_delta_per_market=settings.trading.max_net_delta,
+    )
+
+    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
+    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store)
     
-    # 5.5 AI Signal Enhancer
     ai_cfg = AIEnhancerConfig(
         enabled=settings.ai.enabled,
         use_heuristic_only=settings.ai.heuristic_only,
@@ -145,8 +120,34 @@ async def run_live() -> None:
         cache_ttl_ms=settings.ai.cache_ttl_ms
     )
     ai_enhancer = AISignalEnhancer(config=ai_cfg)
+
+    strat_cfg = StrategyConfig(
+        arb_enabled=settings.trading.enable_arb,
+        mm_enabled=settings.trading.enable_mm,
+        hedge_enabled=settings.trading.enable_hedge,
+        arb_budget_usdc=settings.trading.arb_budget_usdc,
+        mm_budget_usdc=settings.trading.mm_budget_usdc,
+    )
+    arb_cfg = ArbConfig(
+        min_net_edge=0.006,
+        max_order_usdc=settings.trading.max_order_usdc,
+        min_order_usdc=settings.trading.min_order_usdc,
+    )
+    dn_cfg = DeltaNeutralConfig(
+        hedge_threshold=10.0,
+        mm_quote_size_usdc=25.0,
+    )
+
+    strategy = StrategyEngine(
+        config=strat_cfg,
+        arb_config=arb_cfg,
+        dn_config=dn_cfg,
+        ai_enhancer=ai_enhancer,
+    )
+
+    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp)
+    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp)
     
-    # 6. Orchestrator
     orchestrator = Orchestrator(
         mdp=mdp,
         portfolio=portfolio,
@@ -159,10 +160,14 @@ async def run_live() -> None:
         enable_trading=settings.trading.enable_trading
     )
     risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
+    market_monitor = MarketMonitor(
+        client=pm_client,
+        orchestrator=orchestrator,
+        markets=settings.trading.markets,
+    )
     
     obs_server = ObservabilityServer(port=8080)
     
-    # 7. Health & Observability
     monitor = HealthMonitor(
         mdp=mdp,
         engines=[pm_engine, op_engine],
@@ -185,7 +190,9 @@ async def run_live() -> None:
             "drawdown": risk.current_drawdown
         },
         "portfolio": {
-            "total_value": portfolio.get_portfolio_mtm(lambda m, p: mdp.get_mid_prices(m, p)[0] if mdp.get_mid_prices(m, p) else 0.5)
+            "total_value": portfolio.get_portfolio_mtm().total_equity_usdc,
+            "cash_usdc": portfolio.cash_usdc,
+            "reserved_capital": portfolio.reserved_capital,
         }
     })
 
@@ -205,15 +212,14 @@ async def run_live() -> None:
     # START
     await obs_server.start()
     
-    # Step 6: Reconciliation (Issue #3)
     logger.info("Performing startup reconciliation...")
     await pm_engine.reconcile()
     await op_engine.reconcile()
     risk.reconcile_reservations()
     
     await orchestrator.start()
+    await market_monitor.start()
     
-    # Liveness background task
     async def liveness_tick_loop():
         while True:
             monitor.tick_liveness()
@@ -230,6 +236,7 @@ async def run_live() -> None:
     
     logger.info("Shutting down...")
     liveness_task.cancel()
+    await market_monitor.stop()
     await orchestrator.stop()
     await obs_server.stop()
     await pm_client.close()
