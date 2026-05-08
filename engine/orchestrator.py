@@ -109,6 +109,12 @@ class Orchestrator:
 
     # ── Step 2→3: Feature vector → strategies ────────────────────────────────
 
+    def _on_kill_switch_reset(self) -> None:
+        self._arb_groups.clear()
+        self._in_flight.clear()
+        self._strategy.flush_market_state()
+        logger.warning("Kill switch reset - arb groups and in-flight cleared")
+
     async def _on_feature_vector(self, fv: FeatureVector) -> None:
         if not self._trading or self._risk.kill_switch_active:
             return

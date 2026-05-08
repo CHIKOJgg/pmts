@@ -129,6 +129,15 @@ class StrategyEngine:
             st.arb_in_flight = False
             st.arb_group_id  = None
 
+    def flush_market_state(self) -> None:
+        """Clear per-market arb locks and cooldown timers after a kill-switch reset."""
+        for st in self._market.values():
+            st.last_arb_ts = 0
+            st.last_mm_ts = 0
+            st.last_hedge_ts = 0
+            st.arb_in_flight = False
+            st.arb_group_id = None
+
     def reload_configs(
         self,
         arb_config:      Optional[ArbConfig]          = None,

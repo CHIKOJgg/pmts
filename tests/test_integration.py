@@ -270,6 +270,197 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         self.assertTrue(self.risk.reset_kill_switch("test-token"))
         self.assertFalse(self.risk.kill_switch_active)
 
+    def test_kill_switch_reset_flushes_strategy_state(self):
+        """Reset should clear arb in-flight state so the market can trade again."""
+        from data.models import FeatureVector
+        from engine.strategy_engine import StrategyEngine, StrategyConfig
+        from strategies.arbitrage import ArbConfig
+        from strategies.delta_neutral import DeltaNeutralConfig
+        from risk.engine import RiskEngine
+        from risk.kill_switch import KillSwitch
+        from risk.limits import RiskLimits
+        from portfolio.manager import PortfolioManager
+
+        def price_source(m, p):
+            return (0.50, 0.50)
+
+        portfolio = PortfolioManager(10_000.0, price_source)
+        risk = RiskEngine(
+            portfolio=portfolio,
+            kill_switch=KillSwitch("test-token"),
+            limits=RiskLimits(
+                min_free_capital_pct=0.0,
+                max_single_order_usdc=10_000.0,
+                max_market_exposure_usdc=100_000.0,
+                max_market_exposure_pct=1.0,
+                max_net_delta_per_market=100_000.0,
+                max_arb_capital_usdc=100_000.0,
+                max_mm_capital_usdc=100_000.0,
+            ),
+        )
+        strategy = StrategyEngine(
+            config=StrategyConfig(
+                arb_enabled=True,
+                mm_enabled=False,
+                hedge_enabled=False,
+                arb_budget_usdc=10_000.0,
+                mm_budget_usdc=0.0,
+                arb_cooldown_ms=60_000,
+            ),
+            arb_config=ArbConfig(min_net_edge=0.003),
+            dn_config=DeltaNeutralConfig(),
+        )
+
+        emitted = []
+
+        async def collect(proposal):
+            emitted.append(proposal)
+
+        strategy.add_proposal_callback(collect)
+        risk.set_kill_switch_reset_callback(strategy.flush_market_state)
+
+        ts = now_ms() - 50
+        fv = FeatureVector(
+            market_id="BTC-Q4",
+            ts=ts,
+            computed_ts=ts + 1,
+            arb_signal=0.20,
+            stale_markets=[],
+            mid_pm=0.35,
+            mid_op=0.62,
+            spread_pm=0.02,
+            spread_op=0.02,
+            ofi_pm=0.0,
+            ofi_op=0.0,
+            vol_30s=0.01,
+            days_to_resolution=30.0,
+            portfolio_delta=0.0,
+            bid_depth_pm=1000.0,
+            ask_depth_pm=1000.0,
+            bid_depth_op=1000.0,
+            ask_depth_op=1000.0,
+        )
+
+        run(strategy.on_feature_vector(fv))
+        self.assertEqual(len(emitted), 2)
+
+        run(strategy.on_feature_vector(fv))
+        self.assertEqual(len(emitted), 2, "arb_in_flight should suppress repeat proposals before reset")
+
+        risk._kill_switch.activate("test", 0.25, 1000, 750)
+        self.assertTrue(risk.reset_kill_switch("test-token"))
+
+        run(strategy.on_feature_vector(fv))
+        self.assertEqual(len(emitted), 4, "reset_kill_switch should flush strategy market state")
+
+    def test_orchestrator_kill_switch_reset_clears_bookkeeping(self):
+        """Orchestrator reset hook should clear arb groups, in-flight, and strategy state."""
+        from engine.orchestrator import Orchestrator
+        from engine.strategy_engine import StrategyEngine, StrategyConfig
+        from strategies.arbitrage import ArbConfig
+        from strategies.delta_neutral import DeltaNeutralConfig
+        from portfolio.manager import PortfolioManager
+        from risk.engine import RiskEngine
+        from risk.kill_switch import KillSwitch
+        from risk.limits import RiskLimits
+        from src.types import Platform, StrategyId
+
+        class _DummyMDP:
+            def add_callback(self, cb):
+                self.cb = cb
+
+            async def start(self):
+                return None
+
+            async def stop(self):
+                return None
+
+        class _DummyEngine:
+            def add_result_callback(self, cb):
+                self.cb = cb
+
+            async def start(self):
+                return None
+
+            async def stop(self):
+                return None
+
+            async def submit(self, submission):
+                return None
+
+            async def cancel(self, proposal_id):
+                return None
+
+            def get_tracker(self, proposal_id):
+                return None
+
+        def price_source(m, p):
+            return (0.50, 0.50)
+
+        portfolio = PortfolioManager(10_000.0, price_source)
+        risk = RiskEngine(
+            portfolio=portfolio,
+            kill_switch=KillSwitch("test-token"),
+            limits=RiskLimits(
+                min_free_capital_pct=0.0,
+                max_single_order_usdc=10_000.0,
+                max_market_exposure_usdc=100_000.0,
+                max_market_exposure_pct=1.0,
+                max_net_delta_per_market=100_000.0,
+                max_arb_capital_usdc=100_000.0,
+                max_mm_capital_usdc=100_000.0,
+            ),
+        )
+        strategy = StrategyEngine(
+            config=StrategyConfig(
+                arb_enabled=True,
+                mm_enabled=False,
+                hedge_enabled=False,
+                arb_budget_usdc=10_000.0,
+                mm_budget_usdc=0.0,
+            ),
+            arb_config=ArbConfig(min_net_edge=0.003),
+            dn_config=DeltaNeutralConfig(),
+        )
+        orchestrator = Orchestrator(
+            mdp=_DummyMDP(),
+            portfolio=portfolio,
+            risk=risk,
+            strategy=strategy,
+            pm_engine=_DummyEngine(),
+            op_engine=_DummyEngine(),
+            markets=["BTC-Q4"],
+            enable_trading=False,
+        )
+
+        market_id = "BTC-Q4"
+        group_id = "group-1"
+        proposal_id = str(uuid.uuid4())
+        strategy_state = strategy._get_state(market_id)
+        strategy_state.arb_in_flight = True
+        strategy_state.arb_group_id = group_id
+        strategy_state.last_arb_ts = now_ms()
+        strategy_state.last_mm_ts = now_ms()
+        strategy_state.last_hedge_ts = now_ms()
+
+        orchestrator._arb_groups[group_id] = {1: proposal_id, "leg2_proposal": object()}
+        orchestrator._in_flight[proposal_id] = (
+            StrategyId.ARB,
+            100.0,
+            Platform.POLYMARKET,
+            group_id,
+        )
+
+        orchestrator._on_kill_switch_reset()
+
+        self.assertEqual(orchestrator._arb_groups, {})
+        self.assertEqual(orchestrator._in_flight, {})
+        self.assertFalse(strategy_state.arb_in_flight)
+        self.assertIsNone(strategy_state.arb_group_id)
+        self.assertEqual(strategy_state.last_arb_ts, 0)
+        self.assertEqual(strategy_state.last_mm_ts, 0)
+        self.assertEqual(strategy_state.last_hedge_ts, 0)
+
     def test_dedup_blocks_repeated_proposal_id(self):
         """Same proposal_id within dedup window is rejected."""
         from src.types import RejectReason

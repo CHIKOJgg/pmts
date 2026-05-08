@@ -130,6 +130,7 @@ class RiskEngine:
 
         # LRU dedup cache
         self._dedup: collections.OrderedDict[str, int] = collections.OrderedDict()
+        self._on_kill_switch_reset: Optional[Callable[[], None]] = None
 
         self.total_evaluated:      int = 0
         self.total_approved:       int = 0
@@ -356,10 +357,24 @@ class RiskEngine:
     ) -> bool:
         success = self._kill_switch.reset(confirmation_token, operator_id)
         if success:
+            for proposal_id in list(self._reservations.keys()):
+                if self._store:
+                    self._store.remove_reservation(proposal_id)
+            self._reservations.clear()
+            self._arb_allocated = 0.0
+            self._mm_allocated = 0.0
             KILL_SWITCH_ACTIVE.set(0.0)
             if self._store:
                 self._store.save_kill_switch(False)
+            if self._on_kill_switch_reset:
+                try:
+                    self._on_kill_switch_reset()
+                except Exception as exc:
+                    logger.error("Kill switch reset callback failed: %s", exc, exc_info=True)
         return success
+
+    def set_kill_switch_reset_callback(self, callback: Optional[Callable[[], None]]) -> None:
+        self._on_kill_switch_reset = callback
 
     @property
     def kill_switch_active(self) -> bool:

@@ -157,6 +157,7 @@ async def run_live() -> None:
         ai_enhancer=ai_enhancer,
         enable_trading=settings.trading.enable_trading
     )
+    risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
     
     obs_server = ObservabilityServer(port=8080)
     
