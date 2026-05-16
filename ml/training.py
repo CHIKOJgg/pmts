@@ -8,6 +8,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+try:
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+
 
 @dataclass
 class ModelMetrics:
@@ -122,12 +129,63 @@ class SimpleLogisticRegression:
         return sum(x * y for x, y in zip(a, b))
 
 
+class SklearnLogisticRegression:
+    """Wrapper around scikit-learn's LogisticRegression."""
+
+    def __init__(self, config: ModelConfig) -> None:
+        self._config = config
+        self._model = LogisticRegression(
+            C=1.0 / max(config.regularization, 1e-8),
+            max_iter=config.max_iterations,
+            random_state=config.random_seed,
+            solver="lbfgs",
+        )
+        self._feature_names: List[str] = []
+        self._trained: bool = False
+
+    def fit(self, X: List[Dict[str, float]], y: List[float]) -> None:
+        if not X or not y:
+            raise ValueError("Empty training data")
+        self._feature_names = list(X[0].keys())
+        X_matrix = [self._dict_to_vector(x) for x in X]
+        self._model.fit(X_matrix, y)
+        self._trained = True
+        logger.info("sklearn model trained: %d features, %d samples", len(self._feature_names), len(X))
+
+    def predict_proba(self, X: List[Dict[str, float]]) -> List[float]:
+        if not self._trained:
+            raise RuntimeError("Model not trained yet")
+        X_matrix = [self._dict_to_vector(x) for x in X]
+        probas = self._model.predict_proba(X_matrix)
+        return [p[1] for p in probas]
+
+    def predict(self, X: List[Dict[str, float]], threshold: float = 0.5) -> List[int]:
+        probas = self.predict_proba(X)
+        return [1 if p >= threshold else 0 for p in probas]
+
+    def get_feature_importance(self) -> Dict[str, float]:
+        if not self._trained:
+            return {}
+        coefs = self._model.coef_[0]
+        total = sum(abs(c) for c in coefs)
+        if total < 1e-9:
+            return {name: 0.0 for name in self._feature_names}
+        return {name: abs(c) / total for name, c in zip(self._feature_names, coefs)}
+
+    def _dict_to_vector(self, x: Dict[str, float]) -> List[float]:
+        return [x.get(name, 0.0) for name in self._feature_names]
+
+
 class TrainingPipeline:
-    """Orchestrates model training, validation, and evaluation."""
+    """Orchestrates model training, validation, and evaluation.
+
+    Automatically uses scikit-learn when available, falls back to
+    custom logistic regression otherwise.
+    """
 
     def __init__(self, config: ModelConfig = ModelConfig()) -> None:
         self._config = config
-        self._model: Optional[SimpleLogisticRegression] = None
+        self._model = None
         self._metrics: Optional[ModelMetrics] = None
 
     def train(self, X: List[Dict[str, float]], y: List[float]) -> ModelMetrics:
@@ -138,7 +196,11 @@ class TrainingPipeline:
         X_train, X_test = X[:split_idx], X[split_idx:]
         y_train, y_test = y[:split_idx], y[split_idx:]
 
-        self._model = SimpleLogisticRegression(self._config)
+        if SKLEARN_AVAILABLE:
+            self._model = SklearnLogisticRegression(self._config)
+        else:
+            self._model = SimpleLogisticRegression(self._config)
+
         self._model.fit(X_train, y_train)
 
         y_pred_proba = self._model.predict_proba(X_test)
@@ -146,8 +208,9 @@ class TrainingPipeline:
         self._metrics = self._compute_metrics(y_test, y_pred, y_pred_proba)
 
         logger.info(
-            "Training complete: accuracy=%.3f, f1=%.3f, auc=%.3f",
+            "Training complete: accuracy=%.3f, f1=%.3f, auc=%.3f (sklearn=%s)",
             self._metrics.accuracy, self._metrics.f1_score, self._metrics.auc_roc,
+            SKLEARN_AVAILABLE,
         )
         return self._metrics
 
@@ -169,17 +232,26 @@ class TrainingPipeline:
     def _compute_metrics(
         self, y_true: List[float], y_pred: List[int], y_proba: List[float]
     ) -> ModelMetrics:
-        tp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 1)
-        fp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 1)
-        fn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 0)
-        tn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 0)
+        if SKLEARN_AVAILABLE:
+            accuracy = accuracy_score(y_true, y_pred)
+            precision = precision_score(y_true, y_pred, zero_division=0)
+            recall = recall_score(y_true, y_pred, zero_division=0)
+            f1 = f1_score(y_true, y_pred, zero_division=0)
+            try:
+                auc = roc_auc_score(y_true, y_proba)
+            except ValueError:
+                auc = 0.5
+        else:
+            tp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 1)
+            fp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 1)
+            fn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 0)
+            tn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 0)
 
-        accuracy = (tp + tn) / (tp + fp + fn + tn) if (tp + fp + fn + tn) > 0 else 0.0
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-        auc = self._compute_auc(y_true, y_proba)
+            accuracy = (tp + tn) / (tp + fp + fn + tn) if (tp + fp + fn + tn) > 0 else 0.0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            auc = self._compute_auc(y_true, y_proba)
 
         feature_importance = self._model.get_feature_importance() if self._model else {}
 

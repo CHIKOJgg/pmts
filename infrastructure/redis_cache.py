@@ -39,12 +39,14 @@ class RedisCache:
             logger.warning("redis.asyncio not installed. Using in-memory fallback.")
             return False
         try:
-            self._client = aioredis.from_url(self._url, decode_responses=True)
-            await self._client.ping()
+            client = aioredis.from_url(self._url, decode_responses=True)
+            await client.ping()
+            self._client = client
             logger.info("Connected to Redis at %s", self._url)
             return True
         except Exception as e:
-            logger.error("Redis connection failed: %s", e)
+            logger.warning("Redis connection failed (%s). Using in-memory fallback.", e)
+            self._client = None
             return False
 
     async def close(self) -> None:
