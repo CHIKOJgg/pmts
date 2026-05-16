@@ -7,6 +7,7 @@ import time
 from typing import Callable, Coroutine, List, Optional, Protocol, runtime_checkable
 
 from data.models import MarketSnapshot
+from src.clock import Clock, LiveClock
 from src.types import Platform
 
 logger = logging.getLogger(__name__)
@@ -38,13 +39,17 @@ class MarketDataProvider:
     def __init__(
         self, 
         adapters: Optional[List[ExchangeAdapter]] = None,
-        stream_writer: Optional[Callable] = None
+        stream_writer: Optional[Callable] = None,
+        alert_router=None,
+        clock: Optional[Clock] = None,
     ) -> None:
         self._index:        dict[tuple[str, Platform], MarketSnapshot] = {}
         self._callbacks:    list[_SnapshotCB] = []
         self._stream_writer = stream_writer
         self._adapters:     List[ExchangeAdapter] = adapters or []
         self._background_tasks: set[asyncio.Task] = set()
+        self._alert_router = alert_router
+        self._clock = clock or LiveClock()
 
         for adapter in self._adapters:
             adapter.set_snapshot_callback(self.ingest)
@@ -74,12 +79,22 @@ class MarketDataProvider:
 
     async def ingest(self, snapshot: MarketSnapshot) -> None:
         """Accept a snapshot from an exchange adapter."""
-        now       = _now_ms()
+        now       = self._clock.now_ms()
         staleness = now - snapshot.ts
 
         if staleness > STALE_THRESHOLD_MS and not snapshot.is_stale:
             snapshot = snapshot.model_copy(update={"is_stale": True})
             self.stale_emitted += 1
+
+        if staleness > STALE_THRESHOLD_MS * 5 and self._alert_router:
+            from infrastructure.alerting import Alert, AlertSeverity
+            alert = Alert(
+                severity=AlertSeverity.WARNING,
+                title="Stale Market Data",
+                message=f"Data for {snapshot.market_id} is {staleness}ms old",
+                source="MarketDataProvider",
+            )
+            asyncio.create_task(self._alert_router.send(alert))
 
         key  = (snapshot.market_id, snapshot.platform)
         prev = self._index.get(key)
@@ -125,7 +140,7 @@ class MarketDataProvider:
 
     def get_health(self) -> dict:
         """Check if adapters have received recent data."""
-        now = _now_ms()
+        now = self._clock.now_ms()
         health = {}
         for plat in Platform:
             # Check if we have ANY snapshot for this platform within threshold

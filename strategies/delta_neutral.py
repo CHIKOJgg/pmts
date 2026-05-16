@@ -6,10 +6,11 @@ import math
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 from data.models import FeatureVector
 from execution.models import OrderProposal
+from portfolio.manager import FillRecord
 from src.types import OrderType, Platform, Side, StrategyId
 from ai.signal_context import SignalContext
 
@@ -241,14 +242,13 @@ class DeltaNeutralStrategy:
         arrival_adj  = (2.0 / gamma) * math.log(1.0 + gamma / k)
         half_spread  = max(0.005, min(0.05, (base_spread + arrival_adj) / 2.0))
 
+        size = self._compute_adaptive_quote_size(abs(delta), cfg.max_hedge_usdc)
+        now  = _now_ms()
+
         bid_price = max(0.01, r_mid - half_spread)
         ask_price = min(0.99, r_mid + half_spread)
-        # Ensure minimum 1-tick spread
         if ask_price - bid_price < 0.002:
             ask_price = bid_price + 0.002
-
-        size = cfg.mm_quote_size_usdc
-        now  = _now_ms()
 
         try:
             bid_p = OrderProposal(
@@ -281,6 +281,32 @@ class DeltaNeutralStrategy:
 
     def reload_config(self, config: DeltaNeutralConfig) -> None:
         self._cfg = config
+
+    def _compute_adaptive_quote_size(self, inventory: float, max_inventory: float) -> float:
+        inventory_ratio = abs(inventory) / max_inventory if max_inventory > 0 else 0.0
+        if inventory_ratio > 0.8:
+            return self._cfg.mm_quote_size_usdc * 0.25
+        elif inventory_ratio > 0.6:
+            return self._cfg.mm_quote_size_usdc * 0.5
+        elif inventory_ratio > 0.4:
+            return self._cfg.mm_quote_size_usdc * 0.75
+        return self._cfg.mm_quote_size_usdc
+
+    def _detect_adverse_selection(self, market_id: str, fills: List[FillRecord]) -> bool:
+        if len(fills) < 5:
+            return False
+        recent = fills[-5:]
+        same_side = all(f.side == recent[0].side for f in recent)
+        if same_side:
+            price_move = recent[-1].fill_price - recent[0].fill_price
+            if recent[0].side == Side.BUY_YES and price_move < -0.02:
+                return True
+            if recent[0].side == Side.SELL_YES and price_move > 0.02:
+                return True
+        return False
+
+    def _widen_spread_for_adverse_selection(self, base_spread: float) -> float:
+        return base_spread * 2.0
 
     # ── Venue selection ───────────────────────────────────────────────────────
 

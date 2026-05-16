@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Dict, Any, Callable, List, Optional
+from typing import Dict, Any, Callable, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.protocols import MarketDataProvider, PortfolioStore
+    from execution.engine import ExecutionEngine
+    from risk.engine import RiskEngine
+    from risk.kill_switch import KillSwitch
 
 try:
     from aiohttp import web
@@ -91,12 +97,12 @@ class HealthMonitor:
     """
     def __init__(
         self, 
-        mdp: Any, 
-        engines: List[Any], 
-        risk: Any, 
-        store: Any, 
-        kill_switch: Any,
-        obs_server: Optional[Any] = None,
+        mdp: MarketDataProvider, 
+        engines: List[ExecutionEngine], 
+        risk: RiskEngine, 
+        store: PortfolioStore, 
+        kill_switch: KillSwitch,
+        obs_server: Optional[ObservabilityServer] = None,
         liveness_timeout_s: float = 30.0
     ):
         self.mdp = mdp

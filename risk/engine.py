@@ -15,6 +15,7 @@ import logging
 import time
 from typing import Callable, Dict, Optional, Tuple
 
+from src.clock import Clock, LiveClock
 from execution.models import OrderProposal
 from portfolio.manager import PortfolioManager
 from risk.kill_switch import KillSwitch
@@ -96,6 +97,8 @@ class RiskEngine:
         connector_status_fn: Optional[Callable[[Platform], ConnectorStatus]] = None,
         stream_writer:       Optional[Callable] = None,
         store=None,
+        alert_router=None,
+        clock: Optional[Clock] = None,
     ) -> None:
         self._portfolio        = portfolio
         self._kill_switch      = kill_switch
@@ -103,6 +106,8 @@ class RiskEngine:
         self._connector_status = connector_status_fn
         self._stream_writer    = stream_writer
         self._store            = store
+        self._alert_router     = alert_router
+        self._clock = clock or LiveClock()
 
         # Synchronous reservation table — the ONLY source of truth for committed capital
         # proposal_id -> (amount, platform, strategy_id)
@@ -146,7 +151,7 @@ class RiskEngine:
         Must complete in < 5 ms.
         """
         self.total_evaluated += 1
-        now    = _now_ms()
+        now    = self._clock.now_ms()
         mtm_age_ms = self._portfolio.get_price_age_ms()
         if mtm_age_ms > self._limits.max_mtm_age_ms:
             return self._reject(
@@ -461,6 +466,16 @@ class RiskEngine:
         KILL_SWITCH_ACTIVE.set(1.0)
         if self._store:
             self._store.save_kill_switch(True)
+        if self._alert_router:
+            from infrastructure.alerting import Alert, AlertSeverity
+            alert = Alert(
+                severity=AlertSeverity.CRITICAL,
+                title="Kill Switch Activated",
+                message=f"Drawdown {drawdown:.2%} exceeded kill threshold",
+                source="RiskEngine",
+                metadata={"drawdown": drawdown, "triggering_id": triggering_id},
+            )
+            asyncio.create_task(self._alert_router.send(alert))
         if self._stream_writer:
             try:
                 self._stream_writer("risk_events", {

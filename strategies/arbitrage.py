@@ -257,6 +257,14 @@ class ArbitrageStrategy:
         net_edge = gross_edge - c1_frac - c2_frac
 
         min_net_edge = self._cfg.min_net_edge
+
+        if fv.vol_30s is not None and fv.vol_30s > 0.01:
+            min_net_edge *= 1.5
+
+        min_depth = min(fv.bid_depth_pm, fv.ask_depth_pm, fv.bid_depth_op, fv.ask_depth_op)
+        if min_depth < 100:
+            min_net_edge *= 2.0
+
         if ctx is not None:
             min_net_edge *= max(0.1, 1.0 + ctx.confidence_adjustment)
 

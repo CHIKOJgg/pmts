@@ -22,13 +22,38 @@ from unittest.mock import AsyncMock, MagicMock
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+class _LoopRunner:
+    """Reusable event loop runner for tests that call run() multiple times."""
+    def __init__(self):
+        self._loop = None
+
+    def run(self, coro):
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+        try:
+            return self._loop.run_until_complete(coro)
+        finally:
+            pass  # Don't close — reuse across calls
+
+    def close(self):
+        if self._loop and not self._loop.is_closed():
+            self._loop.close()
+            self._loop = None
+
+
 def run(coro):
-    """Run a coroutine synchronously (stdlib-only, no pytest-asyncio needed)."""
-    loop = asyncio.new_event_loop()
+    """Run a coroutine synchronously. Reuses event loop if possible."""
+    loop = asyncio.get_event_loop()
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
 
 
 def now_ms() -> int:

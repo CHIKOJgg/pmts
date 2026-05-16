@@ -15,6 +15,7 @@ from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
 from engine.feature_engine import FeatureEngine
 from engine.strategy_engine import StrategyEngine
+from src.clock import Clock, LiveClock
 from src.types import ArbLeg, Platform, StrategyId
 from ai.enhancer import AISignalEnhancer
 from infrastructure.observability import PROPOSALS_TOTAL
@@ -46,6 +47,7 @@ class Orchestrator:
         markets:        list,
         ai_enhancer:    Optional[AISignalEnhancer] = None,
         enable_trading: bool = True,
+        clock: Optional[Clock] = None,
     ) -> None:
         self._mdp       = mdp
         self._portfolio = portfolio
@@ -56,6 +58,7 @@ class Orchestrator:
         self._ai        = ai_enhancer
         self._markets   = markets
         self._trading   = enable_trading
+        self._clock = clock or LiveClock()
 
         # Feature engine sits between MDP and StrategyEngine
         self._fe = FeatureEngine(portfolio=portfolio)
@@ -201,7 +204,7 @@ class Orchestrator:
             )
             return
 
-        now        = _now_ms()
+        now        = self._clock.now_ms()
         submission = OrderSubmission(
             order_id=str(uuid.uuid4()),
             proposal_id=proposal.proposal_id,
@@ -343,7 +346,7 @@ class Orchestrator:
                             strategy_id=leg2_proposal.strategy_id,
                             expiry_ms=leg2_proposal.expiry_ms,
                             token_quantity=token_qty,
-                            submitted_at=_now_ms(),
+                            submitted_at=self._clock.now_ms(),
                             leg_group_id=leg2_proposal.leg_group_id,
                             leg_number=leg2_proposal.leg_number,
                             min_fill_ratio=leg2_proposal.min_fill_ratio,

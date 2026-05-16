@@ -95,12 +95,24 @@ class LoggingConfig:
 
 
 @dataclass
+class AlertConfig:
+    slack_webhook_url: str = field(default_factory=lambda: _e("ALERT_SLACK_WEBHOOK", ""))
+    email_smtp_host: str = field(default_factory=lambda: _e("ALERT_EMAIL_SMTP_HOST", "smtp.gmail.com"))
+    email_smtp_port: int = field(default_factory=lambda: _ei("ALERT_EMAIL_SMTP_PORT", 587))
+    email_username: str = field(default_factory=lambda: _e("ALERT_EMAIL_USERNAME", ""))
+    email_password: str = field(default_factory=lambda: _e("ALERT_EMAIL_PASSWORD", ""))
+    email_recipients: str = field(default_factory=lambda: _e("ALERT_EMAIL_RECIPIENTS", ""))
+    webhook_urls: str = field(default_factory=lambda: _e("ALERT_WEBHOOK_URLS", ""))
+
+
+@dataclass
 class Settings:
     polymarket: PolymarketConfig = field(default_factory=PolymarketConfig)
     opinion:    OpinionConfig    = field(default_factory=OpinionConfig)
     trading:    TradingConfig    = field(default_factory=TradingConfig)
     ai:         AIConfig         = field(default_factory=AIConfig)
     logging:    LoggingConfig    = field(default_factory=LoggingConfig)
+    alerts:     AlertConfig      = field(default_factory=AlertConfig)
 
     def validate(self) -> None:
         """Strict validation of all configuration before startup."""

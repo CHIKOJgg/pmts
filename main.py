@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config.settings import get_settings
 from config.logging_setup import configure_logging
 from src.types import Platform
+from src.clock import LiveClock
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ async def run_live() -> None:
     from risk.limits import RiskLimits
     from strategies.arbitrage import ArbConfig
     from strategies.delta_neutral import DeltaNeutralConfig
+    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
 
     settings = get_settings()
     settings.validate()
@@ -63,6 +65,15 @@ async def run_live() -> None:
     
     db_path = getattr(settings.trading, "db_path", "portfolio.db")
     store = SqlitePortfolioStore(db_path=db_path)
+
+    alert_cfg = AlertCfg(
+        slack_webhook_url=settings.alerts.slack_webhook_url or None,
+        email_username=settings.alerts.email_username or None,
+        email_password=settings.alerts.email_password or None,
+        email_recipients=[r.strip() for r in settings.alerts.email_recipients.split(",") if r.strip()],
+        webhook_urls=[u.strip() for u in settings.alerts.webhook_urls.split(",") if u.strip()],
+    )
+    alert_router = AlertRouter(alert_cfg)
 
     pm_client = PolymarketClient(
         api_key=settings.polymarket.api_key,
@@ -90,7 +101,7 @@ async def run_live() -> None:
         taker_fee_bps=settings.opinion.taker_fee_bps
     )
     
-    mdp = MarketDataProvider(adapters=[pm_ws, op_ws])
+    mdp = MarketDataProvider(adapters=[pm_ws, op_ws], clock=clock)
 
     def price_source(market_id: str, platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
@@ -100,6 +111,7 @@ async def run_live() -> None:
         initial_cash_usdc=settings.trading.initial_cash_usdc,
         price_source=price_source,
         store=store,
+        clock=clock,
     )
 
     risk_limits = RiskLimits(
@@ -113,7 +125,7 @@ async def run_live() -> None:
     )
 
     kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
-    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store)
+    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, clock=clock)
     
     ai_cfg = AIEnhancerConfig(
         enabled=settings.ai.enabled,
@@ -147,8 +159,8 @@ async def run_live() -> None:
         ai_enhancer=ai_enhancer,
     )
 
-    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp)
-    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp)
+    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, clock=clock)
+    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, clock=clock)
     
     orchestrator = Orchestrator(
         mdp=mdp,
@@ -159,7 +171,8 @@ async def run_live() -> None:
         op_engine=op_engine,
         markets=settings.trading.markets,
         ai_enhancer=ai_enhancer,
-        enable_trading=settings.trading.enable_trading
+        enable_trading=settings.trading.enable_trading,
+        clock=clock,
     )
     risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
     market_monitor = MarketMonitor(
@@ -222,6 +235,7 @@ async def run_live() -> None:
     
     await orchestrator.start()
     await market_monitor.start()
+    await resolution_monitor.start()
     
     async def liveness_tick_loop():
         while True:
@@ -230,20 +244,22 @@ async def run_live() -> None:
     
     liveness_task = asyncio.create_task(liveness_tick_loop(), name="liveness-tick")
     
-    logger.info("SYSTEM LIVE and trading.")
+    logger.info("SYSTEM PAPER TRADING mode. No real capital at risk.")
     
     try:
         await shutdown_event.wait()
     except asyncio.CancelledError:
         pass
     
-    logger.info("Shutting down...")
+    logger.info("Shutting down paper trading...")
     liveness_task.cancel()
+    await resolution_monitor.stop()
     await market_monitor.stop()
     await orchestrator.stop()
     await obs_server.stop()
     await pm_client.close()
     await op_client.close()
+    await alert_router.close()
     store.close()
     logger.info("Shutdown complete.")
 
@@ -258,6 +274,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     from execution.clients.paper import PaperTradingClient
     from execution.engine import ExecutionEngine
     from infrastructure.observability import HealthMonitor, ObservabilityServer
+    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
     from risk.engine import RiskEngine
@@ -273,6 +290,17 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     
     db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
     store = SqlitePortfolioStore(db_path=db_path)
+
+    clock = LiveClock()
+
+    alert_cfg = AlertCfg(
+        slack_webhook_url=settings.alerts.slack_webhook_url or None,
+        email_username=settings.alerts.email_username or None,
+        email_password=settings.alerts.email_password or None,
+        email_recipients=[r.strip() for r in settings.alerts.email_recipients.split(",") if r.strip()],
+        webhook_urls=[u.strip() for u in settings.alerts.webhook_urls.split(",") if u.strip()],
+    )
+    alert_router = AlertRouter(alert_cfg)
 
     pm_client = PaperTradingClient(fill_probability=fill_prob, seed=42)
     op_client = PaperTradingClient(fill_probability=fill_prob, seed=43)
@@ -290,7 +318,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         taker_fee_bps=settings.opinion.taker_fee_bps
     )
     
-    mdp = MarketDataProvider(adapters=[pm_ws, op_ws])
+    mdp = MarketDataProvider(adapters=[pm_ws, op_ws], alert_router=alert_router, clock=clock)
 
     def price_source(market_id: str, platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
@@ -300,6 +328,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         initial_cash_usdc=settings.trading.initial_cash_usdc,
         price_source=price_source,
         store=store,
+        clock=clock,
     )
 
     risk_limits = RiskLimits(
@@ -313,7 +342,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     )
 
     kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
-    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store)
+    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, alert_router=alert_router, clock=clock)
 
     strat_cfg = StrategyConfig(
         arb_enabled=settings.trading.enable_arb,
@@ -338,8 +367,8 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         dn_config=dn_cfg,
     )
 
-    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp)
-    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp)
+    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
+    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
     
     orchestrator = Orchestrator(
         mdp=mdp,
@@ -349,13 +378,25 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         pm_engine=pm_engine,
         op_engine=op_engine,
         markets=settings.trading.markets,
-        enable_trading=settings.trading.enable_trading
+        enable_trading=settings.trading.enable_trading,
+        clock=clock,
     )
     risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
     market_monitor = MarketMonitor(
         client=pm_client,
         orchestrator=orchestrator,
         markets=settings.trading.markets,
+    )
+
+    def handle_resolution(market_id: str, outcome: str) -> None:
+        logger.info("Market %s resolved to %s, notifying orchestrator", market_id, outcome)
+        asyncio.create_task(orchestrator.handle_market_resolution(market_id, outcome))
+
+    from engine.resolution_monitor import ResolutionMonitor
+    resolution_monitor = ResolutionMonitor(
+        client=pm_client,
+        markets=settings.trading.markets,
+        on_resolution=handle_resolution,
     )
     
     obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
@@ -410,6 +451,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     
     await orchestrator.start()
     await market_monitor.start()
+    await resolution_monitor.start()
     
     async def liveness_tick_loop():
         while True:
@@ -432,6 +474,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     await obs_server.stop()
     await pm_client.close()
     await op_client.close()
+    await alert_router.close()
     store.close()
     logger.info("Paper trading shutdown complete.")
 

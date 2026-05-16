@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
+from src.clock import Clock, LiveClock
 from src.errors import NegativeHoldings
 from src.types import Outcome, Platform, Side
 from infrastructure.observability import (
@@ -189,6 +190,7 @@ class PortfolioManager:
         price_source:      _PriceSource,
         stream_writer:     Optional[Callable] = None,
         store=None,
+        clock: Optional[Clock] = None,
     ) -> None:
         if initial_cash_usdc < 0:
             raise ValueError(f"initial_cash_usdc must be ≥ 0, got {initial_cash_usdc}")
@@ -202,6 +204,7 @@ class PortfolioManager:
         self._price_source:  _PriceSource     = price_source
         self._stream_writer: Optional[Callable] = stream_writer
         self._store = store
+        self._clock = clock or LiveClock()
 
         if self._store:
             state = self._store.load_state()
@@ -358,7 +361,7 @@ class PortfolioManager:
             total_cash_usdc=self._cash_usdc,
             total_positions_mtm=total_pos,
             total_equity_usdc=equity,
-            ts=_now_ms(),
+            ts=self._clock.now_ms(),
         )
 
     def get_market_exposure_usdc(self, market_id: str) -> float:
@@ -379,12 +382,11 @@ class PortfolioManager:
     def get_price_age_ms(self) -> int:
         latest = 0
         for pos in self._positions.values():
-            if pos.last_price_ts <= 0:
-                return 10**18
-            latest = max(latest, pos.last_price_ts)
+            if pos.last_price_ts > 0:
+                latest = max(latest, pos.last_price_ts)
         if latest <= 0:
             return 0
-        return max(0, _now_ms() - latest)
+        return max(0, self._clock.now_ms() - latest)
 
     def get_all_deltas(self) -> Dict[str, float]:
         markets = {mid for (mid, _) in self._positions}
@@ -436,7 +438,7 @@ class PortfolioManager:
         PORTFOLIO_REALISED_PNL_USDC.set(total_real)
         return {
             "snapshot_id": str(uuid.uuid4()),
-            "ts": _now_ms(),
+            "ts": self._clock.now_ms(),
             "positions": entries,
             "total_cash_usdc": self._cash_usdc,
             "total_mtm_usdc": total_mtm,

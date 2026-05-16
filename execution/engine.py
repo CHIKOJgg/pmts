@@ -9,6 +9,9 @@ from typing import Any, Callable, Coroutine, List, Optional, Protocol, runtime_c
 
 from execution.models import ExecutionResult, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
+from src.clock import Clock, LiveClock
+from src.protocols import PortfolioStore, MarketDataProvider
+from risk.engine import RiskEngine
 from src.errors import ExchangeRejected
 from src.types import OrderStatus, Platform, Side, StrategyId, OrderType, ArbLeg
 from infrastructure.observability import (
@@ -160,16 +163,20 @@ class ExecutionEngine:
     def __init__(
         self,
         client:         ExchangeClient,
-        risk:           Optional[Any] = None, # RiskEngine
-        store:          Optional[Any] = None, # SqlitePortfolioStore
-        mdb:            Optional[Any] = None, # MarketDataProvider
+        risk:           Optional[RiskEngine] = None,
+        store:          Optional[PortfolioStore] = None,
+        mdb:            Optional[MarketDataProvider] = None,
         max_concurrent: int = 5,
         tracker_retention_ms: int = TRACKER_RETENTION_MS,
+        alert_router=None,
+        clock: Optional[Clock] = None,
     ) -> None:
         self._client    = client
         self._risk      = risk
         self._store     = store
         self._mdb       = mdb
+        self._alert_router = alert_router
+        self._clock = clock or LiveClock()
 
         # Per-order trackers
         self._trackers:         dict[str, OrderTracker] = {}
@@ -414,7 +421,7 @@ class ExecutionEngine:
 
     async def _execute_submission(self, tracker: OrderTracker) -> None:
         submission = tracker.submission
-        now        = _now_ms()
+        now        = self._clock.now_ms()
 
         if tracker.is_expired(now):
             result = tracker.record_expiry()
@@ -455,6 +462,16 @@ class ExecutionEngine:
                     self.orders_timed_out += 1
                     self._finalise(tracker)
                     await self._dispatch(result)
+                    if self._alert_router:
+                        from infrastructure.alerting import Alert, AlertSeverity
+                        alert = Alert(
+                            severity=AlertSeverity.WARNING,
+                            title="Order Submission Failed",
+                            message=f"Failed to submit order after {MAX_SUBMIT_ATTEMPTS} attempts",
+                            source="ExecutionEngine",
+                            metadata={"proposal_id": submission.proposal_id},
+                        )
+                        asyncio.create_task(self._alert_router.send(alert))
                     return
         else:
             return
@@ -499,7 +516,7 @@ class ExecutionEngine:
 
     async def _poll_worker(self) -> None:
         while not self._stopped:
-            now  = _now_ms()
+            now  = self._clock.now_ms()
             live = [t for t in self._trackers.values() if t.status.is_open]
             
             if not live:
@@ -531,7 +548,7 @@ class ExecutionEngine:
     async def _poll_one(self, tracker: OrderTracker) -> bool:
         if tracker.exchange_order_id is None:
             return False
-        tracker.last_poll_at = _now_ms()
+        tracker.last_poll_at = self._clock.now_ms()
 
         try:
             resp = await self._client.get_order_status(
@@ -575,7 +592,7 @@ class ExecutionEngine:
                         remaining,
                         tracker.submission.limit_price,
                         tracker.remaining_tokens,
-                        _now_ms(),
+                        self._clock.now_ms(),
                     )
                     self.total_filled_usdc += remaining
                     self.orders_filled += 1
@@ -600,7 +617,7 @@ class ExecutionEngine:
             except asyncio.CancelledError:
                 return
 
-            now = _now_ms()
+            now = self._clock.now_ms()
             for tracker in list(self._trackers.values()):
                 if tracker.status.is_terminal or not tracker.is_expired(now):
                     continue
@@ -635,7 +652,7 @@ class ExecutionEngine:
             self._prune_terminal_trackers()
 
     def _prune_terminal_trackers(self) -> int:
-        cutoff = _now_ms() - self._tracker_retention_ms
+        cutoff = self._clock.now_ms() - self._tracker_retention_ms
         stale = [
             pid for pid, tracker in self._trackers.items()
             if tracker.status.is_terminal
