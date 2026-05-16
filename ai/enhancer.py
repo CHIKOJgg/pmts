@@ -106,7 +106,7 @@ class AISignalEnhancer:
 
         except asyncio.TimeoutError:
             self.timeouts += 1
-            logger.debug("AI timeout after %dms for %s", self._cfg.api_timeout_ms, fv.market_id)
+            logger.warning("AI timeout after %dms for %s", self._cfg.api_timeout_ms, fv.market_id)
 
         except Exception as exc:
             self.api_errors += 1

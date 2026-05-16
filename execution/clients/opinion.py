@@ -45,11 +45,14 @@ class OpinionClient:
         self,
         api_key:             str,
         wallet_private_key:  str,
+        ctf_exchange_addr:   str,
         host:                Optional[str] = None,
         rate_limit_per_s:    int = 5,
-        ctf_exchange_addr:   str = "0x0000000000000000000000000000000000000000", # Placeholder
         sandbox:             bool = False,
     ) -> None:
+        if not ctf_exchange_addr or ctf_exchange_addr == "0x0000000000000000000000000000000000000000":
+            raise ValueError("ctf_exchange_addr must be a valid non-zero contract address")
+
         self._api_key            = api_key
         self._wallet_private_key = wallet_private_key
         self._sandbox            = sandbox
@@ -75,6 +78,14 @@ class OpinionClient:
             self._host, self._address, self._sandbox
         )
 
+    def _parse_market_id(self, market_id: str) -> int:
+        """Parse market_id to int, supporting decimal, hex, or hashed string."""
+        if market_id.isdigit():
+            return int(market_id)
+        if market_id.startswith("0x"):
+            return int(market_id, 16)
+        return int.from_bytes(market_id.encode()[:8], byteorder="big", signed=False)
+
     @property
     def platform(self) -> Platform:
         return self.PLATFORM
@@ -93,6 +104,11 @@ class OpinionClient:
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+        self._wallet_private_key = None
 
     def _sign_order(self, order: Dict[str, Any]) -> str:
         """Sign order using EIP-712."""
@@ -113,7 +129,7 @@ class OpinionClient:
             ]
         }
 
-        domain = _EIP712_DOMAIN.copy()
+        domain = self._domain.copy()
         domain["verifyingContract"] = self._ctf_exchange_addr
 
         structured_data = {
@@ -126,7 +142,7 @@ class OpinionClient:
                 ],
                 **types
             },
-            "domain": self._domain,
+            "domain": domain,
             "primaryType": "Order",
             "message": order,
         }
@@ -156,14 +172,14 @@ class OpinionClient:
                 "maker": self._address,
                 "signer": self._address,
                 "taker": "0x0000000000000000000000000000000000000000",
-                "tokenId": int(submission.market_id) if submission.market_id.isdigit() else int(submission.market_id, 16),
+                "tokenId": self._parse_market_id(submission.market_id),
                 "makerAmount": maker_amount,
                 "takerAmount": taker_amount,
                 "expiration": int(time.time()) + 3600,
                 "nonce": final_nonce,
-                "feeRateBps": 0, # Placeholder
+                "feeRateBps": 0,
                 "side": side_val,
-                "signatureType": 1, # EIP-712
+                "signatureType": 1,
             }
             
             signature = self._sign_order(order_msg)

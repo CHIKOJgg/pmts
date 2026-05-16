@@ -541,7 +541,7 @@ class ExecutionEngine:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.debug("Poll error for %s: %s", tracker.proposal_id[:8], exc)
+            logger.warning("Poll error for %s: %s", tracker.proposal_id[:8], exc)
             return False
 
         if resp.tx_hash and not tracker.tx_hash:

@@ -134,5 +134,5 @@ class OpinionWSAdapter:
                 await self._callback(snapshot)
         except Exception as exc:
             API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type="parse_error").inc()
-            logger.debug("Error handling Opinion WS message: %s", exc)
+            logger.warning("Error parsing Opinion WS message: %s", exc)
 

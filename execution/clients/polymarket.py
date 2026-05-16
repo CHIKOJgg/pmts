@@ -65,8 +65,6 @@ class PolymarketClient:
             self._host = _SANDBOX_HOST if sandbox else _DEFAULT_HOST
 
         self._address            = Account.from_key(wallet_private_key).address
-        
-        # Update chainId for EIP-712 if sandbox (Polygon Amoy is 80002)
         self._domain = _EIP712_DOMAIN.copy()
         if sandbox:
             self._domain["chainId"] = 80002
@@ -78,6 +76,11 @@ class PolymarketClient:
             "PolymarketClient initialized: host=%s, address=%s, sandbox=%s",
             self._host, self._address, self._sandbox
         )
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+        self._wallet_private_key = None
 
     @property
     def platform(self) -> Platform:

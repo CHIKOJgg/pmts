@@ -75,6 +75,7 @@ class Orchestrator:
         
         # Per-market lock to prevent concurrent evaluation races
         self._market_locks: Dict[str, asyncio.Lock] = {}
+        self._background_tasks: set[asyncio.Task] = set()
 
         # Metrics
         self.proposals_evaluated: int = 0
@@ -170,10 +171,12 @@ class Orchestrator:
         if decision.rejected:
             self.proposals_rejected += 1
             if decision.kill_switch_active:
-                asyncio.create_task(
+                task = asyncio.create_task(
                     self._kill_switch_response(),
                     name="kill-switch-response",
                 )
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             return
 
         self.proposals_approved += 1

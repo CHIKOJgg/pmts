@@ -1,0 +1,56 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = [
+    "src",
+    "config",
+    "data",
+    "engine",
+    "strategies",
+    "risk",
+    "execution",
+    "portfolio",
+    "ai",
+    "backtest",
+    "infrastructure",
+]
+omit = [
+    "tests/*",
+    "*/__pycache__/*",
+    "*/.venv/*",
+]
+branch = true
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

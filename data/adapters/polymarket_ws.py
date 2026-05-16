@@ -138,5 +138,5 @@ class PolymarketWSAdapter:
                 await self._callback(snapshot)
         except Exception as exc:
             API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type="parse_error").inc()
-            logger.debug("Error handling Polymarket WS message: %s", exc)
+            logger.warning("Error parsing Polymarket WS message: %s", exc)
 

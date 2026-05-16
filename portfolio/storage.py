@@ -12,18 +12,37 @@ class SqlitePortfolioStore:
     """
     SQLite persistence for PortfolioManager (Step 5).
     Uses WAL mode for high concurrency and fast writes.
+    Supports context manager protocol for safe resource cleanup.
     """
 
     def __init__(self, db_path: str = "portfolio.db"):
         self.db_path = db_path
-        # check_same_thread=False since asyncio can run on different threads in some executors,
-        # but all writes are serialized via asyncio.Lock in PortfolioManager.
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._closed = False
         self._init_db()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def close(self) -> None:
+        """Close the SQLite connection safely."""
+        if not self._closed and self._conn:
+            try:
+                self._conn.close()
+            except Exception as exc:
+                logger.error("Failed to close SQLite connection: %s", exc)
+            finally:
+                self._closed = True
 
     def is_healthy(self) -> bool:
         """Check if SQLite is reachable."""
+        if self._closed:
+            return False
         try:
             self._conn.execute("SELECT 1")
             return True

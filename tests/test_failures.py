@@ -15,6 +15,7 @@ from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
 from risk.limits import RiskLimits
 from engine.orchestrator import Orchestrator
+from portfolio.manager import PortfolioManager, FillRecord
 
 def run(coro):
     loop = asyncio.new_event_loop()
@@ -253,6 +254,101 @@ class TestFailureModes(unittest.TestCase):
         approved = [r for r in results if r.approved]
         
         self.assertEqual(len(approved), 6) # 150 * 6 = 900. Next one would be 1050 > 1000.
+
+    def test_risk_engine_concurrent_async_evaluate(self):
+        """Test that synchronous evaluate() is safe under concurrent async calls."""
+        import asyncio
+
+        pm = MagicMock()
+        pm.get_portfolio_mtm.return_value.total_equity_usdc = 10000.0
+        pm.cash_usdc = 1000.0
+        pm.get_price_age_ms.return_value = 100
+        pm.peak_equity = 10000.0
+
+        risk = RiskEngine(pm, KillSwitch("tok"), RiskLimits())
+
+        async def evaluate_async(idx: int):
+            p = OrderProposal(
+                str(idx), "M1", Platform.POLYMARKET, Side.BUY_YES,
+                100.0, 0.50, OrderType.LIMIT, StrategyId.MM,
+                int(time.time() * 1000) + 10000, 0
+            )
+            return risk.evaluate(p)
+
+        async def run_concurrent():
+            tasks = [evaluate_async(i) for i in range(20)]
+            return await asyncio.gather(*tasks)
+
+        results = asyncio.get_event_loop().run_until_complete(run_concurrent())
+        approved = [r for r in results if r.approved]
+
+        self.assertEqual(len(approved), 10)
+
+    def test_portfolio_manager_concurrent_record_fill(self):
+        """Test that record_fill() is safe under concurrent async calls."""
+        import asyncio
+
+        def price_source(market_id, platform):
+            return (0.50, 0.50)
+
+        pm = PortfolioManager(initial_cash_usdc=10000.0, price_source=price_source)
+
+        async def record_fill_async(idx: int):
+            fill = FillRecord(
+                proposal_id=f"prop-{idx}",
+                order_id=f"ord-{idx}",
+                market_id="M1",
+                platform=Platform.POLYMARKET,
+                side="BUY_YES",
+                filled_usdc=100.0,
+                fill_price=0.50,
+                ts=int(time.time() * 1000),
+            )
+            await pm.record_fill(fill)
+
+        async def run_concurrent():
+            tasks = [record_fill_async(i) for i in range(10)]
+            await asyncio.gather(*tasks)
+
+        asyncio.get_event_loop().run_until_complete(run_concurrent())
+
+        delta = pm.get_delta("M1", Platform.POLYMARKET)
+        self.assertAlmostEqual(delta.net_delta, 2000.0)
+
+    def test_execution_engine_concurrent_submit(self):
+        """Test that submit() is safe under concurrent async calls."""
+        import asyncio
+
+        client = MagicMock()
+        client.platform = Platform.POLYMARKET
+        client.place_order = AsyncMock(side_effect=Exception("No network"))
+
+        engine = ExecutionEngine(client, max_concurrent=10)
+
+        async def submit_async(idx: int):
+            sub = OrderSubmission(
+                order_id=f"ord-{idx}",
+                proposal_id=f"prop-{idx}",
+                market_id="M1",
+                platform=Platform.POLYMARKET,
+                side=Side.BUY_YES,
+                size_usdc=100.0,
+                limit_price=0.50,
+                order_type=OrderType.LIMIT,
+                strategy_id=StrategyId.MM,
+                expiry_ms=int(time.time() * 1000) + 60_000,
+                token_quantity=200.0,
+                submitted_at=int(time.time() * 1000),
+            )
+            await engine.submit(sub)
+
+        async def run_concurrent():
+            tasks = [submit_async(i) for i in range(5)]
+            await asyncio.gather(*tasks)
+
+        asyncio.get_event_loop().run_until_complete(run_concurrent())
+
+        self.assertEqual(engine._queue.qsize(), 5)
 
 if __name__ == "__main__":
     unittest.main()

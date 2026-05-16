@@ -44,6 +44,7 @@ class MarketDataProvider:
         self._callbacks:    list[_SnapshotCB] = []
         self._stream_writer = stream_writer
         self._adapters:     List[ExchangeAdapter] = adapters or []
+        self._background_tasks: set[asyncio.Task] = set()
 
         for adapter in self._adapters:
             adapter.set_snapshot_callback(self.ingest)
@@ -97,10 +98,12 @@ class MarketDataProvider:
                 logger.error("Snapshot callback raised: %s", exc, exc_info=True)
 
         if self._stream_writer:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._side_write(snapshot),
                 name=f"mdb-write-{snapshot.market_id[:8]}",
             )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     # ── Reads (hot path) ──────────────────────────────────────────────────────
 

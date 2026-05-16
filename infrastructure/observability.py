@@ -186,10 +186,11 @@ class ObservabilityServer:
     a /metrics endpoint for Prometheus export,
     and a /metrics/json endpoint for JSON export.
     """
-    def __init__(self, port: int = 8080):
+    def __init__(self, port: int = 8080, bind_host: str = "127.0.0.1"):
         if web is None:
             raise RuntimeError("aiohttp.web is required to start ObservabilityServer")
         self.port = port
+        self.bind_host = bind_host
         self.app = web.Application()
         self.app.router.add_get('/health', self.handle_liveness)
         self.app.router.add_get('/ready', self.handle_readiness)
@@ -245,7 +246,7 @@ class ObservabilityServer:
         try:
             self.runner = web.AppRunner(self.app)
             await self.runner.setup()
-            self.site = web.TCPSite(self.runner, '0.0.0.0', self.port)
+            self.site = web.TCPSite(self.runner, self.bind_host, self.port)
             await self.site.start()
             self.in_error_state = False
             logger.info("Observability server listening on port %d", self.port)

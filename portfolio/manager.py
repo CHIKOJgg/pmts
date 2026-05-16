@@ -215,6 +215,7 @@ class PortfolioManager:
                         self._cash_usdc, len(self._positions))
 
         self._tasks:   list[asyncio.Task] = []
+        self._background_tasks: set[asyncio.Task] = set()
         self._stopped: bool               = False
 
         self.fill_count:       int = 0
@@ -235,6 +236,11 @@ class PortfolioManager:
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        for t in self._background_tasks:
+            t.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     # ── Mutations (locked) ────────────────────────────────────────────────────
 
@@ -274,10 +280,12 @@ class PortfolioManager:
                     fill, self._positions[key], self._cash_usdc, self._peak_equity, self._closed_pnl
                 )
 
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._publish_snapshot(),
             name=f"snap-{fill.proposal_id[:8]}",
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def record_redemption(self, redemption: RedemptionRecord) -> None:
         key = (redemption.market_id, redemption.platform)
