@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -224,6 +225,8 @@ class PortfolioManager:
             raise ValueError(f"initial_cash_usdc must be ≥ 0, got {initial_cash_usdc}")
 
         self._lock: asyncio.Lock = asyncio.Lock()
+        # Synchronous lock for hot-path reads (get_portfolio_mtm)
+        self._sync_lock: threading.Lock = threading.Lock()
         self._positions: Dict[Tuple[str, Platform], _Position] = {}
         self._cash_usdc: float = initial_cash_usdc
         self._reserved_usdc: float = 0.0
@@ -386,7 +389,7 @@ class PortfolioManager:
     def get_portfolio_mtm(self) -> PortfolioMTM:
         """Compute mark-to-market equity."""
         # Take atomic snapshot of state to avoid race conditions
-        with self._lock:
+        with self._sync_lock:
             positions = dict(self._positions)
             cash = self._cash_usdc
             reserved = self._reserved_usdc
@@ -434,6 +437,20 @@ class PortfolioManager:
     def get_all_deltas(self) -> Dict[str, float]:
         markets = {mid for (mid, _) in self._positions}
         return {m: self.get_delta(m).net_delta for m in markets}
+
+    def get_all_positions(self) -> list:
+        """Return all positions as a list of DeltaResult-like objects for API consumption."""
+        return [
+            DeltaResult(
+                market_id=mid,
+                net_delta=pos.net_delta,
+                yes_holdings_pm=pos.yes_qty if plat == Platform.POLYMARKET else 0.0,
+                no_holdings_pm=pos.no_qty if plat == Platform.POLYMARKET else 0.0,
+                yes_holdings_op=pos.yes_qty if plat == Platform.OPINION else 0.0,
+                no_holdings_op=pos.no_qty if plat == Platform.OPINION else 0.0,
+            )
+            for (mid, plat), pos in self._positions.items()
+        ]
 
     # ── Properties ────────────────────────────────────────────────────────────
 

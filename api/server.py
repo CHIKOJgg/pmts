@@ -91,12 +91,12 @@ def create_app(
         return [
             PositionResponse(
                 market_id=p.market_id,
-                platform=p.platform.value,
-                yes_qty=p.yes_qty,
-                no_qty=p.no_qty,
-                avg_cost_yes=p.avg_cost_yes,
-                avg_cost_no=p.avg_cost_no,
-                unrealized_pnl=p.realised_pnl,
+                platform="polymarket" if p.yes_holdings_pm > 0 or p.no_holdings_pm > 0 else "opinion",
+                yes_qty=p.yes_holdings_pm + p.yes_holdings_op,
+                no_qty=p.no_holdings_pm + p.no_holdings_op,
+                avg_cost_yes=0.0,
+                avg_cost_no=0.0,
+                unrealized_pnl=0.0,
             )
             for p in positions
         ]

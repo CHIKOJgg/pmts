@@ -244,7 +244,7 @@ class TestFailureModes(unittest.TestCase):
         pm.get_delta.return_value.net_delta = 0.0
         
         risk = RiskEngine(
-            pm, KillSwitch("tok"),
+            pm, KillSwitch("test-token-secure-123"),
             RiskLimits(
                 max_market_exposure_usdc=10000, min_free_capital_pct=0.0,
                 max_net_delta_per_market=10000,
@@ -278,7 +278,7 @@ class TestFailureModes(unittest.TestCase):
         pm.get_delta.return_value.net_delta = 0.0
 
         risk = RiskEngine(
-            pm, KillSwitch("tok"),
+            pm, KillSwitch("test-token-secure-123"),
             RiskLimits(
                 max_market_exposure_usdc=10000, min_free_capital_pct=0.0,
                 max_net_delta_per_market=10000,

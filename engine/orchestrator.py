@@ -158,7 +158,7 @@ class Orchestrator:
         logger.warning("Kill switch reset - arb groups and in-flight cleared")
 
     async def _on_feature_vector(self, fv: FeatureVector) -> None:
-        if not self._trading or self._risk.kill_switch_active:
+        if self._risk.kill_switch_active:
             return
 
         # Lock per market to prevent concurrent evaluation races (Issue #1)
@@ -186,6 +186,19 @@ class Orchestrator:
                 )
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
+            return
+
+        if not self._trading:
+            logger.info(
+                "DRY RUN: would submit proposal=%s strategy=%s market=%s $%.2f side=%s",
+                proposal.proposal_id[:8],
+                proposal.strategy_id.value,
+                proposal.market_id,
+                proposal.size_usdc,
+                proposal.side.value,
+            )
+            await self._risk.notify_terminal(proposal.proposal_id, proposal.platform, proposal.size_usdc)
+            self.proposals_rejected += 1
             return
 
         self.proposals_approved += 1

@@ -94,6 +94,7 @@ RECONNECT_TOTAL = Counter("pmts_reconnect_total", "Total feed reconnections", ["
 class HealthMonitor:
     """
     Central health state tracker for Readiness and Liveness checks (Step 7).
+    Exchange connectivity is cached with a short TTL to avoid expensive calls per probe.
     """
     def __init__(
         self, 
@@ -103,7 +104,8 @@ class HealthMonitor:
         store: PortfolioStore, 
         kill_switch: KillSwitch,
         obs_server: Optional[ObservabilityServer] = None,
-        liveness_timeout_s: float = 30.0
+        liveness_timeout_s: float = 30.0,
+        connectivity_ttl_s: float = 10.0,
     ):
         self.mdp = mdp
         self.engines = engines
@@ -113,10 +115,28 @@ class HealthMonitor:
         self.obs_server = obs_server
         self._last_liveness_tick = time.time()
         self._liveness_timeout_s = liveness_timeout_s
+        self._connectivity_cache: Dict[str, Tuple[float, bool]] = {}
+        self._connectivity_ttl_s = connectivity_ttl_s
 
     def tick_liveness(self) -> None:
         """Update the liveness timestamp to indicate the event loop is running."""
         self._last_liveness_tick = time.time()
+
+    async def _check_engine_connectivity(self, engine: ExecutionEngine) -> bool:
+        """Check exchange connectivity with TTL cache to avoid rate-limit issues."""
+        plat = engine._client.platform.value
+        now = time.time()
+        cached = self._connectivity_cache.get(plat)
+        if cached is not None:
+            ts, ok = cached
+            if now - ts < self._connectivity_ttl_s:
+                return ok
+        try:
+            ok = await engine._client.verify_connectivity()
+        except Exception:
+            ok = False
+        self._connectivity_cache[plat] = (now, ok)
+        return ok
 
     async def check_readiness(self) -> Dict[str, Any]:
         """Strict readiness verification for orchestration."""
@@ -135,12 +155,8 @@ class HealthMonitor:
             plat = engine._client.platform.value
             recon = getattr(engine, "reconciliation_complete", False)
             
-            # Perform a fresh connectivity check
-            api_ok = False
-            try:
-                api_ok = await engine._client.verify_connectivity()
-            except Exception:
-                pass
+            # Use cached connectivity check to avoid expensive calls per probe
+            api_ok = await self._check_engine_connectivity(engine)
             
             details["engines"][plat] = {
                 "reconciliation_complete": recon,
@@ -190,7 +206,8 @@ class ObservabilityServer:
     Observability + Health Monitoring
     Provides a /health endpoint for orchestration checks,
     a /metrics endpoint for Prometheus export,
-    and a /metrics/json endpoint for JSON export.
+    a /metrics/json endpoint for JSON export,
+    and /kill-switch/activate and /kill-switch/reset endpoints.
     """
     def __init__(self, port: int = 8080, bind_host: str = "127.0.0.1"):
         if web is None:
@@ -202,11 +219,18 @@ class ObservabilityServer:
         self.app.router.add_get('/ready', self.handle_readiness)
         self.app.router.add_get('/metrics', self.handle_metrics_prometheus)
         self.app.router.add_get('/metrics/json', self.handle_metrics_json)
+        self.app.router.add_post('/kill-switch/activate', self.handle_kill_switch_activate)
+        self.app.router.add_post('/kill-switch/reset', self.handle_kill_switch_reset)
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         self.metrics_providers: List[Callable[[], Dict[str, Any]]] = []
         self.health_monitor: Optional[HealthMonitor] = None
         self.in_error_state: bool = False
+        self._kill_switch_token: Optional[str] = None
+        self._kill_switch_reset_callback: Optional[Callable] = None
+        self._reset_attempts: List[float] = []
+        self._reset_rate_limit_window_s: float = 60.0
+        self._max_resets_per_window: int = 5
 
     def register_provider(self, provider: Callable[[], Dict[str, Any]]) -> None:
         """Register a callback that returns a dictionary of metrics for JSON export."""
@@ -247,6 +271,92 @@ class ObservabilityServer:
             except Exception as e:
                 logger.error("Error gathering JSON metrics: %s", e)
         return web.json_response(metrics)
+
+    def set_kill_switch_config(
+        self,
+        token: str,
+        reset_callback: Optional[Callable] = None,
+    ) -> None:
+        """Configure kill-switch endpoint authentication and reset callback."""
+        self._kill_switch_token = token
+        self._kill_switch_reset_callback = reset_callback
+
+    async def handle_kill_switch_activate(self, request: web.Request) -> web.Response:
+        """POST /kill-switch/activate — activate the kill switch (requires token)."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        token = body.get("token", "")
+        reason = body.get("reason", "operator_http")
+        operator_id = body.get("operator_id", "unknown")
+
+        if not self._kill_switch_token or token != self._kill_switch_token:
+            logger.warning("Kill switch activate rejected — bad token (operator=%s)", operator_id)
+            return web.json_response({"error": "invalid token"}, status=403)
+
+        if not self.health_monitor:
+            return web.json_response({"error": "health monitor not available"}, status=503)
+
+        self.health_monitor.risk.manual_activate(reason)
+        source_ip = request.remote or "unknown"
+        logger.critical(
+            "KILL SWITCH ACTIVATED via HTTP by operator=%s source=%s reason=%s",
+            operator_id,
+            source_ip,
+            reason,
+        )
+        return web.json_response({"status": "activated", "reason": reason})
+
+    async def handle_kill_switch_reset(self, request: web.Request) -> web.Response:
+        """POST /kill-switch/reset — reset the kill switch (requires token + rate limit)."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        token = body.get("token", "")
+        operator_id = body.get("operator_id", "unknown")
+
+        if not self._kill_switch_token or token != self._kill_switch_token:
+            logger.warning("Kill switch reset rejected — bad token (operator=%s)", operator_id)
+            return web.json_response({"error": "invalid token"}, status=403)
+
+        now = time.time()
+        self._reset_attempts = [
+            t for t in self._reset_attempts if now - t < self._reset_rate_limit_window_s
+        ]
+        if len(self._reset_attempts) >= self._max_resets_per_window:
+            logger.warning(
+                "Kill switch reset rate-limited — %d attempts in %ds (operator=%s)",
+                len(self._reset_attempts),
+                self._reset_rate_limit_window_s,
+                operator_id,
+            )
+            return web.json_response({"error": "rate limited"}, status=429)
+
+        self._reset_attempts.append(now)
+
+        if not self.health_monitor:
+            return web.json_response({"error": "health monitor not available"}, status=503)
+
+        source_ip = request.remote or "unknown"
+        success = self.health_monitor.risk.reset_kill_switch(token, operator_id)
+        if success:
+            logger.warning(
+                "KILL SWITCH RESET via HTTP by operator=%s source=%s",
+                operator_id,
+                source_ip,
+            )
+            if self._kill_switch_reset_callback:
+                try:
+                    self._kill_switch_reset_callback()
+                except Exception as exc:
+                    logger.error("Kill switch reset callback failed: %s", exc)
+            return web.json_response({"status": "reset"})
+        else:
+            return web.json_response({"error": "reset failed"}, status=400)
 
     async def start(self) -> None:
         try:

@@ -13,10 +13,6 @@ def _e(k: str, d: str = "") -> str:
     return os.environ.get(k, d)
 
 
-def _e(k: str, d: str = "") -> str:
-    return os.environ.get(k, d)
-
-
 def _ei(k: str, d: int) -> int:
     val = os.environ.get(k)
     if val is None:
@@ -109,8 +105,8 @@ class TradingConfig:
     drawdown_warn_pct: float = field(default_factory=lambda: _ef("DRAWDOWN_WARN_PCT", 0.15))
     max_order_usdc: float = field(default_factory=lambda: _ef("MAX_ORDER_USDC", 200.0))
     min_order_usdc: float = field(default_factory=lambda: _ef("MIN_ORDER_USDC", 1.0))
-    max_market_exp_pct: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_PCT", 0.05))
-    max_market_exp_usdc: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_USDC", 500.0))
+    max_market_exposure_pct: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_PCT", 0.05))
+    max_market_exposure_usdc: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_USDC", 500.0))
     max_net_delta: float = field(default_factory=lambda: _ef("MAX_NET_DELTA", 50.0))
 
 
@@ -181,8 +177,8 @@ class Settings:
                 f"MAX_ORDER_USDC ({self.trading.max_order_usdc}) must be >= MIN_ORDER_USDC ({self.trading.min_order_usdc})"
             )
 
-        if self.trading.max_market_exp_usdc <= 0:
-            errors.append(f"MAX_MARKET_EXP_USDC must be > 0 (current: {self.trading.max_market_exp_usdc})")
+        if self.trading.max_market_exposure_usdc <= 0:
+            errors.append(f"MAX_MARKET_EXP_USDC must be > 0 (current: {self.trading.max_market_exposure_usdc})")
 
         if not (0 < self.trading.drawdown_kill_pct < 1):
             errors.append(f"DRAWDOWN_KILL_PCT must be between 0 and 1 (current: {self.trading.drawdown_kill_pct})")
@@ -192,8 +188,8 @@ class Settings:
                 f"DRAWDOWN_WARN_PCT ({self.trading.drawdown_warn_pct}) must be < DRAWDOWN_KILL_PCT ({self.trading.drawdown_kill_pct})"
             )
 
-        if not (0 < self.trading.max_market_exp_pct <= 1.0):
-            errors.append(f"MAX_MARKET_EXP_PCT must be between 0 and 1 (current: {self.trading.max_market_exp_pct})")
+        if not (0 < self.trading.max_market_exposure_pct <= 1.0):
+            errors.append(f"MAX_MARKET_EXP_PCT must be between 0 and 1 (current: {self.trading.max_market_exposure_pct})")
 
         if self.trading.max_net_delta < 0:
             errors.append(f"MAX_NET_DELTA must be >= 0 (current: {self.trading.max_net_delta})")

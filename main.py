@@ -70,6 +70,8 @@ async def run_live() -> None:
 
     alert_cfg = AlertCfg(
         slack_webhook_url=settings.alerts.slack_webhook_url or None,
+        email_smtp_host=settings.alerts.email_smtp_host,
+        email_smtp_port=settings.alerts.email_smtp_port,
         email_username=settings.alerts.email_username or None,
         email_password=settings.alerts.email_password or None,
         email_recipients=[r.strip() for r in settings.alerts.email_recipients.split(",") if r.strip()],
@@ -313,6 +315,8 @@ async def run_paper(fill_prob: float = 0.85) -> None:
 
     alert_cfg = AlertCfg(
         slack_webhook_url=settings.alerts.slack_webhook_url or None,
+        email_smtp_host=settings.alerts.email_smtp_host,
+        email_smtp_port=settings.alerts.email_smtp_port,
         email_username=settings.alerts.email_username or None,
         email_password=settings.alerts.email_password or None,
         email_recipients=[r.strip() for r in settings.alerts.email_recipients.split(",") if r.strip()],
@@ -444,7 +448,11 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     )
     
     obs_server.set_health_monitor(monitor)
-    
+    obs_server.set_kill_switch_config(
+        token=settings.trading.kill_switch_token,
+        reset_callback=orchestrator._on_kill_switch_reset,
+    )
+
     obs_server.register_provider(lambda: {
         "orchestrator": {
             "proposals_evaluated": orchestrator.proposals_evaluated,

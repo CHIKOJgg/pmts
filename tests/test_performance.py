@@ -109,7 +109,7 @@ class TestRiskEnginePerformance:
             return (0.50, 0.50)
 
         pm = PortfolioManager(initial_cash_usdc=10000.0, price_source=price_fn)
-        ks = KillSwitch(confirmation_token="test")
+        ks = KillSwitch(confirmation_token="test-token-secure-123")
         limits = RiskLimits()
         risk = RiskEngine(portfolio=pm, kill_switch=ks, limits=limits)
 

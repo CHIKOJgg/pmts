@@ -197,7 +197,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         )
         self.risk = RiskEngine(
             portfolio=self.portfolio,
-            kill_switch=KillSwitch("test-token"),
+            kill_switch=KillSwitch("test-token-secure-123"),
             limits=lim,
         )
         self.approved: list = []
@@ -263,7 +263,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         from portfolio.manager import PortfolioManager
         pm   = PortfolioManager(1_000.0, ps)
         from risk.engine import RiskEngine as _RE
-        risk = _RE(pm, KillSwitch("tok"), lim)
+        risk = _RE(pm, KillSwitch("test-token-secure-123"), lim)
 
         d1 = risk.evaluate(self._proposal(size=700.0))
         d2 = risk.evaluate(self._proposal(size=700.0))  # 700+700=1400 > 1000
@@ -284,7 +284,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         object.__setattr__(pm, '_peak_equity', 1000.0)  # force peak higher
 
         from risk.engine import RiskEngine as _RE2
-        risk = _RE2(pm, KillSwitch("tok"),
+        risk = _RE2(pm, KillSwitch("test-token-secure-123"),
                     RiskLimits(drawdown_kill_pct=0.20, drawdown_warn_pct=0.15))
         d = risk.evaluate(self._proposal(size=10.0))
         self.assertTrue(d.rejected)
@@ -297,7 +297,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         self.assertTrue(self.risk.kill_switch_active)
         self.assertFalse(self.risk.reset_kill_switch("wrong-token"))
         self.assertTrue(self.risk.kill_switch_active)
-        self.assertTrue(self.risk.reset_kill_switch("test-token"))
+        self.assertTrue(self.risk.reset_kill_switch("test-token-secure-123"))
         self.assertFalse(self.risk.kill_switch_active)
 
     def test_kill_switch_reset_flushes_strategy_state(self):
@@ -317,7 +317,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         portfolio = PortfolioManager(10_000.0, price_source)
         risk = RiskEngine(
             portfolio=portfolio,
-            kill_switch=KillSwitch("test-token"),
+            kill_switch=KillSwitch("test-token-secure-123"),
             limits=RiskLimits(
                 min_free_capital_pct=0.0,
                 max_single_order_usdc=10_000.0,
@@ -378,7 +378,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         self.assertEqual(len(emitted), 2, "arb_in_flight should suppress repeat proposals before reset")
 
         risk._kill_switch.activate("test", 0.25, 1000, 750)
-        self.assertTrue(risk.reset_kill_switch("test-token"))
+        self.assertTrue(risk.reset_kill_switch("test-token-secure-123"))
 
         run(strategy.on_feature_vector(fv))
         self.assertEqual(len(emitted), 4, "reset_kill_switch should flush strategy market state")
@@ -427,10 +427,16 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         def price_source(m, p):
             return (0.50, 0.50)
 
+        strategy = StrategyEngine(
+            config=StrategyConfig(),
+            arb_config=ArbConfig(),
+            dn_config=DeltaNeutralConfig(),
+        )
+
         portfolio = PortfolioManager(10_000.0, price_source)
         risk = RiskEngine(
             portfolio=portfolio,
-            kill_switch=KillSwitch("test-token"),
+            kill_switch=KillSwitch("test-token-secure-123"),
             limits=RiskLimits(
                 min_free_capital_pct=0.0,
                 max_single_order_usdc=10_000.0,
@@ -440,17 +446,6 @@ class TestStrategyRiskIntegration(unittest.TestCase):
                 max_arb_capital_usdc=100_000.0,
                 max_mm_capital_usdc=100_000.0,
             ),
-        )
-        strategy = StrategyEngine(
-            config=StrategyConfig(
-                arb_enabled=True,
-                mm_enabled=False,
-                hedge_enabled=False,
-                arb_budget_usdc=10_000.0,
-                mm_budget_usdc=0.0,
-            ),
-            arb_config=ArbConfig(min_net_edge=0.003),
-            dn_config=DeltaNeutralConfig(),
         )
         orchestrator = Orchestrator(
             mdp=_DummyMDP(),
@@ -684,7 +679,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
         risk = RiskEngine(
             portfolio=portfolio,
-            kill_switch=KillSwitch("test-token"),
+            kill_switch=KillSwitch("test-token-secure-123"),
             limits=RiskLimits(
                 min_free_capital_pct=0.0,
                 max_single_order_usdc=10_000.0,
@@ -819,7 +814,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         pm   = PortfolioManager(10_000.0, ps)
         run(pm.start())
         from risk.engine import RiskEngine as _RE3
-        risk = _RE3(pm, KillSwitch("tok"), lim)
+        risk = _RE3(pm, KillSwitch("test-token-secure-123"), lim)
 
         d1 = risk.evaluate(self._proposal(size=9_500.0))
         self.assertTrue(d1.approved)
@@ -1385,9 +1380,9 @@ class TestKillSwitchSystem(unittest.TestCase):
 
     def test_multiple_activations_tracked(self):
         from risk.kill_switch import KillSwitch
-        ks = KillSwitch("tok")
+        ks = KillSwitch("test-token-secure-123")
         ks.activate("r1", 0.21, 1000, 790)
-        ks.reset("tok")
+        ks.reset("test-token-secure-123")
         ks.activate("r2", 0.22, 1000, 780)
         self.assertEqual(ks.activation_count, 2)
 
@@ -1569,7 +1564,7 @@ class TestProductionValidationScenarios(unittest.TestCase):
         portfolio = PortfolioManager(10_000.0, price_source)
         risk = RiskEngine(
             portfolio=portfolio,
-            kill_switch=KillSwitch("test-token"),
+            kill_switch=KillSwitch("test-token-secure-123"),
             limits=RiskLimits(
                 min_free_capital_pct=0.0,
                 max_single_order_usdc=10_000.0,
