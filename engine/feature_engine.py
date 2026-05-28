@@ -1,4 +1,5 @@
 """engine/feature_engine.py — Converts MarketSnapshots into FeatureVectors."""
+
 from __future__ import annotations
 
 import collections
@@ -14,13 +15,13 @@ from src.types import Platform
 
 logger = logging.getLogger(__name__)
 
-VOL_WINDOW_MS: int = 30_000     # 30-second rolling window for vol
-MIN_VOL_TICKS: int = 5          # minimum ticks before vol is reported
-STALE_MS:      int = 2_000      # snapshots older than this are stale
+VOL_WINDOW_MS: int = 30_000  # 30-second rolling window for vol
+MIN_VOL_TICKS: int = 5  # minimum ticks before vol is reported
+STALE_MS: int = 2_000  # snapshots older than this are stale
 
 FEES: Dict[Platform, int] = {
     Platform.POLYMARKET: 20,
-    Platform.OPINION:    25,
+    Platform.OPINION: 25,
 }
 
 _FV_CB = Callable[[FeatureVector], Coroutine]
@@ -38,10 +39,10 @@ class FeatureEngine:
     """
 
     def __init__(self, portfolio: PortfolioManager) -> None:
-        self._portfolio  = portfolio
+        self._portfolio = portfolio
         self._callbacks: List[_FV_CB] = []
-        self._snaps:     Dict[Tuple[str, Platform], MarketSnapshot] = {}
-        self._history:   Dict[str, Deque[Tuple[int, float]]] = {}
+        self._snaps: Dict[Tuple[str, Platform], MarketSnapshot] = {}
+        self._history: Dict[str, Deque[Tuple[int, float]]] = {}
         self.vectors_emitted: int = 0
 
     def add_callback(self, cb: _FV_CB) -> None:
@@ -49,26 +50,21 @@ class FeatureEngine:
 
     async def on_snapshot(self, snap: MarketSnapshot) -> None:
         """Process one incoming snapshot and emit a FeatureVector if possible."""
-        now  = _now_ms()
-        key  = (snap.market_id, snap.platform)
+        now = _now_ms()
+        key = (snap.market_id, snap.platform)
         self._snaps[key] = snap
 
         # Update vol history
         hist = self._history.setdefault(snap.market_id, collections.deque())
         hist.append((snap.received_ts or snap.ts, snap.yes_mid))
-        self._portfolio.record_price_timestamp(
-            snap.market_id, snap.platform, snap.received_ts or snap.ts
-        )
+        self._portfolio.record_price_timestamp(snap.market_id, snap.platform, snap.received_ts or snap.ts)
 
         # Get counterpart snapshot
-        other_plat = (
-            Platform.OPINION if snap.platform == Platform.POLYMARKET
-            else Platform.POLYMARKET
-        )
+        other_plat = Platform.OPINION if snap.platform == Platform.POLYMARKET else Platform.POLYMARKET
         other = self._snaps.get((snap.market_id, other_plat))
 
         # Canonical order: PM first
-        pm = snap  if snap.platform == Platform.POLYMARKET else other
+        pm = snap if snap.platform == Platform.POLYMARKET else other
         op = other if snap.platform == Platform.POLYMARKET else snap
 
         # Determine stale platforms.
@@ -78,10 +74,19 @@ class FeatureEngine:
         for s, p in [(pm, Platform.POLYMARKET), (op, Platform.OPINION)]:
             if s is None:
                 stale.append(p)
-            elif s.is_stale:
+                continue
+
+            # Check if snapshot was marked as stale by MDP
+            if s.is_stale:
                 stale.append(p)
-            elif (s.received_ts - s.ts) > STALE_MS:
-                # Snapshot was already stale when received (from MDP staleness check)
+                continue
+
+            # Check age based on received timestamp
+            # Use received_ts if available, otherwise use ts as fallback
+            check_ts = s.received_ts or s.ts
+            age_ms = now - check_ts
+
+            if age_ms > STALE_MS * 2:  # More lenient for backtest scenarios
                 stale.append(p)
 
         # Compute arb signal
@@ -91,7 +96,7 @@ class FeatureEngine:
                 stale = [other_plat]
         else:
             fee_pm = FEES[Platform.POLYMARKET] / 10_000
-            fee_op = FEES[Platform.OPINION]    / 10_000
+            fee_op = FEES[Platform.OPINION] / 10_000
             arb_signal = 1.0 - pm.yes_ask - op.no_ask - fee_pm - fee_op
 
         # OFI: (bid_depth - ask_depth) / total_depth
@@ -107,7 +112,7 @@ class FeatureEngine:
             return getattr(s, attr) if s is not None else fallback
 
         vol_30s = self._vol(snap.market_id, now)
-        delta   = self._portfolio.get_delta(snap.market_id)
+        delta = self._portfolio.get_delta(snap.market_id)
 
         try:
             fv = FeatureVector(

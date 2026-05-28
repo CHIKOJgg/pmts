@@ -24,11 +24,13 @@ class RestPollingAdapter:
         host: str,
         markets: list[str],
         poll_interval_s: float = 0.5,
+        taker_fee_bps: int = 20,
     ) -> None:
         self._platform = platform
         self._host = host.rstrip("/")
         self._markets = set(markets)
         self._poll_interval_s = poll_interval_s
+        self._taker_fee_bps = taker_fee_bps
 
         self._cb: Optional[_SnapshotCB] = None
         self._session: Optional[aiohttp.ClientSession] = None
@@ -103,8 +105,8 @@ class RestPollingAdapter:
 
 
 class PolymarketPollingAdapter(RestPollingAdapter):
-    def __init__(self, host: str, markets: list[str], poll_interval_s: float = 0.5) -> None:
-        super().__init__(Platform.POLYMARKET, host, markets, poll_interval_s)
+    def __init__(self, host: str, markets: list[str], poll_interval_s: float = 0.5, taker_fee_bps: int = 20) -> None:
+        super().__init__(Platform.POLYMARKET, host, markets, poll_interval_s, taker_fee_bps=taker_fee_bps)
 
     async def _fetch_market(self, market_id: str) -> Optional[MarketSnapshot]:
         if not self._session:
@@ -120,8 +122,8 @@ class PolymarketPollingAdapter(RestPollingAdapter):
 
 
 class OpinionPollingAdapter(RestPollingAdapter):
-    def __init__(self, host: str, markets: list[str], poll_interval_s: float = 0.5) -> None:
-        super().__init__(Platform.OPINION, host, markets, poll_interval_s)
+    def __init__(self, host: str, markets: list[str], poll_interval_s: float = 0.5, taker_fee_bps: int = 25) -> None:
+        super().__init__(Platform.OPINION, host, markets, poll_interval_s, taker_fee_bps=taker_fee_bps)
 
     async def _fetch_market(self, market_id: str) -> Optional[MarketSnapshot]:
         if not self._session:

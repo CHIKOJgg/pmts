@@ -171,7 +171,7 @@ class OrderTracker:
         assert not self.status.is_terminal, f"Already terminal: {self.status}"
         self.status = TrackerStatus.EXPIRED
         self.terminal_at = _now_ms()
-        return self._terminal(OrderStatus.CANCELLED)
+        return self._terminal(OrderStatus.EXPIRED)
 
     def record_rejection(self, error: str) -> ExecutionResult:
         assert not self.status.is_terminal, f"Already terminal: {self.status}"

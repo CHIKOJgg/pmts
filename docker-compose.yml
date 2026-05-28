@@ -12,13 +12,23 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
-    command: ["--mode", "live"]
+    command: ["--mode", "paper"]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
 
   prometheus:
     image: prom/prometheus:v2.54.1
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--storage.tsdb.min-block-duration=2h"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
     volumes:
       - ./docs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -27,6 +37,12 @@ services:
     restart: unless-stopped
     depends_on:
       - pmts
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+        reservations:
+          memory: 96M
 
   grafana:
     image: grafana/grafana:11.1.0
@@ -37,6 +53,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_INSTALL_PLUGINS: ""
     volumes:
       - grafana-data:/var/lib/grafana
       - ./docs/grafana-dashboard.json:/var/lib/grafana/dashboards/pmts-dashboard.json:ro
@@ -47,6 +64,12 @@ services:
     restart: unless-stopped
     depends_on:
       - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
 
   pmts-backtest:
     build: .

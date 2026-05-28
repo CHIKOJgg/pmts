@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,8 @@ def create_app(
     portfolio_manager=None,
     analytics=None,
     alert_router=None,
+    market_ids: Optional[List[str]] = None,
+    start_time: Optional[float] = None,
 ) -> Any:
     if not FASTAPI_AVAILABLE:
         logger.warning("FastAPI not available. API server disabled.")
@@ -72,10 +75,11 @@ def create_app(
         if health_monitor is None:
             raise HTTPException(status_code=503, detail="Health monitor not available")
         readiness = await health_monitor.check_readiness()
+        uptime = time.time() - start_time if start_time else 0.0
         return HealthResponse(
             status="healthy" if readiness.get("ready") else "unhealthy",
-            uptime_seconds=0.0,
-            active_strategies=0,
+            uptime_seconds=uptime,
+            active_strategies=readiness.get("active_strategies", 0),
             kill_switch=getattr(health_monitor.risk, "kill_switch_active", False),
         )
 
@@ -114,11 +118,20 @@ def create_app(
     async def get_alerts(limit: int = Query(50, le=200)):
         if alert_router is None:
             raise HTTPException(status_code=503, detail="Alert router not available")
-        return []
+        recent = alert_router.get_recent(limit=limit)
+        return [
+            AlertResponse(
+                severity=a.severity.value,
+                title=a.title,
+                message=a.message,
+                timestamp=a.timestamp,
+            )
+            for a in recent
+        ]
 
     @app.get("/markets")
     async def get_markets():
-        return {"markets": []}
+        return {"markets": market_ids or []}
 
     return app
 
@@ -130,13 +143,15 @@ async def run_api_server(
     portfolio_manager=None,
     analytics=None,
     alert_router=None,
+    market_ids: Optional[List[str]] = None,
+    start_time: Optional[float] = None,
 ) -> None:
     if not FASTAPI_AVAILABLE:
         logger.warning("FastAPI not installed. Run: pip install fastapi uvicorn")
         return
 
     import uvicorn
-    app = create_app(health_monitor, portfolio_manager, analytics, alert_router)
+    app = create_app(health_monitor, portfolio_manager, analytics, alert_router, market_ids, start_time)
     if app:
         config = uvicorn.Config(app, host=host, port=port, log_level="info")
         server = uvicorn.Server(config)

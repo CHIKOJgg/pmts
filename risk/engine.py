@@ -8,22 +8,29 @@ pass the capital check before either reservation is recorded.
 Strategy: RiskEngine keeps its own _reservations dict. available capital =
 cash − sum(reservations.values()). No async, no race.
 """
+
 from __future__ import annotations
 
+import asyncio
 import collections
 import logging
 import time
 from typing import Callable, Dict, Optional, Tuple
 
-from src.clock import Clock, LiveClock
 from execution.models import OrderProposal
+from infrastructure.observability import CAPITAL_UTILIZATION, DRAWDOWN_PCT, KILL_SWITCH_ACTIVE
 from portfolio.manager import PortfolioManager
 from risk.kill_switch import KillSwitch
-from risk.limits import RiskLimits, DEFAULT_LIMITS
+from risk.limits import DEFAULT_LIMITS, RiskLimits
+from src.clock import Clock, LiveClock
 from src.types import (
-    ConnectorStatus, Platform, RejectReason, RiskVerdict, Side, StrategyId,
+    ConnectorStatus,
+    Platform,
+    RejectReason,
+    RiskVerdict,
+    Side,
+    StrategyId,
 )
-from infrastructure.observability import DRAWDOWN_PCT, KILL_SWITCH_ACTIVE, CAPITAL_UTILIZATION
 
 logger = logging.getLogger(__name__)
 
@@ -32,27 +39,35 @@ logger = logging.getLogger(__name__)
 # RiskDecision — immutable result
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class RiskDecision:
     __slots__ = (
-        "proposal_id", "verdict", "reject_reason", "reject_detail",
-        "capital_available", "capital_reserved", "mtm_drawdown_pct",
-        "peak_equity_usdc", "current_equity_usdc", "kill_switch_active",
+        "proposal_id",
+        "verdict",
+        "reject_reason",
+        "reject_detail",
+        "capital_available",
+        "capital_reserved",
+        "mtm_drawdown_pct",
+        "peak_equity_usdc",
+        "current_equity_usdc",
+        "kill_switch_active",
         "decided_at",
     )
 
     def __init__(
         self,
-        proposal_id:         str,
-        verdict:             RiskVerdict,
-        reject_reason:       Optional[RejectReason],
-        reject_detail:       Optional[str],
-        capital_available:   float,
-        capital_reserved:    float,
-        mtm_drawdown_pct:    float,
-        peak_equity_usdc:    float,
+        proposal_id: str,
+        verdict: RiskVerdict,
+        reject_reason: Optional[RejectReason],
+        reject_detail: Optional[str],
+        capital_available: float,
+        capital_reserved: float,
+        mtm_drawdown_pct: float,
+        peak_equity_usdc: float,
         current_equity_usdc: float,
-        kill_switch_active:  bool,
-        decided_at:          int,
+        kill_switch_active: bool,
+        decided_at: int,
     ) -> None:
         for attr in self.__slots__:
             object.__setattr__(self, attr, locals()[attr])
@@ -69,6 +84,7 @@ class RiskDecision:
 # ─────────────────────────────────────────────────────────────────────────────
 # RiskEngine
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class RiskEngine:
     """
@@ -91,29 +107,34 @@ class RiskEngine:
 
     def __init__(
         self,
-        portfolio:           PortfolioManager,
-        kill_switch:         KillSwitch,
-        limits:              RiskLimits = DEFAULT_LIMITS,
+        portfolio: PortfolioManager,
+        kill_switch: KillSwitch,
+        limits: RiskLimits = DEFAULT_LIMITS,
         connector_status_fn: Optional[Callable[[Platform], ConnectorStatus]] = None,
-        stream_writer:       Optional[Callable] = None,
+        stream_writer: Optional[Callable] = None,
         store=None,
         alert_router=None,
         clock: Optional[Clock] = None,
     ) -> None:
-        self._portfolio        = portfolio
-        self._kill_switch      = kill_switch
-        self._limits           = limits
+        self._portfolio = portfolio
+        self._kill_switch = kill_switch
+        self._limits = limits
         self._connector_status = connector_status_fn
-        self._stream_writer    = stream_writer
-        self._store            = store
-        self._alert_router     = alert_router
+        self._stream_writer = stream_writer
+        self._store = store
+        self._alert_router = alert_router
         self._clock = clock or LiveClock()
 
         # Synchronous reservation table — the ONLY source of truth for committed capital
         # proposal_id -> (amount, platform, strategy_id)
         self._reservations: Dict[str, Tuple[float, Platform, StrategyId]] = {}
         self._arb_allocated: float = 0.0
-        self._mm_allocated:  float = 0.0
+        self._mm_allocated: float = 0.0
+
+        # Lock for atomic capital reservation operations (sync — all calls from event loop)
+        import threading
+
+        self._capital_lock: threading.Lock = threading.Lock()
 
         if self._store:
             loaded_res = self._store.load_reservations()
@@ -130,16 +151,16 @@ class RiskEngine:
             if self._store.load_kill_switch():
                 logger.warning("Restoring ACTIVE kill switch state from SQLite")
                 self._kill_switch.sync_state(True)
-        
+
         self.reconciliation_complete: bool = False
 
         # LRU dedup cache
         self._dedup: collections.OrderedDict[str, int] = collections.OrderedDict()
         self._on_kill_switch_reset: Optional[Callable[[], None]] = None
 
-        self.total_evaluated:      int = 0
-        self.total_approved:       int = 0
-        self.total_rejected:       int = 0
+        self.total_evaluated: int = 0
+        self.total_approved: int = 0
+        self.total_rejected: int = 0
         self.rejections_by_reason: Dict[str, int] = {r.value: 0 for r in RejectReason}
 
     # ── Primary interface ─────────────────────────────────────────────────────
@@ -151,7 +172,7 @@ class RiskEngine:
         Must complete in < 5 ms.
         """
         self.total_evaluated += 1
-        now    = self._clock.now_ms()
+        now = self._clock.now_ms()
         mtm_age_ms = self._portfolio.get_price_age_ms()
         if mtm_age_ms > self._limits.max_mtm_age_ms:
             return self._reject(
@@ -165,24 +186,31 @@ class RiskEngine:
                 equity=self._portfolio.peak_equity,
                 now=now,
             )
-        mtm    = self._portfolio.get_portfolio_mtm()
-        peak   = self._portfolio.peak_equity
+        mtm = self._portfolio.get_portfolio_mtm()
+        peak = self._portfolio.peak_equity
         equity = mtm.total_equity_usdc
-        cash   = self._portfolio.cash_usdc
+        cash = self._portfolio.cash_usdc
 
         # Available capital = cash minus ALL outstanding reservations (sync dict read)
         committed = sum(r[0] for r in self._reservations.values())
         available = max(0.0, cash - committed)
-        drawdown  = _drawdown(peak, equity)
-        
+        drawdown = _drawdown(peak, equity)
+
         DRAWDOWN_PCT.set(drawdown)
         KILL_SWITCH_ACTIVE.set(1.0 if self._kill_switch.is_active else 0.0)
         CAPITAL_UTILIZATION.set(committed / equity if equity > 0 else 0.0)
 
         def reject(reason: RejectReason, detail: str) -> RiskDecision:
             return self._reject(
-                proposal, reason, detail,
-                available, committed, drawdown, peak, equity, now,
+                proposal,
+                reason,
+                detail,
+                available,
+                committed,
+                drawdown,
+                peak,
+                equity,
+                now,
             )
 
         # ── 1. Kill switch ────────────────────────────────────────────────────
@@ -260,12 +288,10 @@ class RiskEngine:
             )
 
         # ── 11. Strategy cap ──────────────────────────────────────────────────
-        strat_used = (
-            self._arb_allocated if proposal.strategy_id == StrategyId.ARB
-            else self._mm_allocated
-        )
+        strat_used = self._arb_allocated if proposal.strategy_id == StrategyId.ARB else self._mm_allocated
         strat_cap = (
-            self._limits.max_arb_capital_usdc if proposal.strategy_id == StrategyId.ARB
+            self._limits.max_arb_capital_usdc
+            if proposal.strategy_id == StrategyId.ARB
             else self._limits.max_mm_capital_usdc
         )
         if strat_used + proposal.size_usdc > strat_cap:
@@ -275,23 +301,21 @@ class RiskEngine:
             )
 
         # ── 12. Projected delta ───────────────────────────────────────────────
-        current_delta   = self._portfolio.get_delta(proposal.market_id).net_delta
+        current_delta = self._portfolio.get_delta(proposal.market_id).net_delta
         projected_delta = _projected_delta(current_delta, proposal)
         if abs(projected_delta) > self._limits.max_net_delta_per_market:
             return reject(
                 RejectReason.DELTA_LIMIT,
-                f"Projected |Δ|={abs(projected_delta):.2f} > "
-                f"limit {self._limits.max_net_delta_per_market:.2f}",
+                f"Projected |Δ|={abs(projected_delta):.2f} > limit {self._limits.max_net_delta_per_market:.2f}",
             )
 
-        # ── APPROVED — reserve capital synchronously ──────────────────────────
-        self._reservations[proposal.proposal_id] = (
-            proposal.size_usdc, proposal.platform, proposal.strategy_id
-        )
-        if proposal.strategy_id == StrategyId.ARB:
-            self._arb_allocated += proposal.size_usdc
-        else:
-            self._mm_allocated += proposal.size_usdc
+        # ── APPROVED — reserve capital atomically under lock ──────────────────
+        with self._capital_lock:
+            self._reservations[proposal.proposal_id] = (proposal.size_usdc, proposal.platform, proposal.strategy_id)
+            if proposal.strategy_id == StrategyId.ARB:
+                self._arb_allocated += proposal.size_usdc
+            else:
+                self._mm_allocated += proposal.size_usdc
 
         if self._store:
             self._store.save_reservation(
@@ -302,7 +326,8 @@ class RiskEngine:
         return RiskDecision(
             proposal_id=proposal.proposal_id,
             verdict=RiskVerdict.APPROVED,
-            reject_reason=None, reject_detail=None,
+            reject_reason=None,
+            reject_detail=None,
             capital_available=available - proposal.size_usdc,
             capital_reserved=committed + proposal.size_usdc,
             mtm_drawdown_pct=min(drawdown, 1.0),
@@ -314,9 +339,7 @@ class RiskEngine:
 
     # ── Terminal notification ─────────────────────────────────────────────────
 
-    async def notify_terminal(
-        self, proposal_id: str, platform: Platform, amount_usdc: float
-    ) -> None:
+    async def notify_terminal(self, proposal_id: str, platform: Platform, amount_usdc: float) -> None:
         """Release reservation when order reaches terminal state."""
         info = self._reservations.pop(proposal_id, None)
         if info is None:
@@ -342,10 +365,10 @@ class RiskEngine:
         """
         if not self._store:
             return
-            
+
         logger.info("Reconciling risk reservations...")
         db_res = self._store.load_reservations()
-        
+
         # Memory is empty on startup, so we populate it from DB
         for pid, (amt, plat, strat) in db_res.items():
             if pid not in self._reservations:
@@ -354,7 +377,7 @@ class RiskEngine:
                     self._arb_allocated += amt
                 else:
                     self._mm_allocated += amt
-                    
+
         # Any PID in memory that is NOT in ExecutionEngine trackers (after its reconcile)
         # will be handled by the notify_terminal calls triggered by reconcile failures.
         self.reconciliation_complete = True
@@ -362,18 +385,18 @@ class RiskEngine:
     # ── Kill switch control ───────────────────────────────────────────────────
 
     def manual_activate(self, reason: str = "operator_manual") -> None:
-        mtm  = self._portfolio.get_portfolio_mtm()
+        mtm = self._portfolio.get_portfolio_mtm()
         peak = self._portfolio.peak_equity
         self._fire_kill_switch(
             _drawdown(peak, mtm.total_equity_usdc),
-            peak, mtm.total_equity_usdc, None,
+            peak,
+            mtm.total_equity_usdc,
+            None,
         )
         if self._store:
             self._store.save_kill_switch(True)
 
-    def reset_kill_switch(
-        self, confirmation_token: str, operator_id: Optional[str] = None
-    ) -> bool:
+    def reset_kill_switch(self, confirmation_token: str, operator_id: Optional[str] = None) -> bool:
         success = self._kill_switch.reset(confirmation_token, operator_id)
         if success:
             for proposal_id in list(self._reservations.keys()):
@@ -402,7 +425,7 @@ class RiskEngine:
     @property
     def current_drawdown(self) -> float:
         """Return current portfolio drawdown calculated from peak equity."""
-        mtm  = self._portfolio.get_portfolio_mtm()
+        mtm = self._portfolio.get_portfolio_mtm()
         peak = self._portfolio.peak_equity
         return _drawdown(peak, mtm.total_equity_usdc)
 
@@ -414,32 +437,37 @@ class RiskEngine:
 
     def _reject(
         self,
-        proposal:   OrderProposal,
-        reason:     RejectReason,
-        detail:     str,
-        available:  float,
-        committed:  float,
-        drawdown:   float,
-        peak:       float,
-        equity:     float,
-        now:        int,
+        proposal: OrderProposal,
+        reason: RejectReason,
+        detail: str,
+        available: float,
+        committed: float,
+        drawdown: float,
+        peak: float,
+        equity: float,
+        now: int,
     ) -> RiskDecision:
         self.total_rejected += 1
-        self.rejections_by_reason[reason.value] = (
-            self.rejections_by_reason.get(reason.value, 0) + 1
-        )
+        self.rejections_by_reason[reason.value] = self.rejections_by_reason.get(reason.value, 0) + 1
         logger.warning(
             "REJECT proposal=%s strategy=%s market=%s $%.2f reason=%s — %s",
-            proposal.proposal_id[:8], proposal.strategy_id.value,
-            proposal.market_id, proposal.size_usdc, reason.value, detail,
+            proposal.proposal_id[:8],
+            proposal.strategy_id.value,
+            proposal.market_id,
+            proposal.size_usdc,
+            reason.value,
+            detail,
         )
         return RiskDecision(
             proposal_id=proposal.proposal_id,
             verdict=RiskVerdict.REJECTED,
-            reject_reason=reason, reject_detail=detail,
-            capital_available=available, capital_reserved=committed,
+            reject_reason=reason,
+            reject_detail=detail,
+            capital_available=available,
+            capital_reserved=committed,
             mtm_drawdown_pct=min(drawdown, 1.0),
-            peak_equity_usdc=peak, current_equity_usdc=equity,
+            peak_equity_usdc=peak,
+            current_equity_usdc=equity,
             kill_switch_active=self._kill_switch.is_active,
             decided_at=now,
         )
@@ -454,20 +482,27 @@ class RiskEngine:
         while len(self._dedup) > self._limits.dedup_cache_size:
             self._dedup.popitem(last=False)
 
-    def _fire_kill_switch(
-        self, drawdown: float, peak: float, equity: float,
-        triggering_id: Optional[str]
-    ) -> None:
+    def _fire_kill_switch(self, drawdown: float, peak: float, equity: float, triggering_id: Optional[str]) -> None:
         record = self._kill_switch.activate(
             reason="drawdown_limit_breached",
-            mtm_drawdown=drawdown, peak_equity=peak,
-            current_equity=equity, triggering_id=triggering_id,
+            mtm_drawdown=drawdown,
+            peak_equity=peak,
+            current_equity=equity,
+            triggering_id=triggering_id,
         )
         KILL_SWITCH_ACTIVE.set(1.0)
         if self._store:
             self._store.save_kill_switch(True)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.error("No running event loop — cannot send kill-switch alerts")
+            return
+
         if self._alert_router:
             from infrastructure.alerting import Alert, AlertSeverity
+
             alert = Alert(
                 severity=AlertSeverity.CRITICAL,
                 title="Kill Switch Activated",
@@ -475,17 +510,20 @@ class RiskEngine:
                 source="RiskEngine",
                 metadata={"drawdown": drawdown, "triggering_id": triggering_id},
             )
-            asyncio.create_task(self._alert_router.send(alert))
+            loop.create_task(self._alert_router.send(alert))
+
         if self._stream_writer:
-            try:
-                self._stream_writer("risk_events", {
-                    "event": "kill_switch_activated",
-                    "activated_at": record.activated_at,
-                    "drawdown": drawdown,
-                    "triggering": triggering_id,
-                })
-            except Exception as exc:
-                logger.error("Kill switch stream write failed: %s", exc)
+            loop.create_task(
+                self._stream_writer(
+                    "risk_events",
+                    {
+                        "event": "kill_switch_activated",
+                        "activated_at": record.activated_at,
+                        "drawdown": drawdown,
+                        "triggering": triggering_id,
+                    },
+                )
+            )
 
 
 def _drawdown(peak: float, current: float) -> float:

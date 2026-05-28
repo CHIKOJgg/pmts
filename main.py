@@ -62,6 +62,8 @@ async def run_live() -> None:
     settings.validate()
 
     logger.info("Live trading initializing: markets=%s", settings.trading.markets)
+
+    clock = LiveClock()
     
     db_path = getattr(settings.trading, "db_path", "portfolio.db")
     store = SqlitePortfolioStore(db_path=db_path)
@@ -130,8 +132,12 @@ async def run_live() -> None:
     ai_cfg = AIEnhancerConfig(
         enabled=settings.ai.enabled,
         use_heuristic_only=settings.ai.heuristic_only,
+        provider=settings.ai.provider,
+        anthropic_api_key=settings.ai.anthropic_api_key,
+        openrouter_api_key=settings.ai.openrouter_api_key,
+        openrouter_model=settings.ai.openrouter_model,
         api_timeout_ms=settings.ai.api_timeout_ms,
-        cache_ttl_ms=settings.ai.cache_ttl_ms
+        cache_ttl_ms=settings.ai.cache_ttl_ms,
     )
     ai_enhancer = AISignalEnhancer(config=ai_cfg)
 
@@ -179,6 +185,17 @@ async def run_live() -> None:
         client=pm_client,
         orchestrator=orchestrator,
         markets=settings.trading.markets,
+    )
+
+    def handle_resolution(market_id: str, outcome: str) -> None:
+        logger.info("Market %s resolved to %s, notifying orchestrator", market_id, outcome)
+        asyncio.create_task(orchestrator.handle_market_resolution(market_id, outcome))
+
+    from engine.resolution_monitor import ResolutionMonitor
+    resolution_monitor = ResolutionMonitor(
+        client=pm_client,
+        markets=settings.trading.markets,
+        on_resolution=handle_resolution,
     )
     
     obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
@@ -244,14 +261,14 @@ async def run_live() -> None:
     
     liveness_task = asyncio.create_task(liveness_tick_loop(), name="liveness-tick")
     
-    logger.info("SYSTEM PAPER TRADING mode. No real capital at risk.")
-    
+    logger.info("SYSTEM LIVE TRADING mode.")
+
     try:
         await shutdown_event.wait()
     except asyncio.CancelledError:
         pass
-    
-    logger.info("Shutting down paper trading...")
+
+    logger.info("Shutting down live trading...")
     liveness_task.cancel()
     await resolution_monitor.stop()
     await market_monitor.stop()
@@ -265,6 +282,7 @@ async def run_live() -> None:
 
 
 async def run_paper(fill_prob: float = 0.85) -> None:
+    from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
     from data.adapters.opinion_ws import OpinionWSAdapter
     from data.adapters.polymarket_ws import PolymarketWSAdapter
     from data.market_data_provider import MarketDataProvider
@@ -344,6 +362,18 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
     risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, alert_router=alert_router, clock=clock)
 
+    ai_cfg = AIEnhancerConfig(
+        enabled=settings.ai.enabled,
+        use_heuristic_only=settings.ai.heuristic_only,
+        provider=settings.ai.provider,
+        anthropic_api_key=settings.ai.anthropic_api_key,
+        openrouter_api_key=settings.ai.openrouter_api_key,
+        openrouter_model=settings.ai.openrouter_model,
+        api_timeout_ms=settings.ai.api_timeout_ms,
+        cache_ttl_ms=settings.ai.cache_ttl_ms,
+    )
+    ai_enhancer = AISignalEnhancer(config=ai_cfg)
+
     strat_cfg = StrategyConfig(
         arb_enabled=settings.trading.enable_arb,
         mm_enabled=settings.trading.enable_mm,
@@ -365,6 +395,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         config=strat_cfg,
         arb_config=arb_cfg,
         dn_config=dn_cfg,
+        ai_enhancer=ai_enhancer,
     )
 
     pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
@@ -378,6 +409,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         pm_engine=pm_engine,
         op_engine=op_engine,
         markets=settings.trading.markets,
+        ai_enhancer=ai_enhancer,
         enable_trading=settings.trading.enable_trading,
         clock=clock,
     )
@@ -469,6 +501,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     
     logger.info("Shutting down paper trading...")
     liveness_task.cancel()
+    await resolution_monitor.stop()
     await market_monitor.stop()
     await orchestrator.stop()
     await obs_server.stop()
@@ -493,7 +526,7 @@ async def run_backtest(ticks: int, capital: float) -> None:
         market_id: build_synthetic_tick_stream(
             market_id,
             n_ticks=per_market_ticks,
-            seed=42,
+            seed=hash(market_id) % (2**31),
         )
         for market_id in selected_markets
     }

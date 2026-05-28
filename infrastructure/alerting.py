@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -63,6 +64,10 @@ class AlertRouter:
         self._last_alert_times: Dict[str, int] = {}
         self._total_sent: int = 0
         self._total_suppressed: int = 0
+        self._history: deque = deque(maxlen=500)
+
+    def get_recent(self, limit: int = 50) -> List[Alert]:
+        return list(self._history)[-limit:]
 
     async def send(self, alert: Alert) -> bool:
         if not self._should_send(alert):
@@ -85,6 +90,7 @@ class AlertRouter:
         success = all(not isinstance(r, Exception) for r in results)
         if success:
             self._total_sent += 1
+        self._history.append(alert)
         return success
 
     async def close(self) -> None:

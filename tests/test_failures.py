@@ -127,8 +127,8 @@ class TestFailureModes(unittest.TestCase):
         
         engine._trackers["PROP-PF"] = tracker
         
-        # Run expiry check
-        run(engine._expiry_worker()) # This should trigger cancel
+        # Run expiry check (single pass, not the infinite worker loop)
+        run(engine._expiry_check())
         
         self.assertEqual(tracker.status, TrackerStatus.EXPIRED)
         self.assertEqual(tracker.cumulative_filled_usdc, 40.0)
@@ -237,9 +237,19 @@ class TestFailureModes(unittest.TestCase):
     def test_risk_engine_concurrency(self):
         pm = MagicMock()
         pm.get_portfolio_mtm.return_value.total_equity_usdc = 10000.0
+        pm.get_price_age_ms.return_value = 0
+        pm.peak_equity = 10000.0
         pm.cash_usdc = 1000.0
+        pm.get_market_exposure_usdc.return_value = 0.0
+        pm.get_delta.return_value.net_delta = 0.0
         
-        risk = RiskEngine(pm, KillSwitch("tok"), RiskLimits())
+        risk = RiskEngine(
+            pm, KillSwitch("tok"),
+            RiskLimits(
+                max_market_exposure_usdc=10000, min_free_capital_pct=0.0,
+                max_net_delta_per_market=10000,
+            ),
+        )
         
         proposals = []
         for i in range(10):
@@ -264,8 +274,16 @@ class TestFailureModes(unittest.TestCase):
         pm.cash_usdc = 1000.0
         pm.get_price_age_ms.return_value = 100
         pm.peak_equity = 10000.0
+        pm.get_market_exposure_usdc.return_value = 0.0
+        pm.get_delta.return_value.net_delta = 0.0
 
-        risk = RiskEngine(pm, KillSwitch("tok"), RiskLimits())
+        risk = RiskEngine(
+            pm, KillSwitch("tok"),
+            RiskLimits(
+                max_market_exposure_usdc=10000, min_free_capital_pct=0.0,
+                max_net_delta_per_market=10000,
+            ),
+        )
 
         async def evaluate_async(idx: int):
             p = OrderProposal(
@@ -299,7 +317,7 @@ class TestFailureModes(unittest.TestCase):
                 order_id=f"ord-{idx}",
                 market_id="M1",
                 platform=Platform.POLYMARKET,
-                side="BUY_YES",
+                side=Side.BUY_YES.value,
                 filled_usdc=100.0,
                 fill_price=0.50,
                 ts=int(time.time() * 1000),
@@ -312,7 +330,7 @@ class TestFailureModes(unittest.TestCase):
 
         asyncio.get_event_loop().run_until_complete(run_concurrent())
 
-        delta = pm.get_delta("M1", Platform.POLYMARKET)
+        delta = pm.get_delta("M1")
         self.assertAlmostEqual(delta.net_delta, 2000.0)
 
     def test_execution_engine_concurrent_submit(self):

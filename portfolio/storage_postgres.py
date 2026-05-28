@@ -17,6 +17,15 @@ except ImportError:
     asyncpg = None
 
 
+def _run_async(coro):
+    """Run a coroutine synchronously using a dedicated event loop."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 class PostgresPortfolioStore:
     def __init__(self, dsn: str) -> None:
         if asyncpg is None:
@@ -80,13 +89,12 @@ class PostgresPortfolioStore:
                 )
             """)
 
+    # ── Sync public API (backed by _run_async helper) ──────────────────────
+
     def save_fill_and_position(
         self, fill: FillRecord, position, cash_usdc: float, peak_equity: float, closed_pnl: float
     ) -> None:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(self._save_fill_and_position_async(
-            fill, position, cash_usdc, peak_equity, closed_pnl
-        ))
+        _run_async(self._save_fill_and_position_async(fill, position, cash_usdc, peak_equity, closed_pnl))
 
     async def _save_fill_and_position_async(
         self, fill: FillRecord, position, cash_usdc: float, peak_equity: float, closed_pnl: float
@@ -125,7 +133,7 @@ class PostgresPortfolioStore:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch("SELECT key, value FROM state")
                 return {row["key"]: row["value"] for row in rows}
-        return asyncio.get_event_loop().run_until_complete(_load())
+        return _run_async(_load())
 
     def save_order(self, proposal_id: str, submission_json: str, exchange_order_id: Optional[str]) -> None:
         async def _save():
@@ -137,20 +145,20 @@ class PostgresPortfolioStore:
                         exchange_order_id = EXCLUDED.exchange_order_id,
                         submission_json = EXCLUDED.submission_json
                 """, proposal_id, exchange_order_id, submission_json)
-        asyncio.get_event_loop().run_until_complete(_save())
+        _run_async(_save())
 
     def load_active_orders(self) -> List[Tuple[str, Optional[str], str]]:
         async def _load():
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch("SELECT proposal_id, exchange_order_id, submission_json FROM active_orders")
                 return [(r["proposal_id"], r["exchange_order_id"], r["submission_json"]) for r in rows]
-        return asyncio.get_event_loop().run_until_complete(_load())
+        return _run_async(_load())
 
     def remove_order(self, proposal_id: str) -> None:
         async def _remove():
             async with self._pool.acquire() as conn:
                 await conn.execute("DELETE FROM active_orders WHERE proposal_id = $1", proposal_id)
-        asyncio.get_event_loop().run_until_complete(_remove())
+        _run_async(_remove())
 
     def save_reservation(self, proposal_id: str, amount: float, platform: Platform, strategy_id: StrategyId) -> None:
         async def _save():
@@ -163,13 +171,13 @@ class PostgresPortfolioStore:
                         platform = EXCLUDED.platform,
                         strategy_id = EXCLUDED.strategy_id
                 """, proposal_id, amount, platform.value, strategy_id.value)
-        asyncio.get_event_loop().run_until_complete(_save())
+        _run_async(_save())
 
     def remove_reservation(self, proposal_id: str) -> None:
         async def _remove():
             async with self._pool.acquire() as conn:
                 await conn.execute("DELETE FROM reservations WHERE proposal_id = $1", proposal_id)
-        asyncio.get_event_loop().run_until_complete(_remove())
+        _run_async(_remove())
 
     def load_reservations(self) -> Dict[str, Tuple[float, Platform, StrategyId]]:
         async def _load():
@@ -179,7 +187,7 @@ class PostgresPortfolioStore:
                     r["proposal_id"]: (r["amount"], Platform(r["platform"]), StrategyId(r["strategy_id"]))
                     for r in rows
                 }
-        return asyncio.get_event_loop().run_until_complete(_load())
+        return _run_async(_load())
 
     def save_kill_switch(self, active: bool) -> None:
         async def _save():
@@ -188,14 +196,14 @@ class PostgresPortfolioStore:
                     INSERT INTO state (key, value) VALUES ($1, $2)
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
                 """, "kill_switch_active", 1.0 if active else 0.0)
-        asyncio.get_event_loop().run_until_complete(_save())
+        _run_async(_save())
 
     def load_kill_switch(self) -> bool:
         async def _load():
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow("SELECT value FROM state WHERE key = $1", "kill_switch_active")
                 return bool(row["value"]) if row else False
-        return asyncio.get_event_loop().run_until_complete(_load())
+        return _run_async(_load())
 
     def is_healthy(self) -> bool:
         try:

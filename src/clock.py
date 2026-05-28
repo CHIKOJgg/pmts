@@ -41,5 +41,9 @@ class SimClock:
         """Advance the simulated clock."""
         self._now += ms
 
+    def advance_to(self, ms: int) -> None:
+        """Set the simulated clock to an absolute timestamp."""
+        self._now = ms
+
     async def sleep_ms(self, ms: int) -> None:
         self.advance(ms)

@@ -1,4 +1,5 @@
 """engine/orchestrator.py — Wires all components into the 5-step trading pipeline."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,18 +8,18 @@ import time
 import uuid
 from typing import Dict, Optional, Tuple
 
+from ai.enhancer import AISignalEnhancer
 from data.market_data_provider import MarketDataProvider
 from data.models import FeatureVector
-from execution.engine import ExecutionEngine
-from execution.models import ExecutionResult, OrderProposal, OrderSubmission
-from portfolio.manager import FillRecord, PortfolioManager
-from risk.engine import RiskEngine
 from engine.feature_engine import FeatureEngine
 from engine.strategy_engine import StrategyEngine
+from execution.engine import ExecutionEngine
+from execution.models import ExecutionResult, OrderProposal, OrderSubmission
+from infrastructure.observability import PROPOSALS_TOTAL
+from portfolio.manager import FillRecord, PortfolioManager
+from risk.engine import RiskEngine
 from src.clock import Clock, LiveClock
 from src.types import ArbLeg, Platform, StrategyId
-from ai.enhancer import AISignalEnhancer
-from infrastructure.observability import PROPOSALS_TOTAL
 
 logger = logging.getLogger(__name__)
 
@@ -38,26 +39,26 @@ class Orchestrator:
 
     def __init__(
         self,
-        mdp:            MarketDataProvider,
-        portfolio:      PortfolioManager,
-        risk:           RiskEngine,
-        strategy:       StrategyEngine,
-        pm_engine:      ExecutionEngine,
-        op_engine:      ExecutionEngine,
-        markets:        list,
-        ai_enhancer:    Optional[AISignalEnhancer] = None,
+        mdp: MarketDataProvider,
+        portfolio: PortfolioManager,
+        risk: RiskEngine,
+        strategy: StrategyEngine,
+        pm_engine: ExecutionEngine,
+        op_engine: ExecutionEngine,
+        markets: list,
+        ai_enhancer: Optional[AISignalEnhancer] = None,
         enable_trading: bool = True,
         clock: Optional[Clock] = None,
     ) -> None:
-        self._mdp       = mdp
+        self._mdp = mdp
         self._portfolio = portfolio
-        self._risk      = risk
-        self._strategy  = strategy
+        self._risk = risk
+        self._strategy = strategy
         self._pm_engine = pm_engine
         self._op_engine = op_engine
-        self._ai        = ai_enhancer
-        self._markets   = markets
-        self._trading   = enable_trading
+        self._ai = ai_enhancer
+        self._markets = markets
+        self._trading = enable_trading
         self._clock = clock or LiveClock()
 
         # Feature engine sits between MDP and StrategyEngine
@@ -73,17 +74,21 @@ class Orchestrator:
         # proposal_id → (strategy_id, size_usdc, platform, leg_group_id)
         self._in_flight: Dict[str, Tuple[StrategyId, float, Platform, Optional[str]]] = {}
 
-        # leg_group_id → {leg_number_value: proposal_id}
-        self._arb_groups: Dict[str, Dict[int, str]] = {}
-        
+        # leg_group_id → {leg_number_value: proposal_id | "market_id": str | "leg2_proposal": OrderProposal}
+        self._arb_groups: Dict[str, Dict[Any, Any]] = {}
+
         # Per-market lock to prevent concurrent evaluation races
         self._market_locks: Dict[str, asyncio.Lock] = {}
+
+        # Lock for arb_groups and in_flight modifications
+        self._execution_lock: asyncio.Lock = asyncio.Lock()
+
         self._background_tasks: set[asyncio.Task] = set()
 
         # Metrics
         self.proposals_evaluated: int = 0
-        self.proposals_approved:  int = 0
-        self.proposals_rejected:  int = 0
+        self.proposals_approved: int = 0
+        self.proposals_rejected: int = 0
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -95,7 +100,8 @@ class Orchestrator:
         await self._mdp.start()
         logger.info(
             "Orchestrator started. trading=%s markets=%s",
-            self._trading, self._markets,
+            self._trading,
+            self._markets,
         )
 
     async def stop(self) -> None:
@@ -154,11 +160,11 @@ class Orchestrator:
     async def _on_feature_vector(self, fv: FeatureVector) -> None:
         if not self._trading or self._risk.kill_switch_active:
             return
-        
+
         # Lock per market to prevent concurrent evaluation races (Issue #1)
         if fv.market_id not in self._market_locks:
             self._market_locks[fv.market_id] = asyncio.Lock()
-            
+
         async with self._market_locks[fv.market_id]:
             await self._strategy.on_feature_vector(fv)
 
@@ -167,7 +173,7 @@ class Orchestrator:
     async def _on_proposal(self, proposal: OrderProposal) -> None:
         self.proposals_evaluated += 1
 
-        decision = self._risk.evaluate(proposal)   # synchronous, < 5ms
+        decision = self._risk.evaluate(proposal)  # synchronous, < 5ms
         verdict = "approved" if decision.approved else "rejected"
         PROPOSALS_TOTAL.labels(strategy=proposal.strategy_id.value, verdict=verdict).inc()
 
@@ -183,28 +189,25 @@ class Orchestrator:
             return
 
         self.proposals_approved += 1
-        await self._route_to_engine(proposal)
+        try:
+            await self._route_to_engine(proposal)
+        except Exception:
+            await self._risk.notify_terminal(proposal.proposal_id, proposal.platform, proposal.size_usdc)
+            self.proposals_approved -= 1
+            raise
 
     # ── Step 4: Route to ExecutionEngine ─────────────────────────────────────
 
     async def _route_to_engine(self, proposal: OrderProposal) -> None:
-        engine = (
-            self._pm_engine
-            if proposal.platform == Platform.POLYMARKET
-            else self._op_engine
-        )
+        engine = self._pm_engine if proposal.platform == Platform.POLYMARKET else self._op_engine
 
         token_qty = round(proposal.size_usdc / proposal.limit_price, 6)
         if token_qty <= 0:
-            logger.warning(
-                "Zero token_qty for proposal %s — skipping", proposal.proposal_id[:8]
-            )
-            await self._risk.notify_terminal(
-                proposal.proposal_id, proposal.platform, proposal.size_usdc
-            )
+            logger.warning("Zero token_qty for proposal %s — skipping", proposal.proposal_id[:8])
+            await self._risk.notify_terminal(proposal.proposal_id, proposal.platform, proposal.size_usdc)
             return
 
-        now        = self._clock.now_ms()
+        now = self._clock.now_ms()
         submission = OrderSubmission(
             order_id=str(uuid.uuid4()),
             proposal_id=proposal.proposal_id,
@@ -231,7 +234,7 @@ class Orchestrator:
         )
 
         if proposal.is_arb and proposal.leg_number is not None:
-            grp = self._arb_groups.setdefault(proposal.leg_group_id, {})
+            grp = self._arb_groups.setdefault(proposal.leg_group_id, {"market_id": proposal.market_id})
             if proposal.leg_number == ArbLeg.LEG_2:
                 # Step 4: Hold leg 2 until leg 1 confirms fill
                 grp["leg2_proposal"] = proposal
@@ -249,11 +252,7 @@ class Orchestrator:
             info = self._in_flight.get(result.proposal_id)
             if info:
                 _, _, platform, _ = info
-                engine = (
-                    self._pm_engine
-                    if platform == Platform.POLYMARKET
-                    else self._op_engine
-                )
+                engine = self._pm_engine if platform == Platform.POLYMARKET else self._op_engine
                 tracker = engine.get_tracker(result.proposal_id)
                 if tracker:
                     fill = FillRecord(
@@ -291,21 +290,20 @@ class Orchestrator:
         if leg_group_id and strategy_id == StrategyId.ARB:
             await self._handle_arb_terminal(result, leg_group_id)
 
-    async def _handle_arb_terminal(
-        self, result: ExecutionResult, leg_group_id: str
-    ) -> None:
+    async def _handle_arb_terminal(self, result: ExecutionResult, leg_group_id: str) -> None:
         grp = self._arb_groups.get(leg_group_id)
         if grp is None:
             return
 
-        # Find our tracker
-        tracker     = None
-        market_id   = None
+        # Use stored market_id (set when arb group was created)
+        market_id = grp.get("market_id")
+
+        # Find our tracker for leg info
+        tracker = None
         for eng in [self._pm_engine, self._op_engine]:
             t = eng.get_tracker(result.proposal_id)
             if t is not None:
-                tracker   = t
-                market_id = t.submission.market_id
+                tracker = t
                 break
 
         if tracker is None or tracker.submission.leg_number is None:
@@ -315,14 +313,16 @@ class Orchestrator:
         if tracker.submission.leg_number == ArbLeg.LEG_1:
             leg2_proposal = grp.get("leg2_proposal")
             if leg2_proposal:
-                min_ratio     = tracker.submission.min_fill_ratio or 0.80
-                actual_ratio  = tracker.fill_ratio
-                should_abort  = (actual_ratio < min_ratio)
+                min_ratio = tracker.submission.min_fill_ratio or 0.80
+                actual_ratio = tracker.fill_ratio
+                should_abort = actual_ratio < min_ratio
 
                 if should_abort:
                     logger.warning(
                         "ARB leg1 fill_ratio=%.2f < min=%.2f — aborting leg2 %s",
-                        actual_ratio, min_ratio, leg2_proposal.proposal_id[:8],
+                        actual_ratio,
+                        min_ratio,
+                        leg2_proposal.proposal_id[:8],
                     )
                     await self._risk.notify_terminal(
                         leg2_proposal.proposal_id, leg2_proposal.platform, leg2_proposal.size_usdc
@@ -351,11 +351,7 @@ class Orchestrator:
                             leg_number=leg2_proposal.leg_number,
                             min_fill_ratio=leg2_proposal.min_fill_ratio,
                         )
-                        engine = (
-                            self._pm_engine
-                            if leg2_proposal.platform == Platform.POLYMARKET
-                            else self._op_engine
-                        )
+                        engine = self._pm_engine if leg2_proposal.platform == Platform.POLYMARKET else self._op_engine
                         grp[ArbLeg.LEG_2.value] = leg2_proposal.proposal_id
                         grp.pop("leg2_proposal", None)
                         await engine.submit(submission)
@@ -369,17 +365,37 @@ class Orchestrator:
 
         # Check if all submitted legs are terminal → clear arb_in_flight
         submitted_pids = [pid for k, pid in grp.items() if isinstance(k, int)]
-        if submitted_pids:
-            all_terminal = all(
+
+        # Also check if leg2_proposal exists and is terminal (was never submitted due to abort)
+        pending_leg2 = grp.get("leg2_proposal")
+        all_terminal = False
+
+        if not submitted_pids:
+            # No legs were submitted at all
+            all_terminal = True
+        elif pending_leg2 is not None:
+            # Leg1 was submitted, leg2 never was (aborted)
+            # Check if leg1 is terminal
+            all_terminal = (
+                len(submitted_pids) == 1
+                and (
+                    self._pm_engine.get_tracker(submitted_pids[0])
+                    or self._op_engine.get_tracker(submitted_pids[0])
+                    or _NullTracker()
+                ).status.is_terminal
+            )
+        else:
+            # Both legs were submitted, check both are terminal
+            all_terminal = len(submitted_pids) == 2 and all(
                 (
-                    self._pm_engine.get_tracker(pid) or
-                    self._op_engine.get_tracker(pid) or _NullTracker()
+                    self._pm_engine.get_tracker(pid) or self._op_engine.get_tracker(pid) or _NullTracker()
                 ).status.is_terminal
                 for pid in submitted_pids
             )
-            if all_terminal and market_id and "leg2_proposal" not in grp:
-                self._strategy.notify_arb_cleared(market_id, leg_group_id)
-                self._arb_groups.pop(leg_group_id, None)
+
+        if all_terminal and market_id:
+            self._strategy.notify_arb_cleared(market_id, leg_group_id)
+            self._arb_groups.pop(leg_group_id, None)
 
     async def _kill_switch_response(self) -> None:
         logger.critical("Kill switch response: cancelling all open orders")
@@ -387,9 +403,7 @@ class Orchestrator:
 
     async def _cancel_all_open_orders(self) -> None:
         for pid, (_, _, platform, _) in list(self._in_flight.items()):
-            engine = (
-                self._pm_engine if platform == Platform.POLYMARKET else self._op_engine
-            )
+            engine = self._pm_engine if platform == Platform.POLYMARKET else self._op_engine
             try:
                 await engine.cancel(pid)
             except Exception as exc:
@@ -398,8 +412,10 @@ class Orchestrator:
 
 class _NullTracker:
     """Sentinel used when tracker lookup fails — always reports terminal."""
+
     class _S:
         is_terminal = True
+
     status = _S()
 
 

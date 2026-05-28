@@ -5,19 +5,21 @@ import time
 from typing import Any, List, Optional
 
 import websockets
+
 from data.market_data_provider import _SnapshotCB
 from data.models import MarketSnapshot
+from infrastructure.observability import API_ERRORS_TOTAL, FEED_LAST_TS, RECONNECT_TOTAL
 from src.types import Platform
-from infrastructure.observability import FEED_LAST_TS, RECONNECT_TOTAL, API_ERRORS_TOTAL
 
 logger = logging.getLogger(__name__)
+
 
 class OpinionWSAdapter:
     """
     WebSocket adapter for Opinion Markets.
     Subscribes to tickers for a set of markets.
     """
-    
+
     PLATFORM = Platform.OPINION
 
     def __init__(
@@ -30,7 +32,7 @@ class OpinionWSAdapter:
         self._ws_url = ws_url
         self._taker_fee_bps = taker_fee_bps
         self._callback: Optional[_SnapshotCB] = None
-        
+
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
@@ -60,33 +62,57 @@ class OpinionWSAdapter:
 
     async def _run_loop(self) -> None:
         retry_delay = 1.0
+        subscribe_task: Optional[asyncio.Task] = None
         while self._running:
+            if subscribe_task and not subscribe_task.done():
+                try:
+                    subscribe_task.cancel()
+                    await subscribe_task
+                except asyncio.CancelledError:
+                    pass
+
             RECONNECT_TOTAL.labels(platform=self.PLATFORM.value).inc()
             try:
                 async with websockets.connect(self._ws_url) as ws:
                     retry_delay = 1.0
-                    
+
                     # Subscribe to tickers: ticker@marketId
                     params = [f"ticker@{mid}" for mid in self._market_ids]
-                    sub_msg = {
-                        "method": "SUBSCRIBE",
-                        "params": params,
-                        "id": int(time.time())
-                    }
+                    sub_msg = {"method": "SUBSCRIBE", "params": params, "id": int(time.time())}
                     await ws.send(json.dumps(sub_msg))
                     logger.info("Subscribed to Opinion tickers: %s", params)
 
-                    async for message in ws:
-                        if not self._running:
-                            break
-                        await self._handle_message(message)
+                    subscribe_task = asyncio.create_task(self._process_messages(ws))
             except Exception as exc:
                 if not self._running:
                     break
                 logger.error("Opinion WS error: %s. Retrying in %.1fs...", exc, retry_delay)
                 API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type=type(exc).__name__).inc()
+
+                # Cancel subscribe task if it exists
+                if subscribe_task:
+                    try:
+                        subscribe_task.cancel()
+                        await subscribe_task
+                    except asyncio.CancelledError:
+                        pass
+                    subscribe_task = None
+
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, 60.0)
+
+    async def _process_messages(self, ws) -> None:
+        """Process WebSocket messages in a separate task."""
+        try:
+            async for message in ws:
+                if not self._running:
+                    break
+                await self._handle_message(message)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Opinion WS connection closed")
+        except Exception as exc:
+            if self._running:
+                logger.error("Error processing Opinion WS messages: %s", exc)
 
     async def _handle_message(self, message: Any) -> None:
         try:
@@ -97,23 +123,23 @@ class OpinionWSAdapter:
 
             market_id = stream.split("@")[1]
             ticker = data.get("data", {})
-            
+
             yes_bid = float(ticker.get("b", 0.0))
             yes_ask = float(ticker.get("a", 0.0))
-            
+
             if yes_bid == 0 or yes_ask == 0:
                 return
 
             # Derive NO prices
             no_bid = 1.0 - yes_ask
             no_ask = 1.0 - yes_bid
-            
+
             # Depth calculation
             bid_depth = float(ticker.get("B", 0.0)) * yes_bid
             ask_depth = float(ticker.get("A", 0.0)) * yes_ask
 
             ts = int(ticker.get("t", time.time() * 1000))
-            
+
             snapshot = MarketSnapshot(
                 market_id=market_id,
                 platform=self.PLATFORM,
@@ -125,9 +151,9 @@ class OpinionWSAdapter:
                 ask_depth_usdc=ask_depth,
                 taker_fee_bps=self._taker_fee_bps,
                 ts=ts,
-                received_ts=int(time.time() * 1000)
+                received_ts=int(time.time() * 1000),
             )
-            
+
             FEED_LAST_TS.labels(platform=self.PLATFORM.value, market_id=market_id).set(ts / 1000.0)
 
             if self._callback:
@@ -135,4 +161,3 @@ class OpinionWSAdapter:
         except Exception as exc:
             API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type="parse_error").inc()
             logger.warning("Error parsing Opinion WS message: %s", exc)
-
