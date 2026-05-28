@@ -10,6 +10,7 @@ from eth_account import Account
 from execution.engine import (
     ExchangeClient,
     OpenOrder,
+    OrderStatusFill,
     OrderStatusResponse,
     PlacedOrderResponse,
 )
@@ -49,6 +50,7 @@ class OpinionClient:
         host:                Optional[str] = None,
         rate_limit_per_s:    int = 5,
         sandbox:             bool = False,
+        market_id_map:       Optional[Dict[str, str]] = None,
     ) -> None:
         if not ctf_exchange_addr or ctf_exchange_addr == "0x0000000000000000000000000000000000000000":
             raise ValueError("ctf_exchange_addr must be a valid non-zero contract address")
@@ -56,6 +58,7 @@ class OpinionClient:
         self._api_key            = api_key
         self._wallet_private_key = wallet_private_key
         self._sandbox            = sandbox
+        self._market_id_map      = market_id_map or {}
         
         if host:
             self._host = host.rstrip("/")
@@ -72,6 +75,7 @@ class OpinionClient:
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._throttler = Throttler(rate_limit_per_s)
+        self._last_status_filled_usdc: Dict[str, float] = {}
 
         logger.info(
             "OpinionClient initialized: host=%s, address=%s, sandbox=%s",
@@ -104,11 +108,14 @@ class OpinionClient:
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
-
-    async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
         self._wallet_private_key = None
+        self._last_status_filled_usdc.clear()
+
+    async def _read_json_or_text(self, resp) -> Any:
+        try:
+            return await resp.json()
+        except Exception:
+            return {"message": await resp.text()}
 
     def _sign_order(self, order: Dict[str, Any]) -> str:
         """Sign order using EIP-712."""
@@ -167,12 +174,13 @@ class OpinionClient:
             # Use provided nonce for idempotency
             final_nonce = nonce if nonce is not None else int(time.time() * 1000)
 
+            venue_market_id = self._market_id_map.get(submission.market_id, submission.market_id)
             order_msg = {
                 "salt": int(uuid.uuid4().int >> 64),
                 "maker": self._address,
                 "signer": self._address,
                 "taker": "0x0000000000000000000000000000000000000000",
-                "tokenId": self._parse_market_id(submission.market_id),
+                "tokenId": self._parse_market_id(venue_market_id),
                 "makerAmount": maker_amount,
                 "takerAmount": taker_amount,
                 "expiration": int(time.time()) + 3600,
@@ -185,14 +193,14 @@ class OpinionClient:
             signature = self._sign_order(order_msg)
             
             payload = {
-                "marketId": submission.market_id,
+                "marketId": venue_market_id,
                 "order": order_msg,
                 "signature": signature
             }
             
             session = await self._get_session()
             async with session.post("/order", json=payload) as resp:
-                raw = await resp.json()
+                raw = await self._read_json_or_text(resp)
                 if resp.status in _REJECTION_STATUS_CODES:
                     raise ExchangeRejected(
                         f"Opinion rejection: {raw.get('message', 'Unknown error')}",
@@ -231,16 +239,39 @@ class OpinionClient:
             path = f"/order/{exchange_order_id}"
             async with session.get(path) as resp:
                 resp.raise_for_status()
-                raw = await resp.json()
+                raw = await self._read_json_or_text(resp)
                 
                 status = raw.get("status", "").lower()
+                remaining = float(raw.get("remainingAmount", raw.get("remaining", 0.0)) or 0.0)
+                original = raw.get("originalAmount", raw.get("amount", raw.get("size")))
+                filled_raw = raw.get("filledAmount", raw.get("filled", raw.get("filledSize")))
+                if filled_raw is not None:
+                    cumulative_filled = float(filled_raw)
+                elif original is not None:
+                    cumulative_filled = max(0.0, float(original) - remaining)
+                else:
+                    cumulative_filled = 0.0
+
+                previously_seen = self._last_status_filled_usdc.get(exchange_order_id, 0.0)
+                delta = max(0.0, cumulative_filled - previously_seen)
+                new_fills = []
+                if delta > 0:
+                    price = float(raw.get("averagePrice", raw.get("price", 0.0)) or 0.0)
+                    if price > 0:
+                        new_fills.append(OrderStatusFill(
+                            fill_usdc=delta,
+                            fill_price=price,
+                            fill_tokens=delta / price,
+                            ts=int(time.time() * 1000),
+                        ))
+                    self._last_status_filled_usdc[exchange_order_id] = cumulative_filled
                 return OrderStatusResponse(
                     exchange_order_id=exchange_order_id,
                     is_live=status in ["open", "partial"],
                     is_cancelled=status == "canceled",
                     is_filled=status == "filled",
-                    remaining_usdc=float(raw.get("remainingAmount", 0.0)),
-                    new_fills=[]
+                    remaining_usdc=remaining,
+                    new_fills=new_fills,
                 )
 
     async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:

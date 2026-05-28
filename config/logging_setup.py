@@ -37,8 +37,14 @@ def configure_logging(
     fmt:       str           = "text",
     file_path: Optional[str] = None,
 ) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    root.handlers.clear()
 
     formatter = JsonFormatter() if fmt.lower() == "json" else TextFormatter()
 

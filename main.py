@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import logging
 import os
 import sys
@@ -37,6 +38,32 @@ BACKTEST_RISK_LIMITS = {
     "min_free_capital_pct": 0.0,
 }
 
+
+def _stable_seed(value: str) -> int:
+    digest = hashlib.sha256(value.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big")
+
+
+def _venue_market_ids(settings, venue: str) -> list[str]:
+    registry = settings.trading.market_registry
+    if not registry:
+        return list(settings.trading.markets)
+    return [registry[m][venue] for m in settings.trading.markets]
+
+
+def _logical_to_venue_map(settings, venue: str) -> dict[str, str]:
+    registry = settings.trading.market_registry
+    if not registry:
+        return {}
+    return {m: registry[m][venue] for m in settings.trading.markets}
+
+
+def _venue_to_logical_map(settings, venue: str) -> dict[str, str]:
+    registry = settings.trading.market_registry
+    if not registry:
+        return {}
+    return {registry[m][venue]: m for m in settings.trading.markets}
+
 async def run_live() -> None:
     from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
     from data.adapters.opinion_ws import OpinionWSAdapter
@@ -59,7 +86,7 @@ async def run_live() -> None:
     from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
 
     settings = get_settings()
-    settings.validate()
+    settings.validate(mode="live")
 
     logger.info("Live trading initializing: markets=%s", settings.trading.markets)
 
@@ -86,6 +113,7 @@ async def run_live() -> None:
         wallet_private_key=settings.polymarket.wallet_key,
         host=settings.polymarket.clob_url,
         sandbox=settings.polymarket.sandbox,
+        market_id_map=_logical_to_venue_map(settings, "polymarket"),
     )
     op_client = OpinionClient(
         api_key=settings.opinion.api_key,
@@ -93,16 +121,19 @@ async def run_live() -> None:
         ctf_exchange_addr=settings.opinion.ctf_exchange_addr,
         host=settings.opinion.rest_url,
         sandbox=settings.opinion.sandbox,
+        market_id_map=_logical_to_venue_map(settings, "opinion"),
     )
     pm_ws = PolymarketWSAdapter(
-        asset_ids=settings.trading.markets,
+        asset_ids=_venue_market_ids(settings, "polymarket"),
         ws_url=settings.polymarket.ws_url,
-        taker_fee_bps=settings.polymarket.taker_fee_bps
+        taker_fee_bps=settings.polymarket.taker_fee_bps,
+        market_id_map=_venue_to_logical_map(settings, "polymarket"),
     )
     op_ws = OpinionWSAdapter(
-        market_ids=settings.trading.markets,
+        market_ids=_venue_market_ids(settings, "opinion"),
         ws_url=settings.opinion.ws_url,
-        taker_fee_bps=settings.opinion.taker_fee_bps
+        taker_fee_bps=settings.opinion.taker_fee_bps,
+        market_id_map=_venue_to_logical_map(settings, "opinion"),
     )
     
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws], clock=clock)
@@ -209,10 +240,16 @@ async def run_live() -> None:
         risk=risk,
         store=store,
         kill_switch=kill_switch,
-        obs_server=obs_server
+        obs_server=obs_server,
+        mode="live",
     )
     
     obs_server.set_health_monitor(monitor)
+    obs_server.set_kill_switch_config(
+        token=settings.trading.kill_switch_token,
+        reset_callback=orchestrator._on_kill_switch_reset,
+        activate_callback=orchestrator.emergency_stop,
+    )
     
     obs_server.register_provider(lambda: {
         "orchestrator": {
@@ -227,7 +264,7 @@ async def run_live() -> None:
         "portfolio": {
             "total_value": portfolio.get_portfolio_mtm().total_equity_usdc,
             "cash_usdc": portfolio.cash_usdc,
-            "reserved_capital": portfolio.reserved_capital,
+            "reserved_capital": risk.reserved_capital,
         }
     })
 
@@ -304,7 +341,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     from strategies.delta_neutral import DeltaNeutralConfig
 
     settings = get_settings()
-    settings.validate()
+    settings.validate(mode="paper")
 
     logger.info("Paper trading initializing: markets=%s", settings.trading.markets)
     
@@ -330,14 +367,16 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     op_client.PLATFORM = Platform.OPINION
 
     pm_ws = PolymarketWSAdapter(
-        asset_ids=settings.trading.markets,
+        asset_ids=_venue_market_ids(settings, "polymarket"),
         ws_url=settings.polymarket.ws_url,
-        taker_fee_bps=settings.polymarket.taker_fee_bps
+        taker_fee_bps=settings.polymarket.taker_fee_bps,
+        market_id_map=_venue_to_logical_map(settings, "polymarket"),
     )
     op_ws = OpinionWSAdapter(
-        market_ids=settings.trading.markets,
+        market_ids=_venue_market_ids(settings, "opinion"),
         ws_url=settings.opinion.ws_url,
-        taker_fee_bps=settings.opinion.taker_fee_bps
+        taker_fee_bps=settings.opinion.taker_fee_bps,
+        market_id_map=_venue_to_logical_map(settings, "opinion"),
     )
     
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws], alert_router=alert_router, clock=clock)
@@ -444,13 +483,15 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         risk=risk,
         store=store,
         kill_switch=kill_switch,
-        obs_server=obs_server
+        obs_server=obs_server,
+        mode="paper",
     )
     
     obs_server.set_health_monitor(monitor)
     obs_server.set_kill_switch_config(
         token=settings.trading.kill_switch_token,
         reset_callback=orchestrator._on_kill_switch_reset,
+        activate_callback=orchestrator.emergency_stop,
     )
 
     obs_server.register_provider(lambda: {
@@ -466,7 +507,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         "portfolio": {
             "total_value": portfolio.get_portfolio_mtm().total_equity_usdc,
             "cash_usdc": portfolio.cash_usdc,
-            "reserved_capital": portfolio.reserved_capital,
+            "reserved_capital": risk.reserved_capital,
         }
     })
 
@@ -534,7 +575,7 @@ async def run_backtest(ticks: int, capital: float) -> None:
         market_id: build_synthetic_tick_stream(
             market_id,
             n_ticks=per_market_ticks,
-            seed=hash(market_id) % (2**31),
+            seed=_stable_seed(market_id),
         )
         for market_id in selected_markets
     }
@@ -571,14 +612,14 @@ def main() -> None:
         asyncio.run(run_backtest(args.ticks, args.capital))
     elif args.mode == "paper":
         try:
-            settings.validate()
+            settings.validate(mode="paper")
         except ValueError as e:
             logger.error(str(e))
             sys.exit(1)
         asyncio.run(run_paper(fill_prob=args.paper_fill_prob))
     else:
         try:
-            settings.validate()
+            settings.validate(mode="live")
         except ValueError as e:
             logger.error(str(e))
             sys.exit(1)

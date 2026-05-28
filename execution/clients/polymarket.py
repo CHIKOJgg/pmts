@@ -12,6 +12,7 @@ from eth_account import Account
 from execution.engine import (
     ExchangeClient,
     OpenOrder,
+    OrderStatusFill,
     OrderStatusResponse,
     PlacedOrderResponse,
 )
@@ -52,12 +53,14 @@ class PolymarketClient:
         host:                Optional[str] = None,
         rate_limit_per_s:    int = 10,
         sandbox:             bool = False,
+        market_id_map:       Optional[Dict[str, str]] = None,
     ) -> None:
         self._api_key            = api_key
         self._secret             = secret
         self._passphrase         = passphrase
         self._wallet_private_key = wallet_private_key
         self._sandbox            = sandbox
+        self._market_id_map      = market_id_map or {}
         
         if host:
             self._host = host.rstrip("/")
@@ -71,16 +74,12 @@ class PolymarketClient:
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._throttler = Throttler(rate_limit_per_s)
+        self._last_status_filled_usdc: Dict[str, float] = {}
 
         logger.info(
             "PolymarketClient initialized: host=%s, address=%s, sandbox=%s",
             self._host, self._address, self._sandbox
         )
-
-    async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
-        self._wallet_private_key = None
 
     @property
     def platform(self) -> Platform:
@@ -97,6 +96,14 @@ class PolymarketClient:
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
+        self._wallet_private_key = None
+        self._last_status_filled_usdc.clear()
+
+    async def _read_json_or_text(self, resp) -> Any:
+        try:
+            return await resp.json()
+        except Exception:
+            return {"error": await resp.text()}
 
     def _get_auth_headers(self, method: str, path: str, body: str = "") -> Dict[str, str]:
         """Generate HMAC-SHA256 headers for Polymarket L2 Auth."""
@@ -179,7 +186,7 @@ class PolymarketClient:
             order_params = {
                 "maker": self._address,
                 "signer": self._address,
-                "tokenId": submission.market_id,
+                "tokenId": self._market_id_map.get(submission.market_id, submission.market_id),
                 "makerAmount": str(maker_amount),
                 "takerAmount": str(taker_amount),
                 "side": "BUY" if "BUY" in submission.side.value else "SELL",
@@ -200,7 +207,7 @@ class PolymarketClient:
             session = await self._get_session()
             
             async with session.post("/order", data=body, headers=headers) as resp:
-                raw = await resp.json()
+                raw = await self._read_json_or_text(resp)
                 if resp.status in _REJECTION_STATUS_CODES:
                     raise ExchangeRejected(
                         f"Polymarket rejection: {raw.get('error', 'Unknown error')}",
@@ -220,7 +227,8 @@ class PolymarketClient:
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
         """Cancel an order on Polymarket."""
         async with self._throttler:
-            payload = {"orderID": exchange_order_id}
+            venue_market_id = self._market_id_map.get(market_id, market_id)
+            payload = {"orderID": exchange_order_id, "market_id": venue_market_id}
             body = json.dumps(payload)
             headers = self._get_auth_headers("DELETE", "/order", body)
             session = await self._get_session()
@@ -245,20 +253,43 @@ class PolymarketClient:
             
             async with session.get(path, headers=headers) as resp:
                 resp.raise_for_status()
-                raw = await resp.json()
+                raw = await self._read_json_or_text(resp)
                 
                 status = raw.get("status", "").lower()
                 is_filled = status == "filled"
                 is_cancelled = status == "canceled"
                 is_live = status == "open" or status == "partial"
+                remaining = float(raw.get("remainingSize", raw.get("remaining_size", 0.0)) or 0.0)
+                original = raw.get("originalSize", raw.get("size", raw.get("makerAmount")))
+                filled_raw = raw.get("filledSize", raw.get("filledAmount", raw.get("filled_size")))
+                if filled_raw is not None:
+                    cumulative_filled = float(filled_raw)
+                elif original is not None:
+                    cumulative_filled = max(0.0, float(original) - remaining)
+                else:
+                    cumulative_filled = 0.0
+
+                previously_seen = self._last_status_filled_usdc.get(exchange_order_id, 0.0)
+                delta = max(0.0, cumulative_filled - previously_seen)
+                new_fills = []
+                if delta > 0:
+                    price = float(raw.get("averagePrice", raw.get("price", raw.get("limitPrice", 0.0))) or 0.0)
+                    if price > 0:
+                        new_fills.append(OrderStatusFill(
+                            fill_usdc=delta,
+                            fill_price=price,
+                            fill_tokens=delta / price,
+                            ts=int(time.time() * 1000),
+                        ))
+                    self._last_status_filled_usdc[exchange_order_id] = cumulative_filled
                 
                 return OrderStatusResponse(
                     exchange_order_id=exchange_order_id,
                     is_live=is_live,
                     is_cancelled=is_cancelled,
                     is_filled=is_filled,
-                    remaining_usdc=float(raw.get("remainingSize", 0.0)),
-                    new_fills=[] 
+                    remaining_usdc=remaining,
+                    new_fills=new_fills,
                 )
 
     async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:

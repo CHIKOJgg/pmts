@@ -1,61 +1,119 @@
-# Bugs and Improvements Backlog
+# Bugs And Improvements Backlog
 
 Assessment date: 2026-05-28
 
-This backlog is written as developer-ready tasks. Priorities use:
+This backlog is written as developer-ready work. Priorities:
 
-- P0: blocks backtest, paper mode, live startup, or capital safety.
+- P0: blocks paper/live correctness, release verification, or capital safety.
 - P1: blocks production deployment or reliable operations.
-- P2: important hardening before scale-up.
-- P3: cleanup or maintainability improvement.
+- P2: hardening needed before scaling.
+- P3: cleanup and maintainability.
 
 ## P0 Tasks
 
-### TASK-P0-001: Fix `PortfolioManager.get_portfolio_mtm()` lock misuse
+### TASK-P0-001: Fix release backtest regression to zero trades
 
 Problem:
 
-`python main.py --mode backtest --ticks 20 --capital 1000` fails with:
-
-`TypeError: 'Lock' object does not support the context manager protocol`
-
-Root cause:
-
-`portfolio/manager.py` creates `self._lock` as an `asyncio.Lock`, but `get_portfolio_mtm()` uses `with self._lock:` in a synchronous method.
+`python main.py --mode backtest --ticks 200 --capital 10000` and `python main.py --mode backtest --ticks 2000 --capital 10000` complete successfully but produce zero proposals, zero fills, and `$+0.00` P&L. This makes the published backtest gate ineffective.
 
 Files:
 
-- `portfolio/manager.py`
+- `main.py`
 - `backtest/engine.py`
-- `risk/engine.py`
+- `engine/strategy_engine.py`
+- `strategies/arbitrage.py`
+- `tests/test_integration.py`
 
 Acceptance criteria:
 
-- Backtest smoke command completes: `python main.py --mode backtest --ticks 2000 --capital 10000 --verbose`.
-- `PortfolioManager.get_portfolio_mtm()` remains safe for synchronous callers in `RiskEngine.evaluate()`.
-- Add a regression test that calls `RiskEngine.evaluate()` after positions exist and confirms no lock exception.
-- Add a backtest smoke test to CI with a small tick count.
+- `python main.py --mode backtest --ticks 200 --capital 10000` emits at least one proposal and at least one fill.
+- `python main.py --mode backtest --ticks 2000 --capital 10000 --verbose` emits non-zero proposal and fill metrics.
+- Add a CI smoke test that fails if expected-active synthetic backtests produce zero proposals or zero fills.
+- Backtest summary clearly reports whether a no-trade run is expected or a regression.
 
-Suggested implementation notes:
+Implementation notes:
 
-- Keep hot-path synchronous reads truly lock-free by copying state without entering `asyncio.Lock`, or introduce a separate synchronous lock for read snapshots.
-- Do not make `RiskEngine.evaluate()` async unless the full strategy/orchestrator call chain is intentionally redesigned.
+- Inspect feature generation, strategy cooldowns, `days_to_resolution`, synthetic stream construction, and risk limits together.
+- Keep a separate "quiet/no-op scenario" if zero-trade behavior is useful for tests.
 
-### TASK-P0-002: Align trading config field names used by live and paper startup
+### TASK-P0-002: Make backtest seeds deterministic across processes
 
 Problem:
 
-`main.py` reads:
+`main.py` seeds synthetic streams with `hash(market_id) % (2**31)`. Python hash randomization means the same CLI command can produce different streams across processes.
 
-- `settings.trading.max_market_exposure_pct`
-- `settings.trading.max_market_exposure_usdc`
+Files:
 
-`TradingConfig` defines:
+- `main.py`
+- `backtest/engine.py`
 
-- `max_market_exp_pct`
-- `max_market_exp_usdc`
+Acceptance criteria:
 
-This causes paper/live startup to fail when constructing `RiskLimits`.
+- Backtest accepts or internally uses stable integer seeds.
+- Same command produces identical summary metrics across separate Python processes.
+- Tests cover deterministic stream generation.
+
+Implementation notes:
+
+- Use a stable hash such as SHA-256 truncated to an integer, or define explicit seeds per default market.
+
+### TASK-P0-003: Keep WebSocket adapter connections open
+
+Problem:
+
+Both `PolymarketWSAdapter._run_loop()` and `OpinionWSAdapter._run_loop()` create `_process_messages(ws)` as a task inside `async with websockets.connect(...)`, then leave the context immediately. Exiting the context closes the WebSocket and can leave paper/live mode with no durable market data.
+
+Files:
+
+- `data/adapters/polymarket_ws.py`
+- `data/adapters/opinion_ws.py`
+- `tests/test_ws_adapters.py`
+- `tests/test_failures.py`
+
+Acceptance criteria:
+
+- `_run_loop()` awaits message processing while inside the WebSocket context.
+- A mocked adapter test proves the context is not exited until disconnect, stop, or cancellation.
+- Reconnect tests prove a disconnect creates a new connection and resumes subscription.
+- Paper mode receives fresh snapshots for both platforms for at least 30 minutes in a local smoke/soak test.
+
+Implementation notes:
+
+- Prefer `await self._process_messages(ws)` inside the context.
+- Ensure `stop()` cancels the active loop promptly.
+
+### TASK-P0-004: Wire live HTTP kill switch to token config and order cancellation
+
+Problem:
+
+Paper mode calls `obs_server.set_kill_switch_config(...)`; live mode does not. In live mode, `/kill-switch/activate` and `/kill-switch/reset` exist but are not configured with a token. Activation also calls `risk.manual_activate(...)` without calling the orchestrator path that cancels open orders.
+
+Files:
+
+- `main.py`
+- `infrastructure/observability.py`
+- `engine/orchestrator.py`
+- `risk/engine.py`
+- `docs/runbooks/kill_switch.md`
+- `docs/USER_GUIDE.md`
+
+Acceptance criteria:
+
+- Live mode configures kill-switch HTTP token and reset callback.
+- `POST /kill-switch/activate` activates the kill switch and cancels all open orders.
+- `POST /kill-switch/reset` requires the token and operator ID, rate-limits attempts, and clears stale runtime state.
+- Tests cover live-mode endpoint configuration, bad token, activation cancellation, reset success, and no token leakage in logs.
+
+Implementation notes:
+
+- The state-changing HTTP path should call an orchestrator callback, for example `orchestrator.emergency_stop(reason)`, rather than only mutating risk state.
+
+### TASK-P0-005: Fix paper-mode startup so it does not require live credentials
+
+Problem:
+
+`ENABLE_TRADING` defaults to `true`, and `settings.validate()` requires live Polymarket and Opinion credentials when trading is enabled. Paper mode uses `PaperTradingClient`, so a clean paper run should not require live API keys or wallet keys.
 
 Files:
 
@@ -63,160 +121,95 @@ Files:
 - `config/settings.py`
 - `.env.example`
 - `docs/USER_GUIDE.md`
-
-Acceptance criteria:
-
-- `python -c "from config.settings import TradingConfig; t=TradingConfig(); assert hasattr(t, 'max_market_exposure_pct')"` passes, or all call sites consistently use `max_market_exp_pct`.
-- `python main.py --mode paper` reaches component startup when supplied valid paper-safe config.
-- Tests cover settings-to-`RiskLimits` mapping.
-- `.env.example`, docs, and code use one naming convention.
-
-Suggested implementation notes:
-
-- Prefer the longer explicit field names used by `RiskLimits`: `max_market_exposure_pct` and `max_market_exposure_usdc`.
-- Keep backward-compatible env var names `MAX_MARKET_EXP_PCT` and `MAX_MARKET_EXP_USDC` unless operators have already migrated.
-
-### TASK-P0-003: Make paper/no-trading mode evaluate proposals without submitting orders
-
-Problem:
-
-Runbooks say `ENABLE_TRADING=false` should still evaluate proposals and log "would have submitted" events. Current implementation passes `enable_trading=settings.trading.enable_trading` into `Orchestrator`, and `Orchestrator._on_feature_vector()` returns before strategy evaluation when `_trading` is false.
-
-Files:
-
-- `engine/orchestrator.py`
-- `main.py`
-- `docs/runbooks/go-live.md`
 - `docs/runbooks/startup.md`
 
 Acceptance criteria:
 
-- With `ENABLE_TRADING=false`, market data still flows through feature computation, strategy evaluation, and risk evaluation.
-- No real exchange `place_order()` calls happen when trading is disabled.
-- Logs or metrics expose rejected/suppressed submissions as "dry run" or "would submit" events.
-- Tests verify that dry-run mode produces proposals but sends zero orders to execution clients.
+- `python main.py --mode paper` can start with paper-safe config and no live exchange credentials.
+- Live mode still fails closed when real credentials are missing.
+- `.env.example` defaults to safe non-live behavior.
+- Tests cover validation behavior for backtest, paper, dry-run live, and live trading.
 
-Suggested implementation notes:
+Implementation notes:
 
-- Separate "strategy evaluation enabled" from "order submission enabled".
-- Gate submission in `_route_to_engine()` or an execution boundary, not before feature/strategy evaluation.
+- Separate validation profiles by mode: backtest, paper, live-dry-run, live-submit.
+- Consider defaulting `ENABLE_TRADING=false` in `.env.example`.
 
-## P1 Tasks
-
-### TASK-P1-004: Restore reproducible local developer environment
+### TASK-P0-006: Repair fill accounting for partial fills and status polling
 
 Problem:
 
-Local test execution failed because system Python has no `pytest`, and `.venv\Scripts\python.exe` points to a missing WindowsApps Python path.
+Venue clients return `new_fills=[]` from `get_order_status()`. `ExecutionEngine` can synthesize a final fill when an order is marked filled, but partial fills before final state are missed. `PaperTradingClient.get_order_status()` also returns no new fills.
 
 Files:
 
-- `requirements.txt`
-- `requirements.in`
-- `README.md`
-- `.github/workflows/ci.yml`
-
-Acceptance criteria:
-
-- Fresh checkout instructions create a working venv on Windows and Linux.
-- `python -m pytest tests -q` runs locally after documented setup.
-- Test dependencies are explicitly listed in either a dev requirements file or project optional dependencies.
-- README does not rely on a checked-in `.venv`.
-
-Suggested implementation notes:
-
-- Do not commit `.venv`.
-- Add `requirements-dev.txt` or `[project.optional-dependencies] dev = [...]`.
-- Include `pytest`, `pytest-asyncio`, `ruff`, `mypy`, and `pytest-cov` in the dev dependency set.
-
-### TASK-P1-005: Expose observability correctly in Docker Compose
-
-Problem:
-
-`ObservabilityServer` defaults to `127.0.0.1`. Docker Compose publishes `8080:8080` and Prometheus scrapes `pmts:8080`, but the app service does not set `OBSERVABILITY_BIND_HOST=0.0.0.0`. Health checks from inside the container can pass while Prometheus and host access fail.
-
-Files:
-
-- `main.py`
-- `docker-compose.yml`
-- `docs/prometheus.yml`
-- `docs/USER_GUIDE.md`
-
-Acceptance criteria:
-
-- In Docker Compose, `curl http://localhost:8080/ready` works from the host.
-- Prometheus target `pmts:8080` is healthy.
-- App still supports secure local-only binding for non-Docker local runs.
-- Documentation states which bind host to use for local and Docker deployments.
-
-Suggested implementation notes:
-
-- Set `OBSERVABILITY_BIND_HOST=0.0.0.0` in the Compose `pmts` service.
-- Keep local default at `127.0.0.1`.
-
-### TASK-P1-006: Implement or remove documented kill-switch HTTP endpoints
-
-Problem:
-
-Docs reference:
-
-- `POST /kill-switch/activate`
-- `POST /kill-switch/reset`
-
-The running `ObservabilityServer` only exposes `/health`, `/ready`, `/metrics`, and `/metrics/json`. `api/server.py` is not wired into `main.py` and does not implement these kill-switch routes.
-
-Files:
-
-- `infrastructure/observability.py`
-- `api/server.py`
-- `main.py`
-- `docs/USER_GUIDE.md`
-- `docs/runbooks/kill_switch.md`
-
-Acceptance criteria:
-
-- Either authenticated kill-switch activate/reset endpoints exist and are wired in runtime, or docs are changed to the actual operator path.
-- Reset requires the configured kill-switch token and an operator identifier.
-- All kill-switch actions are logged with timestamp, operator, source IP or caller identity, and result.
-- Tests cover activate, reset failure with bad token, reset success, and order-cancellation side effects.
-
-Security requirements:
-
-- Do not expose unauthenticated state-changing endpoints.
-- Rate-limit reset attempts.
-- Never log the reset token.
-
-### TASK-P1-007: Validate exchange clients against sandbox APIs and fix fill accounting
-
-Problem:
-
-Exchange clients contain venue-specific assumptions for paths, auth, signing, order IDs, statuses, and amount scaling. Status calls currently return `new_fills=[]`, which can cause portfolio accounting to miss fills unless another path records them.
-
-Files:
-
+- `execution/engine.py`
 - `execution/clients/polymarket.py`
 - `execution/clients/opinion.py`
-- `execution/engine.py`
+- `execution/clients/paper.py`
+- `execution/order_tracker.py`
 - `portfolio/manager.py`
 
 Acceptance criteria:
 
-- Sandbox tests cover `verify_connectivity`, `place_order`, `cancel_order`, `get_order_status`, and `get_open_orders` for each venue.
-- Partial fills produce `OrderStatusResponse.new_fills` exactly once per fill.
-- Local fill ledger reconciles to sandbox exchange-reported fills.
-- Amount scaling is verified for USDC decimals and outcome-token units.
-- All client methods handle non-JSON error responses without masking the original status/body.
+- Partial fills from status polling emit `OrderStatusResponse.new_fills` exactly once.
+- Duplicate exchange fill events do not double-count.
+- Paper client supports poll-discovered partial fills for tests.
+- Portfolio positions and fill metrics match cumulative exchange fill state.
+- Tests cover immediate fill, partial fill, duplicate fill, final fill, and cancellation after partial fill.
 
-Suggested implementation notes:
+Implementation notes:
 
-- Add exchange-client contract tests using recorded sandbox fixtures and a separate opt-in live sandbox test suite.
-- Make idempotency and client order IDs explicit.
+- Track last seen cumulative filled amount or exchange fill IDs per order.
+- Ensure idempotency survives process restart where possible.
 
-### TASK-P1-008: Add an explicit cross-venue market registry
+### TASK-P0-007: Fix persistent fill ledger primary key
 
 Problem:
 
-The same `MARKETS` values are passed into Polymarket asset IDs, Opinion market IDs, and internal logical market IDs. Real venues usually use different condition IDs, token IDs, market IDs, and outcome mappings.
+`portfolio/storage.py` defines `fills.proposal_id` as the primary key and uses `INSERT OR IGNORE`. Multiple partial fills for the same proposal are silently dropped from the ledger.
+
+Files:
+
+- `portfolio/storage.py`
+- `portfolio/manager.py`
+- `tests/*`
+
+Acceptance criteria:
+
+- Multiple fills for the same proposal are stored as separate ledger rows.
+- Ledger rows have a stable unique key, such as exchange fill ID or `(proposal_id, order_id, ts, filled_usdc, fill_price)` with collision handling.
+- Existing portfolio state migration is documented or implemented.
+- Tests verify two partial fills for one proposal are both persisted.
+
+### TASK-P0-008: Resolve near-expiry arbitrage policy mismatch
+
+Problem:
+
+`tests.test_integration.TestArbitrageStrategyIntegration.test_near_expiry_halves_arb_size` expects markets with less than one day to resolution to be accepted at half size. `ArbConfig.min_days_to_resolution=1.0` now rejects those markets before size reduction.
+
+Files:
+
+- `strategies/arbitrage.py`
+- `strategies/delta_neutral.py`
+- `tests/test_integration.py`
+- `README.md`
+- `docs/USER_GUIDE.md`
+
+Acceptance criteria:
+
+- Product policy is explicit: either near-expiry arb is rejected, or it is allowed at reduced size.
+- Strategy implementation, tests, README, and runbooks all match that policy.
+- If rejected, the old half-size branch is removed or gated behind a lower threshold.
+- If allowed, `min_days_to_resolution` is adjusted and tested.
+
+## P1 Tasks
+
+### TASK-P1-009: Add explicit cross-venue market registry
+
+Problem:
+
+The same `MARKETS` values are used as Polymarket WebSocket asset IDs, Polymarket order token IDs, Opinion market IDs, and internal logical market IDs. Real venues usually require separate condition IDs, token IDs, outcome mappings, and market IDs.
 
 Files:
 
@@ -228,56 +221,135 @@ Files:
 
 Acceptance criteria:
 
-- Config supports a logical market ID mapped to per-venue identifiers.
+- Config supports logical market IDs mapped to per-venue identifiers.
 - YES/NO outcome token mapping is validated before trading.
-- Strategy code consumes logical IDs; adapters and clients consume venue-specific IDs.
-- Startup fails closed if a market mapping is incomplete or ambiguous.
+- Strategies consume logical IDs; adapters and clients consume venue-specific IDs.
+- Startup fails closed when mappings are incomplete, inverted, or ambiguous.
 - Tests cover mismatched IDs and inverted outcome mappings.
 
-## P2 Tasks
-
-### TASK-P2-009: Harden readiness checks to avoid expensive exchange calls per probe
+### TASK-P1-010: Validate venue clients against sandbox or recorded fixtures
 
 Problem:
 
-`HealthMonitor.check_readiness()` performs fresh exchange connectivity checks on each readiness request. In production, orchestration probes and Prometheus-style checks can make this expensive, slow, or rate-limited.
+The Polymarket and Opinion clients contain assumptions around endpoints, auth headers, signing payloads, order IDs, amount scaling, and response bodies. These are not production-safe without sandbox or recorded contract tests.
+
+Files:
+
+- `execution/clients/polymarket.py`
+- `execution/clients/opinion.py`
+- `tests/test_polymarket_client.py`
+- `tests/test_opinion_client.py`
+
+Acceptance criteria:
+
+- Contract tests cover `verify_connectivity`, `place_order`, `cancel_order`, `get_order_status`, and `get_open_orders` for both venues.
+- Non-JSON error responses preserve status and body in logs/exceptions.
+- USDC and token amount scaling is verified for each venue.
+- Sandbox tests are opt-in and cannot accidentally place live orders.
+
+### TASK-P1-011: Align risk reservations with portfolio and metrics
+
+Problem:
+
+RiskEngine maintains the real reservation table, but `PortfolioManager.reserved_capital` is not updated on approval. The metrics provider reports `portfolio.reserved_capital`, which can show zero while RiskEngine has active reservations.
+
+Files:
+
+- `risk/engine.py`
+- `portfolio/manager.py`
+- `main.py`
+- `infrastructure/observability.py`
+
+Acceptance criteria:
+
+- There is one authoritative reservation source, or all views are synchronized.
+- `/metrics/json` reports the same reserved capital used by the risk gate.
+- Tests verify reservation metrics after approval and after terminal release.
+
+### TASK-P1-012: Restore reproducible local test environment
+
+Problem:
+
+Local `python -m pytest tests -q` failed because the active Python has no `pytest`. The command used Python 3.13, while CI uses Python 3.11 and the project recommends 3.11/3.12.
+
+Files:
+
+- `requirements-dev.txt`
+- `pyproject.toml`
+- `README.md`
+- `.github/workflows/ci.yml`
+
+Acceptance criteria:
+
+- Fresh checkout instructions create a working Python 3.11 or 3.12 venv on Windows and Linux.
+- `python -m pytest tests -q` runs after documented setup.
+- README tells developers not to rely on a checked-in `.venv`.
+- CI and local docs use the same command shape.
+
+### TASK-P1-013: Fix Windows logging encoding fragility
+
+Problem:
+
+The partial unittest run produced a `UnicodeEncodeError` on Windows `cp1251` output when logging symbols such as `>=`. This can hide useful test output and make local verification brittle.
+
+Files:
+
+- `config/logging_setup.py`
+- `risk/engine.py`
+- tests and docs that assert output
+
+Acceptance criteria:
+
+- Test logging works on Windows code pages without encode errors.
+- Either logs use ASCII-safe symbols or handlers are configured for UTF-8 with replacement behavior.
+- CI includes at least one check that exercises warning/error logs.
+
+### TASK-P1-014: Add paper-mode service smoke test
+
+Problem:
+
+CI builds Docker and runs a backtest smoke, but it does not start paper mode and verify observability endpoints.
+
+Files:
+
+- `.github/workflows/ci.yml`
+- `main.py`
+- `infrastructure/observability.py`
+- `tests/*`
+
+Acceptance criteria:
+
+- CI starts paper mode with fake/synthetic adapters or a fast startup mode.
+- CI verifies `/health`, `/ready`, `/metrics`, and `/metrics/json`.
+- The smoke test requires zero live credentials.
+- The test fails if market-data adapters never produce fresh snapshots.
+
+## P2 Tasks
+
+### TASK-P2-015: Harden operator endpoint security
+
+Problem:
+
+Kill-switch endpoints currently use a JSON body token. That is better than unauthenticated endpoints, but not enough for production exposure.
 
 Files:
 
 - `infrastructure/observability.py`
-- `execution/clients/*`
+- `docker-compose.yml`
+- `docs/runbooks/kill_switch.md`
 
 Acceptance criteria:
 
-- Readiness endpoint returns within 250 ms p95 under normal conditions.
-- Exchange connectivity is cached with a short TTL or maintained by a background health task.
-- Rate-limited exchange responses do not cascade into process restarts unless a real readiness threshold is breached.
-- Tests cover stale cached connectivity and recovery.
+- Endpoints are protected by network restriction, auth middleware, or an equivalent operator-only boundary.
+- Reset attempts are rate-limited by source and operator identity.
+- Token is never logged.
+- Audit log includes timestamp, operator, source, action, and result.
 
-### TASK-P2-010: Fix alerting configuration wiring
-
-Problem:
-
-`config.settings.AlertConfig` includes SMTP host and port, but `main.py` does not pass these values into `infrastructure.alerting.AlertConfig`. Operators cannot configure email transport fully through env vars.
-
-Files:
-
-- `main.py`
-- `config/settings.py`
-- `infrastructure/alerting.py`
-
-Acceptance criteria:
-
-- SMTP host and port from env are honored.
-- Alert channel configuration is covered by tests.
-- Missing alert channels are logged at startup as a warning in live mode.
-- A test alert can be sent in paper/sandbox without live trading.
-
-### TASK-P2-011: Secure production Docker and Grafana defaults
+### TASK-P2-016: Remove production default Grafana password fallback
 
 Problem:
 
-Compose uses `GF_SECURITY_ADMIN_PASSWORD=admin` and enables anonymous Grafana viewer access. This is not production-safe.
+`docker-compose.yml` still allows `GF_SECURITY_ADMIN_PASSWORD` to default to `admin`.
 
 Files:
 
@@ -287,35 +359,33 @@ Files:
 
 Acceptance criteria:
 
-- Production Compose or override file requires a non-default Grafana admin password.
-- Anonymous access is disabled by default for production.
-- Local demo/dev mode remains easy to run with clearly marked unsafe defaults.
-- Docs include a production monitoring hardening checklist.
+- Production deployment requires a non-default Grafana admin password.
+- Local demo/developer mode remains easy but clearly marked as unsafe.
+- Documentation includes a monitoring hardening checklist.
 
-### TASK-P2-012: Add CI release-gate jobs
+### TASK-P2-017: Improve readiness semantics
 
 Problem:
 
-CI runs lint, mypy, and tests, but does not enforce the release gates needed for this trading system.
+Readiness requires at least one alive feed and exchange connectivity. That is good for live trading, but paper/dry-run startup and health probes may need mode-specific readiness details.
 
 Files:
 
-- `.github/workflows/ci.yml`
-- `tests/*`
+- `infrastructure/observability.py`
+- `main.py`
+- `docs/runbooks/startup.md`
 
 Acceptance criteria:
 
-- CI runs a backtest smoke test.
-- CI starts paper mode with fake/synthetic adapters or a fast startup mode.
-- CI validates Docker build.
-- CI verifies observability routes respond.
-- CI uploads coverage and fails below the configured threshold.
+- Readiness response distinguishes live, paper, degraded, and not-ready states.
+- Readiness remains fast under repeated probes.
+- Exchange rate limits do not cause unnecessary restarts.
 
-### TASK-P2-013: Add reconciliation and restart recovery test coverage
+### TASK-P2-018: Add restart reconciliation end-to-end tests
 
 Problem:
 
-Reconciliation logic exists, but production readiness depends on proving that restart mid-order cannot leave orphaned orders, reservations, or arb groups.
+Reconciliation logic exists, but production readiness requires proving that restart during active orders cannot leave orphaned orders, stale reservations, or duplicate fills.
 
 Files:
 
@@ -329,101 +399,65 @@ Acceptance criteria:
 
 - Test starts with persisted active orders and reservations, then simulates exchange open-order state.
 - Matched open orders are restored to trackers.
-- Missing orders release reservations.
+- Missing terminal orders release reservations.
 - Kill-switch active state persists and blocks proposals after restart.
 - Arb leg groups are cleared or reconstructed without duplicate submissions.
 
 ## P3 Tasks
 
-### TASK-P3-014: Clean `.env.example` defaults
+### TASK-P3-019: Remove duplicate client `close()` definitions
 
 Problem:
 
-`.env.example` enables AI by default and has inline comments after empty secret values. Depending on env-file parser behavior, those comments can become literal values.
+`execution/clients/polymarket.py` and `execution/clients/opinion.py` each define `close()` twice. One Polymarket definition clears the private key and the later one overwrites it.
 
 Files:
 
-- `.env.example`
-- `docs/USER_GUIDE.md`
-
-Acceptance criteria:
-
-- AI is disabled by default in example config.
-- Empty secret variables have no inline comments after `=`.
-- Comments are placed on separate lines.
-- Example config can be loaded by Docker Compose and local env loaders without surprising values.
-
-### TASK-P3-015: Remove duplicate helper/function definitions
-
-Problem:
-
-There are duplicate function definitions that increase maintenance risk:
-
-- `_e()` appears twice in `config/settings.py`.
-- `close()` appears twice in both `execution/clients/polymarket.py` and `execution/clients/opinion.py`.
-
-Files:
-
-- `config/settings.py`
 - `execution/clients/polymarket.py`
 - `execution/clients/opinion.py`
 
 Acceptance criteria:
 
-- Duplicate definitions are removed.
-- Client `close()` consistently closes sessions and clears private key material.
-- Tests cover client close behavior.
+- Each client has one `close()` method.
+- Close shuts down sessions and clears private key material.
+- Tests cover close idempotency.
 
-### TASK-P3-016: Align dashboard API with portfolio manager
-
-Problem:
-
-`api/server.py` calls `portfolio_manager.get_all_positions()`, but `PortfolioManager` does not expose this method. The endpoint also maps `unrealized_pnl` to `realised_pnl`.
-
-Files:
-
-- `api/server.py`
-- `portfolio/manager.py`
-
-Acceptance criteria:
-
-- `/positions` works when the API server is wired with a real `PortfolioManager`.
-- Response fields distinguish realized and unrealized P&L correctly.
-- Tests cover empty and non-empty portfolios.
-
-### TASK-P3-017: Remove binary/null content from README
+### TASK-P3-020: Clean stale architecture docs
 
 Problem:
 
-`rg` reports `README.md` as a binary file because it contains a null byte near the end. This can break search, diffs, linters, and documentation tooling.
+`architectural_audit.md` still says live clients are `NotImplementedError` skeletons, which no longer matches the current tree.
 
 Files:
 
+- `architectural_audit.md`
 - `README.md`
+- `docs/*`
 
 Acceptance criteria:
 
-- `rg` treats `README.md` as text.
-- README renders correctly in GitHub or the target markdown renderer.
-- Encoding is UTF-8.
+- Architecture docs reflect current implementation status.
+- Stale statements about unimplemented clients are removed or marked historical.
+- New production blockers link to this backlog instead.
 
 ## Suggested Delivery Order
 
-1. TASK-P0-001
-2. TASK-P0-002
-3. TASK-P0-003
-4. TASK-P1-004
-5. TASK-P1-005
-6. TASK-P1-006
-7. TASK-P1-007
-8. TASK-P1-008
-9. P2 hardening tasks
-10. P3 cleanup tasks
+1. TASK-P0-003
+2. TASK-P0-001
+3. TASK-P0-002
+4. TASK-P0-004
+5. TASK-P0-005
+6. TASK-P0-006
+7. TASK-P0-007
+8. TASK-P0-008
+9. P1 sandbox, registry, and test-environment tasks
+10. P2 security/readiness/reconciliation hardening
+11. P3 cleanup
 
-## Definition of Done for Any Task
+## Definition Of Done For Any Task
 
 - Code change has a focused test.
 - Relevant docs or runbooks are updated.
 - CI passes.
-- The change is verified through at least one command listed in the task acceptance criteria.
-- For trading behavior changes, failure mode is fail-closed and explicitly tested.
+- The task acceptance criteria are verified with the listed command or an equivalent automated check.
+- Trading behavior changes fail closed and include an explicit failure-mode test.

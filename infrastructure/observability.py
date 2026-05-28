@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import Dict, Any, Callable, List, Optional, TYPE_CHECKING
@@ -106,6 +107,7 @@ class HealthMonitor:
         obs_server: Optional[ObservabilityServer] = None,
         liveness_timeout_s: float = 30.0,
         connectivity_ttl_s: float = 10.0,
+        mode: str = "live",
     ):
         self.mdp = mdp
         self.engines = engines
@@ -117,6 +119,7 @@ class HealthMonitor:
         self._liveness_timeout_s = liveness_timeout_s
         self._connectivity_cache: Dict[str, Tuple[float, bool]] = {}
         self._connectivity_ttl_s = connectivity_ttl_s
+        self.mode = mode
 
     def tick_liveness(self) -> None:
         """Update the liveness timestamp to indicate the event loop is running."""
@@ -189,7 +192,9 @@ class HealthMonitor:
             if obs_err:
                 is_ready = False
 
-        return {"status": "READY" if is_ready else "NOT_READY", "details": details}
+        details["mode"] = self.mode
+        status = "READY" if is_ready else ("DEGRADED" if self.mode in ("paper", "dry-run") else "NOT_READY")
+        return {"status": status, "details": details}
 
     def check_liveness(self) -> Dict[str, Any]:
         """Liveness check based on event loop tick frequency."""
@@ -228,6 +233,7 @@ class ObservabilityServer:
         self.in_error_state: bool = False
         self._kill_switch_token: Optional[str] = None
         self._kill_switch_reset_callback: Optional[Callable] = None
+        self._kill_switch_activate_callback: Optional[Callable] = None
         self._reset_attempts: List[float] = []
         self._reset_rate_limit_window_s: float = 60.0
         self._max_resets_per_window: int = 5
@@ -254,7 +260,7 @@ class ObservabilityServer:
             return web.json_response({"status": "error", "message": "HealthMonitor not set"}, status=500)
         
         ready = await self.health_monitor.check_readiness()
-        status = 200 if ready["status"] == "READY" else 503
+        status = 200 if ready["status"] in ("READY", "DEGRADED") else 503
         return web.json_response(ready, status=status)
 
     async def handle_metrics_prometheus(self, request: web.Request) -> web.Response:
@@ -276,10 +282,12 @@ class ObservabilityServer:
         self,
         token: str,
         reset_callback: Optional[Callable] = None,
+        activate_callback: Optional[Callable] = None,
     ) -> None:
         """Configure kill-switch endpoint authentication and reset callback."""
         self._kill_switch_token = token
         self._kill_switch_reset_callback = reset_callback
+        self._kill_switch_activate_callback = activate_callback
 
     async def handle_kill_switch_activate(self, request: web.Request) -> web.Response:
         """POST /kill-switch/activate — activate the kill switch (requires token)."""
@@ -299,8 +307,13 @@ class ObservabilityServer:
         if not self.health_monitor:
             return web.json_response({"error": "health monitor not available"}, status=503)
 
-        self.health_monitor.risk.manual_activate(reason)
         source_ip = request.remote or "unknown"
+        if self._kill_switch_activate_callback:
+            result = self._kill_switch_activate_callback(reason)
+            if inspect.isawaitable(result):
+                await result
+        else:
+            self.health_monitor.risk.manual_activate(reason)
         logger.critical(
             "KILL SWITCH ACTIVATED via HTTP by operator=%s source=%s reason=%s",
             operator_id,

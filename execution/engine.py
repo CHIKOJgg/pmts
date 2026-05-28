@@ -611,6 +611,8 @@ class ExecutionEngine:
             if tracker.status.is_terminal:
                 break
             result = tracker.record_fill(fill.fill_usdc, fill.fill_price, fill.fill_tokens, fill.ts)
+            if result.filled_size_usdc <= 0:
+                continue
             FILLS_TOTAL.labels(
                 platform=self._client.platform.value, strategy=tracker.submission.strategy_id.value
             ).inc()

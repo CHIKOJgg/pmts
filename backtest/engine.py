@@ -310,6 +310,7 @@ class BacktestResult:
     trades: List[TradeRecord]
     equity_series: List[Tuple[int, float]]
     reject_reasons: Optional[Dict[str, int]] = None
+    no_trade_expected: bool = False
 
     @property
     def duration_days(self) -> float:
@@ -338,6 +339,9 @@ class BacktestResult:
             if len(reasons) > 1:
                 for r, c in reasons[1:]:
                     lines.append(f"              {r} ({c})")
+        if self.total_proposals == 0 or (self.filled_count + self.partial_count) == 0:
+            verdict = "expected" if self.no_trade_expected else "UNEXPECTED"
+            lines.append(f"No-trade:     {verdict}")
         return "\n".join(lines)
 
 
@@ -389,7 +393,7 @@ class BacktestEngine:
             limits=risk_limits or DEFAULT_LIMITS,
             clock=self._sim_clock,
         )
-        self._fe = FeatureEngine(self._portfolio)
+        self._fe = FeatureEngine(self._portfolio, clock=self._sim_clock)
         self._se = StrategyEngine(
             config=strategy_config or StrategyConfig(),
             arb_config=arb_config or ArbConfig(),
@@ -679,6 +683,7 @@ class BacktestEngine:
             trades=self._trades,
             equity_series=self._equity,
             reject_reasons=self._reject_reasons,
+            no_trade_expected=False,
         )
 
 

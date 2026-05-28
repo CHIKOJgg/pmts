@@ -27,10 +27,12 @@ class PolymarketWSAdapter:
         asset_ids: List[str],
         ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market",
         taker_fee_bps: int = 20,
+        market_id_map: Optional[dict[str, str]] = None,
     ) -> None:
         self._asset_ids = asset_ids
         self._ws_url = ws_url
         self._taker_fee_bps = taker_fee_bps
+        self._market_id_map = market_id_map or {}
         self._callback: Optional[_SnapshotCB] = None
 
         self._running = False
@@ -82,15 +84,14 @@ class PolymarketWSAdapter:
                     await ws.send(json.dumps(sub_msg))
                     logger.info("Subscribed to Polymarket assets: %s", self._asset_ids)
 
-                    subscribe_task = asyncio.create_task(self._process_messages(ws))
+                    await self._process_messages(ws)
             except Exception as exc:
                 if not self._running:
                     break
                 logger.error("Polymarket WS error: %s. Retrying in %.1fs...", exc, retry_delay)
                 API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type=type(exc).__name__).inc()
 
-                # Cancel subscribe task if it exists
-                if subscribe_task:
+                if subscribe_task and not subscribe_task.done():
                     try:
                         subscribe_task.cancel()
                         await subscribe_task
@@ -122,6 +123,7 @@ class PolymarketWSAdapter:
                 return
 
             asset_id = data.get("asset_id")
+            market_id = self._market_id_map.get(asset_id, asset_id)
             bids = data.get("bids", [])
             asks = data.get("asks", [])
 
@@ -145,7 +147,7 @@ class PolymarketWSAdapter:
             ts = int(data.get("timestamp", time.time() * 1000))
 
             snapshot = MarketSnapshot(
-                market_id=asset_id,
+                market_id=market_id,
                 platform=self.PLATFORM,
                 yes_bid=yes_bid,
                 yes_ask=yes_ask,
@@ -158,7 +160,7 @@ class PolymarketWSAdapter:
                 received_ts=int(time.time() * 1000),
             )
 
-            FEED_LAST_TS.labels(platform=self.PLATFORM.value, market_id=asset_id).set(ts / 1000.0)
+            FEED_LAST_TS.labels(platform=self.PLATFORM.value, market_id=market_id).set(ts / 1000.0)
 
             if self._callback:
                 await self._callback(snapshot)

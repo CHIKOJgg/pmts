@@ -4,148 +4,173 @@ Assessment date: 2026-05-28
 
 ## Executive Summary
 
-The project is not production-ready for live trading yet.
+The project is closer to paper-trading readiness than the previous assessment, but it is still not production-ready for live capital.
 
-The repository contains many production-oriented building blocks: explicit risk limits, kill-switch persistence, reconciliation hooks, structured logs, Prometheus metrics, Docker packaging, and operational runbooks. However, the current tree has blocking runtime failures in the zero-credential backtest path and in the paper/live startup path. These failures must be fixed before the system can safely enter paper trading, sandbox validation, or small-capital live trading.
+Several former blockers appear fixed in the current tree:
 
-Current readiness recommendation: block production release and block live-capital deployment.
+- The zero-credential backtest path no longer crashes on `PortfolioManager.get_portfolio_mtm()`.
+- Trading config field names now align between `main.py` and `config/settings.py`.
+- Dry-run mode now evaluates strategy and risk before suppressing submission.
+- Alert SMTP host/port are passed from settings.
+- Docker Compose exposes the app observability port with `OBSERVABILITY_BIND_HOST=0.0.0.0`.
+- Grafana anonymous access is disabled by default.
+- `PortfolioManager.get_all_positions()` now exists.
+
+Current recommendation: block live-capital deployment. Allow only developer backtesting and targeted paper-mode debugging after the P0 items in `docs/BUGS_AND_IMPROVEMENTS.md` are addressed.
 
 ## Evidence Reviewed
 
 - Entry points: `main.py`
-- Configuration: `config/settings.py`, `.env.example`
-- Trading flow: `engine/orchestrator.py`, `engine/strategy_engine.py`, `strategies/*`
-- Risk and safety: `risk/engine.py`, `risk/kill_switch.py`, `risk/limits.py`
+- Configuration: `config/settings.py`, `.env.example`, `docker-compose.yml`
+- Backtest: `backtest/engine.py`
+- Trading orchestration: `engine/orchestrator.py`, `engine/strategy_engine.py`
+- Strategies: `strategies/arbitrage.py`, `strategies/delta_neutral.py`
+- Market data: `data/market_data_provider.py`, `data/adapters/polymarket_ws.py`, `data/adapters/opinion_ws.py`
 - Execution: `execution/engine.py`, `execution/clients/*`
-- Market data: `data/market_data_provider.py`, `data/adapters/*`
+- Risk and safety: `risk/engine.py`, `risk/kill_switch.py`, `risk/limits.py`
 - Portfolio and persistence: `portfolio/manager.py`, `portfolio/storage.py`
-- Observability: `infrastructure/observability.py`, `docs/prometheus.yml`, `docker-compose.yml`
-- Operations docs: `docs/runbooks/*`, `docs/USER_GUIDE.md`
-- Test/config tooling: `pyproject.toml`, `.github/workflows/ci.yml`, `tests/*`
+- Observability: `infrastructure/observability.py`
+- Tests and tooling: `tests/*`, `test_bug_fixes.py`, `pyproject.toml`, `.github/workflows/ci.yml`
 
 ## Verification Results
 
 | Check | Result | Notes |
 | --- | --- | --- |
 | Python compile check | Pass | `python -m compileall -q main.py config data engine execution portfolio risk src strategies ai backtest api infrastructure` completed successfully. |
-| Backtest smoke test | Fail | `python main.py --mode backtest --ticks 20 --capital 1000` fails in `PortfolioManager.get_portfolio_mtm()` because `asyncio.Lock` is used as a synchronous context manager. |
-| Local test suite | Not runnable in current local env | System Python has no `pytest`; `.venv` points to a missing WindowsApps Python path. |
-| Live/paper startup static check | Fail | `main.py` references `settings.trading.max_market_exposure_pct` and `max_market_exposure_usdc`; `TradingConfig` defines `max_market_exp_pct` and `max_market_exp_usdc`. |
-| Runtime health endpoints | Partially implemented | `/health`, `/ready`, `/metrics`, and `/metrics/json` exist in `ObservabilityServer`; management endpoints documented for kill switch are not wired. |
-| CI | Present but narrow | CI installs dependencies, runs ruff, mypy, and pytest coverage on Python 3.11. It does not run Docker, backtest smoke, paper-mode startup, readiness, or exchange-client contract checks. |
+| Backtest crash smoke | Pass | `python main.py --mode backtest --ticks 50 --capital 1000` completed and produced proposals/fills. |
+| Backtest release smoke | Fail | `python main.py --mode backtest --ticks 200 --capital 10000` and `--ticks 2000` completed with zero proposals, zero fills, and `$+0.00` P&L. |
+| Pytest suite | Not runnable locally | Current system Python is 3.13 and has no `pytest`: `No module named pytest`. |
+| Unittest-compatible partial suite | Fail | `python -m unittest tests.test_integration tests.test_failures -q` ran 83 tests with 2 failures. |
+| Compile/runtime encoding | Risk | The unittest run produced a Windows `cp1251` logging encode error for symbols such as `>=`; tests continued, but local verification output is noisy and fragile. |
 
-## Readiness by Area
+Failing unittest checks:
 
-### 1. Runtime Stability
+- `TestArbitrageStrategyIntegration.test_near_expiry_halves_arb_size`: strategy now rejects `days_to_resolution < 1.0` before applying the half-size behavior expected by the test.
+- `TestBacktestSystem.test_backtest_cli_emits_trades`: 2000-tick CLI backtest regressed to zero trades.
+
+## Readiness By Area
+
+### Runtime Correctness
 
 Status: not ready.
 
-Blocking issues:
+Strengths:
 
-- Backtest cannot complete due to a lock misuse in `portfolio/manager.py`.
-- Paper/live startup will fail because `main.py` and `TradingConfig` use different risk-limit field names.
-- The checked-in virtual environment is broken locally, making developer verification unreliable.
+- The app compiles.
+- A short 50-tick backtest can complete with fills.
+- The old sync/async lock crash in portfolio MTM is fixed.
+
+Blocking gaps:
+
+- Release-sized backtests can complete with no proposals or trades, making the published backtest workflow unreliable as a go-live gate.
+- The main backtest seed uses Python `hash(market_id)`, which is randomized per process and undermines deterministic release metrics.
+- Paper mode uses `settings.validate()` with `ENABLE_TRADING=true` by default, so a paper-only run can require real live credentials even though it uses `PaperTradingClient`.
 
 Production gate:
 
-- Backtest must run from a fresh checkout with zero credentials.
-- Paper mode must start and stop cleanly with synthetic or sandbox feeds.
-- Live mode must fail closed on invalid config before creating exchange clients or starting background tasks.
+- Backtest smoke and release backtest both produce non-zero proposal/fill metrics under a fixed seed.
+- Paper mode starts from a clean `.env` with no live credentials when explicitly configured for paper-only execution.
+- Local and CI verification run under the same supported Python version.
 
-### 2. Trading Safety
+### Trading Safety
 
-Status: partially ready.
+Status: partially ready, not proven.
 
 Strengths:
 
-- Synchronous risk gate reserves capital before order submission.
-- Risk engine enforces order size, capital, exposure, drawdown, strategy budget, stale MTM, and delta limits.
-- Kill switch state persists through SQLite.
-- Reconciliation hooks exist for execution engines and risk reservations.
+- RiskEngine still performs synchronous risk evaluation and internal capital reservation.
+- Kill-switch state persists in SQLite.
+- Dry-run mode now releases risk reservations after logging would-submit events.
 
-Gaps:
+Blocking gaps:
 
-- Release cannot trust these controls until the backtest and startup blockers are fixed.
-- Paper runbooks say `ENABLE_TRADING=false` should still evaluate proposals, but `Orchestrator._on_feature_vector()` returns before strategy evaluation when trading is disabled.
-- Operator kill-switch HTTP endpoints are documented but not implemented in the running observability server.
-- No confirmed sandbox test suite covers partial arb leg fills, restart recovery, exchange outage, and kill-switch reset end to end.
+- Live mode does not call `obs_server.set_kill_switch_config(...)`, so HTTP kill-switch endpoints appear wired but reject all live requests.
+- HTTP kill-switch activation calls `risk.manual_activate(...)` but does not currently call the orchestrator emergency cancellation path.
+- RiskEngine and PortfolioManager disagree about reserved capital: RiskEngine owns reservations, while `PortfolioManager.reserved_capital` remains effectively unused.
 
 Production gate:
 
-- Kill switch can be activated and reset through an authenticated operator path.
-- All open orders are cancelled on kill-switch activation, process termination, and exchange outage.
-- Restart reconciliation leaves no orphaned reservations, stale in-flight arb groups, or untracked open orders.
+- Manual kill-switch activation must cancel all live open orders and prevent new submissions.
+- Kill-switch reset must require a valid token, clear stale state, and be audit logged without exposing secrets.
+- Reservation, exposure, and available-capital metrics must match the risk engine's actual gating state.
 
-### 3. Market Data and Execution
+### Market Data
+
+Status: not ready.
+
+Blocking gap:
+
+- Both WebSocket adapters create `_process_messages(...)` as a task inside `async with websockets.connect(...)` and then immediately leave the context. This closes the socket instead of keeping the stream alive.
+
+Production gate:
+
+- Polymarket and Opinion WebSocket adapters keep a connection open, process messages continuously, reconnect after disconnects, and expose feed-age metrics.
+- Paper mode can run for 24 hours with fresh market data for subscribed markets.
+
+### Execution And Fill Accounting
 
 Status: not ready for live capital.
 
 Strengths:
 
-- WebSocket adapters include reconnect loops and stale-data handling.
-- Execution engine tracks order lifecycle, expiry, retries, polling, and persisted active orders.
-- Exchange clients implement a common protocol shape.
+- ExecutionEngine tracks order state, retries, expiry, polling, and startup reconciliation.
+- PaperTradingClient gives a useful local execution harness.
 
-Gaps:
+Blocking gaps:
 
-- Exchange client implementations contain assumptions and placeholders that need sandbox verification against the real APIs.
-- Fill parsing currently returns empty `new_fills` in REST status calls, so partial/final fill accounting depends on other paths or may miss fills.
-- Market identifiers are reused across Polymarket asset IDs and Opinion market IDs; cross-venue mapping needs an explicit validated registry.
-- Docker Compose does not expose the observability server to sibling containers unless `OBSERVABILITY_BIND_HOST=0.0.0.0` is set.
+- Polymarket and Opinion `get_order_status()` return `new_fills=[]`; partial fills can be missed unless final-status fallback happens to synthesize the remaining fill.
+- `portfolio/storage.py` stores fills with `proposal_id` as the primary key, which loses multiple partial fills for the same order.
+- Venue clients still contain unverified assumptions around REST paths, auth headers, signing payloads, order IDs, amount scaling, and market identifiers.
 
 Production gate:
 
-- Sandbox integration verifies order placement, cancellation, status polling, partial fills, open-order listing, and auth signing for each venue.
-- Market registry maps logical market IDs to venue-specific condition IDs, token IDs, and outcome tokens.
-- Fill accounting reconciles exchange statements to local ledger to the cent.
+- Every venue order lifecycle path is validated against sandbox or recorded fixtures: place, cancel, status, open orders, partial fills, final fills, and non-JSON errors.
+- Local fill ledger reconciles to exchange-reported fills to cent-level tolerance.
+- Restart reconciliation cannot leave orphaned reservations, missing fills, or duplicate fills.
 
-### 4. Observability and Operations
+### Observability And Operations
 
 Status: partially ready.
 
 Strengths:
 
-- Structured JSON logging exists.
-- Prometheus metrics and health endpoints exist.
-- Grafana/Prometheus compose stack exists.
-- Runbooks cover startup, shutdown, go-live, outage, reconciliation, kill switch, and escalation.
+- `/health`, `/ready`, `/metrics`, `/metrics/json`, `/kill-switch/activate`, and `/kill-switch/reset` routes exist.
+- Readiness exchange checks are cached with a TTL.
+- Docker Compose publishes app, Prometheus, and Grafana services.
 
 Gaps:
 
-- Readiness performs fresh exchange connectivity checks on each request, which can be slow, rate-limited, or fragile.
-- Alerting is partially wired; email SMTP host/port settings from `config.settings.AlertConfig` are not passed into `infrastructure.alerting.AlertConfig`.
-- Grafana defaults are not production-safe (`admin/admin`, anonymous viewer enabled).
-- Runbook assumptions do not all match implemented behavior.
+- Live kill-switch HTTP config is not wired.
+- Paper/live observability behavior has not been verified with a running service in this environment.
+- Runbooks still need to match the final paper/live semantics after the P0 fixes.
 
 Production gate:
 
-- Dashboards and alerts are validated in paper mode and sandbox mode.
-- Readiness is fast, bounded, and safe under repeated scrape/health-check traffic.
-- Runbooks are executed by an operator who did not write the code, without improvisation.
+- Prometheus target is healthy in Docker Compose.
+- Health and readiness endpoints are reachable from host and containers.
+- Operator runbooks are tested by someone other than the implementer.
 
-### 5. Security and Configuration
+### Security And Configuration
 
 Status: not ready for production.
 
 Strengths:
 
-- Secret-file environment variables exist for several sensitive values.
-- Config validation catches missing credentials and weak kill-switch tokens.
-- Docker runs the app as a non-root user.
+- Secret-file support exists for sensitive values.
+- AI is disabled by default in `.env.example`.
+- Docker runs a non-root user in the app image.
 
 Gaps:
 
-- `.env.example` enables AI by default and contains inline comments after empty secret values, which can become literal values depending on env-file parsing.
-- Production Grafana defaults are insecure.
-- No documented secret rotation procedure, key scope, withdrawal controls, or wallet blast-radius limit.
-- No authentication or authorization exists for any future operator management endpoints.
+- `.env.example` still defaults `ENABLE_TRADING=true`, which is too aggressive for a project whose safe first mode is backtest/paper.
+- Grafana still allows the default password fallback `${GF_SECURITY_ADMIN_PASSWORD:-admin}`.
+- Kill-switch HTTP endpoints use a body token but no stronger auth boundary, network policy, or operator authorization.
 
 Production gate:
 
-- Production config defaults to no external API calls and no live trading.
-- Secrets are mounted from a secret manager or file mount, not committed env files.
-- Operator endpoints require authentication, authorization, audit logging, and rate limits.
-- Wallets used by the bot have capped balances and documented revocation procedures.
+- Production deployment requires non-default monitoring credentials.
+- Live trading is opt-in by explicit config.
+- Operator endpoints are authenticated, rate-limited, audited, and restricted to an operations network or equivalent control.
 
 ## Release Gates
 
@@ -153,62 +178,61 @@ Production gate:
 
 Acceptance criteria:
 
-- Fresh checkout on Python 3.11 or 3.12 can create a venv and install dependencies with one documented command.
-- `python -m compileall` passes.
-- `ruff check .` passes.
-- `mypy . --ignore-missing-imports` passes or has a documented baseline.
-- `pytest` passes locally and in CI.
-- Coverage is at least 70%, matching `pyproject.toml`.
+- Fresh checkout on Python 3.11 or 3.12 can create a venv and install dependencies.
+- `python -m compileall -q main.py config data engine execution portfolio risk src strategies ai backtest api infrastructure` passes.
+- `python -m pytest tests -q` passes locally and in CI.
+- `ruff check .` and `mypy . --ignore-missing-imports` pass or have an approved baseline.
 
 Required metrics:
 
 - Test pass rate: 100%.
-- Coverage: at least 70% overall, at least 85% for `risk`, `execution`, and `portfolio`.
-- Static analysis regressions: 0 new ruff or mypy errors.
+- Coverage: at least 70% overall.
+- Static analysis regressions: 0 new errors.
 
 ### Gate 1: Backtest Baseline
 
 Acceptance criteria:
 
-- `python main.py --mode backtest --ticks 2000 --capital 10000 --verbose` completes without credentials.
-- Backtest records proposals, approvals, rejections, fills, slippage, P&L, drawdown, and Sharpe/Sortino.
-- Backtest result is deterministic when a fixed seed is used.
-- Backtest fails the process on unhandled exceptions.
+- `python main.py --mode backtest --ticks 200 --capital 10000` produces non-zero proposals and fills.
+- `python main.py --mode backtest --ticks 2000 --capital 10000 --verbose` completes without credentials and emits non-zero trading metrics.
+- Results are deterministic with a fixed seed across separate Python processes.
+- Backtest fails loudly if no market data, proposals, or fills are produced when the scenario expects activity.
 
 Required metrics:
 
-- Backtest completion rate: 100% over at least 10 repeated runs.
+- Backtest completion rate: 100% over 10 repeated runs.
 - Unhandled exceptions: 0.
-- Max run-to-run metric drift with fixed seed: 0.
-- Backtest runtime for 2,000 ticks: less than 30 seconds on a developer machine.
+- Proposal count for release smoke: greater than 0.
+- Fill count for release smoke: greater than 0.
+- Fixed-seed metric drift across processes: 0.
+- Runtime for 2,000 ticks: less than 30 seconds on a developer machine.
 
 ### Gate 2: Paper Trading
 
 Acceptance criteria:
 
-- Paper mode starts from Docker Compose and local Python.
-- Paper mode can run for 24 hours without unhandled exceptions.
-- `ENABLE_TRADING=false` means strategies evaluate and proposals are logged, but no exchange orders are submitted.
-- `--mode paper` never creates real exchange clients and never signs live orders.
-- `/health`, `/ready`, `/metrics`, and `/metrics/json` are reachable from host and Prometheus container.
+- Paper mode starts from local Python and Docker Compose without live exchange credentials.
+- `ENABLE_TRADING=false` evaluates features, strategies, and risk while submitting zero exchange orders.
+- WebSocket adapters maintain live connections and reconnect cleanly.
+- `/health`, `/ready`, `/metrics`, `/metrics/json`, and kill-switch routes behave as documented.
 
 Required metrics:
 
-- Uptime: 24 hours continuous.
-- Event loop liveness age: below 10 seconds for 99.9% of samples.
-- Market-data staleness: below configured threshold for at least 99% of subscribed markets during normal exchange operation.
-- Proposal-to-risk latency: p95 below 5 ms.
-- Order lifecycle simulation errors: 0.
+- 24-hour uptime with no unhandled exceptions.
+- Event-loop liveness age below 10 seconds for 99.9% of samples.
+- Market-data age below configured stale threshold for at least 99% of subscribed market samples during normal exchange operation.
+- Proposal-to-risk latency p95 below 5 ms.
+- Submitted real orders in paper/dry-run: 0.
 
 ### Gate 3: Sandbox Exchange Validation
 
 Acceptance criteria:
 
-- Polymarket sandbox and Opinion sandbox credentials pass connectivity checks.
-- Place, cancel, get status, get open orders, and partial-fill paths are validated for both venues.
-- Startup reconciliation recovers from a forced process restart while orders are open.
-- Kill-switch activation cancels all open orders and prevents new submissions.
-- Market resolution removes the market from active trading and redeems/settles positions where supported.
+- Sandbox or recorded-contract tests validate both venue clients.
+- Partial fills produce exactly-once fill events.
+- Startup reconciliation recovers from a forced restart with open orders.
+- Kill-switch activation cancels all open orders.
+- Market ID and outcome mappings are explicit and validated before trading.
 
 Required metrics:
 
@@ -217,45 +241,46 @@ Required metrics:
 - Open orders remaining after kill-switch cancellation window: 0.
 - Fill ledger mismatch versus exchange-reported fills: 0 USDC after rounding tolerance.
 
-### Gate 4: Small-Capital Live
+### Gate 4: Small-Capital Live Trial
 
 Acceptance criteria:
 
-- Capital is limited to a small explicitly approved wallet balance.
-- Initial live config uses conservative limits, for example `MAX_ORDER_USDC=25` and drawdown kill threshold no higher than 10%.
-- Operator can activate kill switch and verify all orders cancel.
-- Daily reconciliation matches exchange statements.
-- Alerts page or alert channel is monitored by an accountable operator.
+- Wallet balances are capped to an explicitly approved amount.
+- Live config uses conservative limits, for example `MAX_ORDER_USDC=25` and drawdown kill threshold no higher than 10%.
+- Operator kill switch is tested before trading.
+- Daily reconciliation matches venue statements.
+- Alerts are monitored by an accountable operator.
 
 Required metrics:
 
 - Daily reconciliation mismatch: 0 unresolved mismatches.
-- Unhedged arbitrage residual exposure after arb completion: 0 above dust threshold.
 - Unexpected overnight positions: 0.
-- Critical alert delivery time: p95 below 60 seconds.
-- Manual kill-switch time to no open orders: p95 below 30 seconds, measured in sandbox first.
+- Critical alert delivery p95 below 60 seconds.
+- Manual kill-switch time to no open orders p95 below 30 seconds, proven in sandbox first.
 
-## Production Readiness Scorecard
+## Readiness Scorecard
 
 | Area | Score | Rationale |
 | --- | --- | --- |
-| Runtime correctness | 1/5 | Backtest and live/paper startup have blocking failures. |
-| Risk controls | 3/5 | Good design primitives exist, but unverified under current runtime failures. |
-| Execution correctness | 2/5 | Protocol shape exists; real exchange behavior and fill parsing require sandbox proof. |
-| Observability | 3/5 | Metrics and health endpoints exist; deployment reachability and alerting gaps remain. |
-| Operations | 3/5 | Runbooks exist but some assumptions conflict with implementation. |
-| Security | 2/5 | Secret-file support exists; production defaults and management auth need hardening. |
-| CI/CD | 2/5 | Basic CI exists; missing smoke, Docker, sandbox, and release-gate jobs. |
+| Runtime correctness | 2/5 | Compile and short backtest pass, but release backtest and partial tests fail. |
+| Risk controls | 3/5 | Strong design, but live kill-switch wiring and metrics consistency need fixes. |
+| Market data | 1/5 | WebSocket run loops likely close streams immediately. |
+| Execution correctness | 2/5 | Lifecycle engine exists, but venue fill accounting and sandbox proof are missing. |
+| Observability | 3/5 | Routes and metrics exist; live kill-switch config and full service verification are incomplete. |
+| Operations | 3/5 | Runbooks exist, but must be revalidated after current blockers. |
+| Security | 2/5 | Secret handling exists; live defaults and operator endpoint controls need hardening. |
+| CI/CD | 3/5 | CI has lint, type, tests, backtest smoke, and Docker build; it needs failing-regression coverage for current blockers. |
 
-Overall: 2/5, not ready for production.
+Overall: 2/5. Not production-ready.
 
-## Minimum Path to Production
+## Minimum Path To Production
 
-1. Fix P0 runtime blockers listed in `docs/BUGS_AND_IMPROVEMENTS.md`.
-2. Restore a reproducible developer environment and CI dependency set.
-3. Add backtest and paper-mode startup smoke tests to CI.
-4. Align runbooks with actual paper/live behavior.
-5. Complete sandbox exchange validation for both venues.
-6. Harden Docker/observability/security defaults.
-7. Run a 24-hour paper soak and a full kill-switch/reconciliation drill.
-8. Only then consider a small-capital live trial.
+1. Fix all P0 tasks in `docs/BUGS_AND_IMPROVEMENTS.md`.
+2. Make local and CI test execution reproducible.
+3. Restore deterministic non-zero backtest metrics.
+4. Prove paper-mode data ingestion with durable WebSocket connections.
+5. Wire live kill-switch endpoints to order cancellation.
+6. Validate venue clients and fill accounting against sandbox or recorded fixtures.
+7. Run a 24-hour paper soak.
+8. Run a kill-switch and restart-reconciliation drill.
+9. Only then consider a small-capital live trial.

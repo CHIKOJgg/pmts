@@ -27,10 +27,12 @@ class OpinionWSAdapter:
         market_ids: List[str],
         ws_url: str = "wss://openapi.opinion.trade/openapi/ws",
         taker_fee_bps: int = 25,
+        market_id_map: Optional[dict[str, str]] = None,
     ) -> None:
         self._market_ids = market_ids
         self._ws_url = ws_url
         self._taker_fee_bps = taker_fee_bps
+        self._market_id_map = market_id_map or {}
         self._callback: Optional[_SnapshotCB] = None
 
         self._running = False
@@ -82,15 +84,14 @@ class OpinionWSAdapter:
                     await ws.send(json.dumps(sub_msg))
                     logger.info("Subscribed to Opinion tickers: %s", params)
 
-                    subscribe_task = asyncio.create_task(self._process_messages(ws))
+                    await self._process_messages(ws)
             except Exception as exc:
                 if not self._running:
                     break
                 logger.error("Opinion WS error: %s. Retrying in %.1fs...", exc, retry_delay)
                 API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type=type(exc).__name__).inc()
 
-                # Cancel subscribe task if it exists
-                if subscribe_task:
+                if subscribe_task and not subscribe_task.done():
                     try:
                         subscribe_task.cancel()
                         await subscribe_task
@@ -121,7 +122,8 @@ class OpinionWSAdapter:
             if not stream.startswith("ticker@"):
                 return
 
-            market_id = stream.split("@")[1]
+            venue_market_id = stream.split("@")[1]
+            market_id = self._market_id_map.get(venue_market_id, venue_market_id)
             ticker = data.get("data", {})
 
             yes_bid = float(ticker.get("b", 0.0))

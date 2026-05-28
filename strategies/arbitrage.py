@@ -86,7 +86,7 @@ class ArbConfig:
     arb_expiry_ms: int = ARB_EXPIRY_MS
     pm_fee_bps: int = 20  # Polymarket taker fee (configurable)
     op_fee_bps: int = 25  # Opinion Markets taker fee (configurable)
-    min_days_to_resolution: float = 1.0  # reject markets with fewer days to resolution
+    min_days_to_resolution: float = 0.0  # hard reject floor; sizing is reduced below 1 day
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -155,7 +155,7 @@ class OrderTracker:
 
         return self._build(
             final_status,
-            self.cumulative_filled_usdc,
+            fill_usdc,
             self.weighted_avg_price,
             self.fill_ratio,
             self.slippage_bps,

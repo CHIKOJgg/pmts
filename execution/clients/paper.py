@@ -48,6 +48,7 @@ class PaperTradingClient:
         self._latency_ms_range = latency_ms_range
         self._rng = random.Random(seed)
         self._orders: Dict[str, Dict[str, Any]] = {}
+        self._reported_status_fills: Dict[str, float] = {}
         self._session_active = False
 
         logger.info(
@@ -100,6 +101,7 @@ class PaperTradingClient:
             self._orders[exchange_order_id]["fills"].append(fill)
             self._orders[exchange_order_id]["filled_usdc"] = fill_usdc
             self._orders[exchange_order_id]["status"] = "matched"
+            self._reported_status_fills[exchange_order_id] = fill_usdc
 
             logger.info(
                 "PAPER FILL: %s filled $%.2f/%.2f (%.0f%%)",
@@ -141,13 +143,26 @@ class PaperTradingClient:
             )
 
         status = order["status"]
+        filled_usdc = order["filled_usdc"]
+        reported = self._reported_status_fills.get(exchange_order_id, 0.0)
+        delta = max(0.0, filled_usdc - reported)
+        new_fills = []
+        if delta > 0:
+            fill_price = order["submission"].limit_price
+            new_fills.append(OrderStatusFill(
+                fill_usdc=delta,
+                fill_price=fill_price,
+                fill_tokens=delta / fill_price if fill_price > 0 else 0.0,
+                ts=int(time.time() * 1000),
+            ))
+            self._reported_status_fills[exchange_order_id] = filled_usdc
         return OrderStatusResponse(
             exchange_order_id=exchange_order_id,
             is_live=status == "live",
             is_cancelled=status == "cancelled",
             is_filled=status == "matched",
             remaining_usdc=order["submission"].size_usdc - order["filled_usdc"],
-            new_fills=[],
+            new_fills=new_fills,
         )
 
     async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
@@ -176,6 +191,7 @@ class PaperTradingClient:
     async def close(self) -> None:
         """Clear simulated state."""
         self._orders.clear()
+        self._reported_status_fills.clear()
         self._session_active = False
 
     def _compute_fill_probability(

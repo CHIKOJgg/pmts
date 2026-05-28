@@ -11,6 +11,7 @@ from typing import Callable, Coroutine, Deque, Dict, List, Optional, Tuple
 
 from data.models import FeatureVector, MarketSnapshot
 from portfolio.manager import PortfolioManager
+from src.clock import Clock, LiveClock
 from src.types import Platform
 
 logger = logging.getLogger(__name__)
@@ -38,8 +39,9 @@ class FeatureEngine:
     Returns None until at least MIN_VOL_TICKS entries exist in the 30s window.
     """
 
-    def __init__(self, portfolio: PortfolioManager) -> None:
+    def __init__(self, portfolio: PortfolioManager, clock: Optional[Clock] = None) -> None:
         self._portfolio = portfolio
+        self._clock = clock or LiveClock()
         self._callbacks: List[_FV_CB] = []
         self._snaps: Dict[Tuple[str, Platform], MarketSnapshot] = {}
         self._history: Dict[str, Deque[Tuple[int, float]]] = {}
@@ -50,7 +52,7 @@ class FeatureEngine:
 
     async def on_snapshot(self, snap: MarketSnapshot) -> None:
         """Process one incoming snapshot and emit a FeatureVector if possible."""
-        now = _now_ms()
+        now = self._clock.now_ms()
         key = (snap.market_id, snap.platform)
         self._snaps[key] = snap
 

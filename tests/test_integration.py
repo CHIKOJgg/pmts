@@ -1757,5 +1757,92 @@ class TestConfigSmoke(unittest.TestCase):
         self.assertIsNotNone(logging.getLogger("pmts"))
 
 
+class TestProductionFixes(unittest.TestCase):
+
+    def test_backtest_seed_is_stable(self):
+        from main import _stable_seed
+        self.assertEqual(_stable_seed("BTC-Q4"), _stable_seed("BTC-Q4"))
+        self.assertNotEqual(_stable_seed("BTC-Q4"), _stable_seed("ETH-Q1"))
+
+    def test_settings_validation_profiles(self):
+        from config.settings import Settings
+
+        s = Settings()
+        s.trading.markets = ["BTC-Q4"]
+        s.trading.kill_switch_token = "paper-token-12345"
+        s.trading.enable_trading = True
+
+        # Paper mode uses PaperTradingClient and must not require live secrets.
+        s.validate(mode="paper")
+
+        with self.assertRaises(ValueError):
+            s.validate(mode="live")
+
+    def test_market_registry_validation(self):
+        from config.settings import Settings
+
+        s = Settings()
+        s.trading.markets = ["BTC-Q4"]
+        s.trading.kill_switch_token = "paper-token-12345"
+        s.trading.market_registry = {
+            "BTC-Q4": {
+                "polymarket": "pm-token-id",
+                "opinion": "op-market-id",
+            }
+        }
+        s.validate(mode="paper")
+
+        s.trading.market_registry = {"BTC-Q4": {"polymarket": "pm-token-id"}}
+        with self.assertRaises(ValueError):
+            s.validate(mode="paper")
+
+    def test_sqlite_fill_ledger_allows_multiple_partial_fills(self):
+        from portfolio.storage import SqlitePortfolioStore
+        from portfolio.manager import FillRecord, _Position
+        from src.types import Platform
+
+        store = SqlitePortfolioStore(":memory:")
+        position = _Position("M1", Platform.POLYMARKET)
+        fill1 = FillRecord("P1", "O1", "M1", Platform.POLYMARKET, "buy_yes", 25.0, 0.50, 1000)
+        fill2 = FillRecord("P1", "O1", "M1", Platform.POLYMARKET, "buy_yes", 25.0, 0.50, 1001)
+
+        store.save_fill_and_position(fill1, position, 975.0, 1000.0, 0.0)
+        store.save_fill_and_position(fill2, position, 950.0, 1000.0, 0.0)
+
+        count = store._conn.execute("SELECT COUNT(*) FROM fills WHERE proposal_id = ?", ("P1",)).fetchone()[0]
+        self.assertEqual(count, 2)
+        store.close()
+
+    def test_paper_status_fills_are_delta_based(self):
+        from execution.clients.paper import PaperTradingClient
+        from execution.models import OrderSubmission
+        from src.types import Platform, Side, OrderType, StrategyId
+
+        client = PaperTradingClient(fill_probability=0.0, seed=1)
+        sub = OrderSubmission(
+            order_id="ord-1",
+            proposal_id="prop-1",
+            market_id="M1",
+            platform=Platform.POLYMARKET,
+            side=Side.BUY_YES,
+            size_usdc=100.0,
+            limit_price=0.50,
+            order_type=OrderType.LIMIT,
+            strategy_id=StrategyId.MM,
+            expiry_ms=now_ms() + 30_000,
+            token_quantity=200.0,
+            submitted_at=now_ms(),
+        )
+
+        placed = run(client.place_order(sub, 0.50))
+        client._orders[placed.exchange_order_id]["filled_usdc"] = 40.0
+        first = run(client.get_order_status(placed.exchange_order_id, "M1"))
+        second = run(client.get_order_status(placed.exchange_order_id, "M1"))
+
+        self.assertEqual(len(first.new_fills), 1)
+        self.assertEqual(first.new_fills[0].fill_usdc, 40.0)
+        self.assertEqual(second.new_fills, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

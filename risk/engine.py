@@ -1,12 +1,12 @@
-"""
-risk/engine.py — Synchronous pre-trade risk gate.
+﻿"""
+risk/engine.py вЂ” Synchronous pre-trade risk gate.
 
 Critical design: capital is reserved SYNCHRONOUSLY inside evaluate() before
 it returns. This eliminates the TOCTOU window where two proposals could both
 pass the capital check before either reservation is recorded.
 
 Strategy: RiskEngine keeps its own _reservations dict. available capital =
-cash − sum(reservations.values()). No async, no race.
+cash в€’ sum(reservations.values()). No async, no race.
 """
 
 from __future__ import annotations
@@ -35,9 +35,9 @@ from src.types import (
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RiskDecision — immutable result
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# RiskDecision вЂ” immutable result
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 
 class RiskDecision:
@@ -81,9 +81,9 @@ class RiskDecision:
         return self.verdict == RiskVerdict.REJECTED
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 # RiskEngine
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 
 class RiskEngine:
@@ -93,8 +93,8 @@ class RiskEngine:
     12 checks in priority order:
       1  Kill switch active
       2  Connector DOWN
-      3  MTM drawdown ≥ kill threshold (also activates kill switch)
-      4  MTM drawdown ≥ warn threshold (log only, no block)
+      3  MTM drawdown в‰Ґ kill threshold (also activates kill switch)
+      4  MTM drawdown в‰Ґ warn threshold (log only, no block)
       5  Duplicate proposal_id
       6  Order size < minimum
       7  Order size > maximum
@@ -125,13 +125,13 @@ class RiskEngine:
         self._alert_router = alert_router
         self._clock = clock or LiveClock()
 
-        # Synchronous reservation table — the ONLY source of truth for committed capital
+        # Synchronous reservation table вЂ” the ONLY source of truth for committed capital
         # proposal_id -> (amount, platform, strategy_id)
         self._reservations: Dict[str, Tuple[float, Platform, StrategyId]] = {}
         self._arb_allocated: float = 0.0
         self._mm_allocated: float = 0.0
 
-        # Lock for atomic capital reservation operations (sync — all calls from event loop)
+        # Lock for atomic capital reservation operations (sync вЂ” all calls from event loop)
         import threading
 
         self._capital_lock: threading.Lock = threading.Lock()
@@ -163,7 +163,7 @@ class RiskEngine:
         self.total_rejected: int = 0
         self.rejections_by_reason: Dict[str, int] = {r.value: 0 for r in RejectReason}
 
-    # ── Primary interface ─────────────────────────────────────────────────────
+    # в”Ђв”Ђ Primary interface в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     def evaluate(self, proposal: OrderProposal) -> RiskDecision:
         """
@@ -213,11 +213,11 @@ class RiskEngine:
                 now,
             )
 
-        # ── 1. Kill switch ────────────────────────────────────────────────────
+        # в”Ђв”Ђ 1. Kill switch в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if self._kill_switch.is_active:
             return reject(RejectReason.KILL_SWITCH_ACTIVE, "Kill switch active")
 
-        # ── 2. Connector DOWN ─────────────────────────────────────────────────
+        # в”Ђв”Ђ 2. Connector DOWN в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if self._connector_status is not None:
             cs = self._connector_status(proposal.platform)
             if cs == ConnectorStatus.DOWN:
@@ -226,19 +226,19 @@ class RiskEngine:
                     f"{proposal.platform.value} connector is DOWN",
                 )
 
-        # ── 3. Drawdown kill ──────────────────────────────────────────────────
+        # в”Ђв”Ђ 3. Drawdown kill в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if drawdown >= self._limits.drawdown_kill_pct:
             self._fire_kill_switch(drawdown, peak, equity, proposal.proposal_id)
             return reject(
                 RejectReason.DRAWDOWN_LIMIT,
-                f"Drawdown {drawdown:.2%} ≥ kill {self._limits.drawdown_kill_pct:.2%}",
+                f"Drawdown {drawdown:.2%} в‰Ґ kill {self._limits.drawdown_kill_pct:.2%}",
             )
 
-        # ── 4. Drawdown warn ──────────────────────────────────────────────────
+        # в”Ђв”Ђ 4. Drawdown warn в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if drawdown >= self._limits.drawdown_warn_pct:
             logger.warning("DRAWDOWN WARNING: %.2f%%", drawdown * 100)
 
-        # ── 5. Duplicate ──────────────────────────────────────────────────────
+        # в”Ђв”Ђ 5. Duplicate в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if self._is_duplicate(proposal.proposal_id, now):
             return reject(
                 RejectReason.DUPLICATE_PROPOSAL,
@@ -246,21 +246,21 @@ class RiskEngine:
             )
         self._record_seen(proposal.proposal_id, now)
 
-        # ── 6. Order size min ─────────────────────────────────────────────────
+        # в”Ђв”Ђ 6. Order size min в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if proposal.size_usdc < self._limits.min_single_order_usdc:
             return reject(
                 RejectReason.ORDER_TOO_SMALL,
                 f"${proposal.size_usdc:.2f} < min ${self._limits.min_single_order_usdc:.2f}",
             )
 
-        # ── 7. Order size max ─────────────────────────────────────────────────
+        # в”Ђв”Ђ 7. Order size max в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if proposal.size_usdc > self._limits.max_single_order_usdc:
             return reject(
                 RejectReason.ORDER_TOO_LARGE,
                 f"${proposal.size_usdc:.2f} > max ${self._limits.max_single_order_usdc:.2f}",
             )
 
-        # ── 8. Liquidity buffer ───────────────────────────────────────────────
+        # в”Ђв”Ђ 8. Liquidity buffer в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         min_free = equity * self._limits.min_free_capital_pct
         if available - proposal.size_usdc < min_free:
             return reject(
@@ -268,14 +268,14 @@ class RiskEngine:
                 f"Would breach liquidity buffer (min_free=${min_free:.2f})",
             )
 
-        # ── 9. Capital available ──────────────────────────────────────────────
+        # в”Ђв”Ђ 9. Capital available в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if proposal.size_usdc > available:
             return reject(
                 RejectReason.INSUFFICIENT_CAPITAL,
                 f"Need ${proposal.size_usdc:.2f}, available ${available:.2f}",
             )
 
-        # ── 10. Market exposure ───────────────────────────────────────────────
+        # в”Ђв”Ђ 10. Market exposure в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         market_exp = self._portfolio.get_market_exposure_usdc(proposal.market_id)
         max_market = min(
             self._limits.max_market_exposure_usdc,
@@ -287,7 +287,7 @@ class RiskEngine:
                 f"Market exposure ${market_exp + proposal.size_usdc:.2f} > ${max_market:.2f}",
             )
 
-        # ── 11. Strategy cap ──────────────────────────────────────────────────
+        # в”Ђв”Ђ 11. Strategy cap в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         strat_used = self._arb_allocated if proposal.strategy_id == StrategyId.ARB else self._mm_allocated
         strat_cap = (
             self._limits.max_arb_capital_usdc
@@ -300,16 +300,16 @@ class RiskEngine:
                 f"{proposal.strategy_id.value} cap ${strat_cap:.2f} exceeded",
             )
 
-        # ── 12. Projected delta ───────────────────────────────────────────────
+        # в”Ђв”Ђ 12. Projected delta в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         current_delta = self._portfolio.get_delta(proposal.market_id).net_delta
         projected_delta = _projected_delta(current_delta, proposal)
         if abs(projected_delta) > self._limits.max_net_delta_per_market:
             return reject(
                 RejectReason.DELTA_LIMIT,
-                f"Projected |Δ|={abs(projected_delta):.2f} > limit {self._limits.max_net_delta_per_market:.2f}",
+                f"Projected |О”|={abs(projected_delta):.2f} > limit {self._limits.max_net_delta_per_market:.2f}",
             )
 
-        # ── APPROVED — reserve capital atomically under lock ──────────────────
+        # в”Ђв”Ђ APPROVED вЂ” reserve capital atomically under lock в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         with self._capital_lock:
             self._reservations[proposal.proposal_id] = (proposal.size_usdc, proposal.platform, proposal.strategy_id)
             if proposal.strategy_id == StrategyId.ARB:
@@ -337,7 +337,7 @@ class RiskEngine:
             decided_at=now,
         )
 
-    # ── Terminal notification ─────────────────────────────────────────────────
+    # в”Ђв”Ђ Terminal notification в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     async def notify_terminal(self, proposal_id: str, platform: Platform, amount_usdc: float) -> None:
         """Release reservation when order reaches terminal state."""
@@ -382,7 +382,7 @@ class RiskEngine:
         # will be handled by the notify_terminal calls triggered by reconcile failures.
         self.reconciliation_complete = True
 
-    # ── Kill switch control ───────────────────────────────────────────────────
+    # в”Ђв”Ђ Kill switch control в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     def manual_activate(self, reason: str = "operator_manual") -> None:
         mtm = self._portfolio.get_portfolio_mtm()
@@ -419,6 +419,10 @@ class RiskEngine:
         self._on_kill_switch_reset = callback
 
     @property
+    def reserved_capital(self) -> float:
+        return sum(r[0] for r in self._reservations.values())
+
+    @property
     def kill_switch_active(self) -> bool:
         return self._kill_switch.is_active
 
@@ -433,7 +437,7 @@ class RiskEngine:
         self._limits = new_limits
         logger.info("RiskEngine limits reloaded")
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+    # в”Ђв”Ђ Internal helpers в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
     def _reject(
         self,
@@ -450,7 +454,7 @@ class RiskEngine:
         self.total_rejected += 1
         self.rejections_by_reason[reason.value] = self.rejections_by_reason.get(reason.value, 0) + 1
         logger.warning(
-            "REJECT proposal=%s strategy=%s market=%s $%.2f reason=%s — %s",
+            "REJECT proposal=%s strategy=%s market=%s $%.2f reason=%s - %s",
             proposal.proposal_id[:8],
             proposal.strategy_id.value,
             proposal.market_id,
@@ -497,7 +501,7 @@ class RiskEngine:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            logger.error("No running event loop — cannot send kill-switch alerts")
+            logger.error("No running event loop вЂ” cannot send kill-switch alerts")
             return
 
         if self._alert_router:
@@ -547,3 +551,4 @@ def _projected_delta(current_delta: float, proposal: OrderProposal) -> float:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+

@@ -62,7 +62,7 @@ class Orchestrator:
         self._clock = clock or LiveClock()
 
         # Feature engine sits between MDP and StrategyEngine
-        self._fe = FeatureEngine(portfolio=portfolio)
+        self._fe = FeatureEngine(portfolio=portfolio, clock=self._clock)
 
         # ── Wire the pipeline ─────────────────────────────────────────────────
         self._mdp.add_callback(self._fe.on_snapshot)

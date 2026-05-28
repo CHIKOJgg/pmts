@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 def _e(k: str, d: str = "") -> str:
@@ -92,7 +93,8 @@ class OpinionConfig:
 class TradingConfig:
     initial_cash_usdc: float = field(default_factory=lambda: _ef("INITIAL_CASH_USDC", 10_000.0))
     markets: List[str] = field(default_factory=list)
-    enable_trading: bool = field(default_factory=lambda: _eb("ENABLE_TRADING", True))
+    market_registry: Dict[str, dict] = field(default_factory=dict)
+    enable_trading: bool = field(default_factory=lambda: _eb("ENABLE_TRADING", False))
     enable_arb: bool = field(default_factory=lambda: _eb("ENABLE_ARB", True))
     enable_mm: bool = field(default_factory=lambda: _eb("ENABLE_MM", True))
     enable_hedge: bool = field(default_factory=lambda: _eb("ENABLE_HEDGE", True))
@@ -152,13 +154,23 @@ class Settings:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
 
-    def validate(self) -> None:
+    def validate(self, mode: str = "live") -> None:
         """Strict validation of all configuration before startup."""
         errors = []
 
         # 1. Trading Config
-        if not self.trading.markets:
+        if mode in ("paper", "live") and not self.trading.markets:
             errors.append("MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).")
+        if self.trading.market_registry:
+            for market_id in self.trading.markets:
+                mapping = self.trading.market_registry.get(market_id)
+                if not mapping:
+                    errors.append(f"MARKET_REGISTRY_JSON missing mapping for logical market {market_id}")
+                    continue
+                if not mapping.get("polymarket"):
+                    errors.append(f"MARKET_REGISTRY_JSON[{market_id}].polymarket is required")
+                if not mapping.get("opinion"):
+                    errors.append(f"MARKET_REGISTRY_JSON[{market_id}].opinion is required")
 
         if self.trading.initial_cash_usdc <= 0:
             errors.append(f"INITIAL_CASH_USDC must be > 0 (current: {self.trading.initial_cash_usdc})")
@@ -194,15 +206,19 @@ class Settings:
         if self.trading.max_net_delta < 0:
             errors.append(f"MAX_NET_DELTA must be >= 0 (current: {self.trading.max_net_delta})")
 
-        if self.trading.kill_switch_token in ("CHANGE-ME", "CHANGE-ME-USE-A-SECURE-RANDOM-STRING", ""):
+        if mode in ("paper", "live") and self.trading.kill_switch_token in (
+            "CHANGE-ME",
+            "CHANGE-ME-USE-A-SECURE-RANDOM-STRING",
+            "",
+        ):
             errors.append("KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.")
 
         # Validate kill switch token security
-        if self.trading.kill_switch_token and len(self.trading.kill_switch_token) < 16:
+        if mode in ("paper", "live") and self.trading.kill_switch_token and len(self.trading.kill_switch_token) < 16:
             errors.append(
                 f"KILL_SWITCH_TOKEN must be at least 16 characters (current: {len(self.trading.kill_switch_token)})"
             )
-        elif self.trading.kill_switch_token:
+        elif mode in ("paper", "live") and self.trading.kill_switch_token:
             has_upper = bool(re.search(r"[A-Z]", self.trading.kill_switch_token))
             has_lower = bool(re.search(r"[a-z]", self.trading.kill_switch_token))
             has_digit = bool(re.search(r"\d", self.trading.kill_switch_token))
@@ -214,7 +230,7 @@ class Settings:
                 )
 
         # 2. Polymarket Keys
-        if self.trading.enable_trading:
+        if mode == "live" and self.trading.enable_trading:
             if not self.polymarket.api_key:
                 errors.append("PM_API_KEY is missing")
             if not self.polymarket.api_secret:
@@ -264,6 +280,16 @@ def get_settings() -> Settings:
         markets_env = os.environ.get("MARKETS", "")
         if markets_env:
             s.trading.markets = [m.strip() for m in markets_env.split(",") if m.strip()]
+        registry_env = os.environ.get("MARKET_REGISTRY_JSON", "").strip()
+        if registry_env:
+            try:
+                s.trading.market_registry = json.loads(registry_env)
+                if not isinstance(s.trading.market_registry, dict):
+                    raise ValueError("MARKET_REGISTRY_JSON must be a JSON object")
+                if not s.trading.markets:
+                    s.trading.markets = list(s.trading.market_registry.keys())
+            except Exception as exc:
+                raise ValueError(f"Invalid MARKET_REGISTRY_JSON: {exc}") from exc
         _settings = s
     return _settings
 

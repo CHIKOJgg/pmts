@@ -32,7 +32,7 @@ class KillSwitch:
     """
     Atomic circuit breaker.
     Activation is synchronous (no I/O).
-    Reset requires the correct confirmation token — prevents automation.
+    Reset requires the correct confirmation token - prevents automation.
     """
 
     def __init__(self, confirmation_token: str) -> None:
@@ -61,7 +61,7 @@ class KillSwitch:
         self._resets: list[ResetRecord] = []
 
     def sync_state(self, active: bool) -> None:
-        """Update active status silently (no logs/audit) — used for startup restoration."""
+        """Update active status silently (no logs/audit) - used for startup restoration."""
         self._active = active
 
     @property

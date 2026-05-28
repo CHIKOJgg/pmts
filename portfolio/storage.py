@@ -1,5 +1,6 @@
 import sqlite3
 import logging
+import hashlib
 from typing import Dict, Tuple, Optional, List
 
 
@@ -67,7 +68,8 @@ class SqlitePortfolioStore:
             ''')
             self._conn.execute('''
                 CREATE TABLE IF NOT EXISTS fills (
-                    proposal_id TEXT PRIMARY KEY,
+                    fill_id TEXT PRIMARY KEY,
+                    proposal_id TEXT,
                     order_id TEXT,
                     market_id TEXT,
                     platform TEXT,
@@ -77,6 +79,7 @@ class SqlitePortfolioStore:
                     ts INTEGER
                 )
             ''')
+            self._migrate_fills_schema()
             self._conn.execute('''
                 CREATE TABLE IF NOT EXISTS state (
                     key TEXT PRIMARY KEY,
@@ -109,12 +112,14 @@ class SqlitePortfolioStore:
     ) -> None:
         """Atomic write of a fill and resulting position/state updates."""
         try:
+            fill_id = self._fill_id(fill)
             with self._conn:
                 self._conn.execute('''
                     INSERT OR IGNORE INTO fills
-                    (proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (fill_id, proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
+                    fill_id,
                     fill.proposal_id, fill.order_id, fill.market_id, fill.platform.value,
                     fill.side, fill.filled_usdc, fill.fill_price, fill.ts
                 ))
@@ -284,3 +289,64 @@ class SqlitePortfolioStore:
         for row in cur.execute("SELECT proposal_id, exchange_order_id, submission_json FROM active_orders"):
             orders.append((row["proposal_id"], row["exchange_order_id"], row["submission_json"]))
         return orders
+
+    def _migrate_fills_schema(self) -> None:
+        """Upgrade old fills table where proposal_id was the primary key."""
+        cur = self._conn.cursor()
+        cols = [row["name"] for row in cur.execute("PRAGMA table_info(fills)")]
+        if "fill_id" in cols:
+            return
+
+        with self._conn:
+            self._conn.execute("ALTER TABLE fills RENAME TO fills_old")
+            self._conn.execute('''
+                CREATE TABLE fills (
+                    fill_id TEXT PRIMARY KEY,
+                    proposal_id TEXT,
+                    order_id TEXT,
+                    market_id TEXT,
+                    platform TEXT,
+                    side TEXT,
+                    filled_usdc REAL,
+                    fill_price REAL,
+                    ts INTEGER
+                )
+            ''')
+            for row in self._conn.execute("SELECT * FROM fills_old"):
+                fill_id = self._fill_id_from_parts(
+                    row["proposal_id"],
+                    row["order_id"],
+                    row["ts"],
+                    row["filled_usdc"],
+                    row["fill_price"],
+                )
+                self._conn.execute('''
+                    INSERT OR IGNORE INTO fills
+                    (fill_id, proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    fill_id,
+                    row["proposal_id"],
+                    row["order_id"],
+                    row["market_id"],
+                    row["platform"],
+                    row["side"],
+                    row["filled_usdc"],
+                    row["fill_price"],
+                    row["ts"],
+                ))
+            self._conn.execute("DROP TABLE fills_old")
+
+    def _fill_id(self, fill: FillRecord) -> str:
+        return self._fill_id_from_parts(
+            fill.proposal_id,
+            fill.order_id,
+            fill.ts,
+            fill.filled_usdc,
+            fill.fill_price,
+        )
+
+    @staticmethod
+    def _fill_id_from_parts(proposal_id: str, order_id: str, ts: int, filled_usdc: float, fill_price: float) -> str:
+        raw = f"{proposal_id}|{order_id}|{ts}|{filled_usdc:.8f}|{fill_price:.8f}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
