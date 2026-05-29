@@ -280,7 +280,6 @@ class AISignalEnhancer:
 
     def _set_cache(self, fv: FeatureVector, ctx: SignalContext) -> None:
         # Store the source data timestamp for better invalidation
-        ctx.feature_timestamp_ms = fv.ts
 
         self._cache[fv.market_id] = _CacheEntry(
             context=ctx,

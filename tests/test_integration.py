@@ -1,10 +1,10 @@
-"""
-tests/test_integration.py — Integration and system tests for PMTS.
+﻿"""
+tests/test_integration.py вЂ” Integration and system tests for PMTS.
 
 Three levels of coverage:
-  Integration — two or more real components wired together, no mocks
-  System      — full pipeline end-to-end, seeded for determinism
-  Regression  — specific bug fixes that must never regress
+  Integration вЂ” two or more real components wired together, no mocks
+  System      вЂ” full pipeline end-to-end, seeded for determinism
+  Regression  вЂ” specific bug fixes that must never regress
 
 Run with:
     python -m unittest tests.test_integration -v
@@ -20,10 +20,9 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# -- Helpers --
 
 class _LoopRunner:
-    """Reusable event loop runner for tests that call run() multiple times."""
     def __init__(self):
         self._loop = None
 
@@ -31,10 +30,7 @@ class _LoopRunner:
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
-        try:
-            return self._loop.run_until_complete(coro)
-        finally:
-            pass  # Don't close — reuse across calls
+        return self._loop.run_until_complete(coro)
 
     def close(self):
         if self._loop and not self._loop.is_closed():
@@ -43,29 +39,27 @@ class _LoopRunner:
 
 
 def run(coro):
-    """Run a coroutine synchronously. Reuses event loop if possible."""
-    loop = asyncio.get_event_loop()
-    if loop.is_closed():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(coro)
+        loop = asyncio.get_event_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        return loop.run_until_complete(coro)
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 
-def now_ms() -> int:
+def now_ms():
+    import time
     return int(time.time() * 1000)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# I. MDP → FeatureEngine integration
-# ─────────────────────────────────────────────────────────────────────────────
+# I. MDP в†’ FeatureEngine integration
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestMDPFeatureEngineIntegration(unittest.TestCase):
-    """MarketDataProvider → FeatureEngine pipeline."""
+    """MarketDataProvider в†’ FeatureEngine pipeline."""
 
     def setUp(self):
         from data.market_data_provider import MarketDataProvider
@@ -102,7 +96,7 @@ class TestMDPFeatureEngineIntegration(unittest.TestCase):
         )
 
     def test_single_venue_snap_produces_stale_fv(self):
-        """FV produced after one venue → arb_signal is NaN (other venue missing)."""
+        """FV produced after one venue в†’ arb_signal is NaN (other venue missing)."""
         run(self.pm.start())
         run(self.mdp.ingest(self._snap("pm")))
         self.assertEqual(len(self.fvs), 1)
@@ -110,7 +104,7 @@ class TestMDPFeatureEngineIntegration(unittest.TestCase):
         run(self.pm.stop())
 
     def test_both_venues_produce_valid_fv(self):
-        """FV after both venues → arb_signal is a real number."""
+        """FV after both venues в†’ arb_signal is a real number."""
         run(self.pm.start())
         run(self.mdp.ingest(self._snap("pm", mid=0.42)))
         run(self.mdp.ingest(self._snap("op", mid=0.53)))
@@ -171,12 +165,12 @@ class TestMDPFeatureEngineIntegration(unittest.TestCase):
         run(self.pm.stop())
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 # II. StrategyEngine + RiskEngine integration
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestStrategyRiskIntegration(unittest.TestCase):
-    """StrategyEngine produces proposals → RiskEngine gates them correctly."""
+    """StrategyEngine produces proposals в†’ RiskEngine gates them correctly."""
 
     def setUp(self):
         from portfolio.manager import PortfolioManager
@@ -246,7 +240,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         self._proposal(size=9_000.0)  # > cash ($10k), should fail on liquidity
         self._proposal(size=8_000.0)
         # But with 10% liquidity buffer min_free = 10000 * 0.10 = 1000
-        # p1: 10000 - 9000 = 1000 >= 1000 → borderline pass
+        # p1: 10000 - 9000 = 1000 >= 1000 в†’ borderline pass
         # Let's use amounts that definitively test reservation
         from risk.limits import RiskLimits
         from risk.kill_switch import KillSwitch
@@ -279,7 +273,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         from portfolio.manager import PortfolioManager
 
         # Start with $1000 but fake equity at $700 (30% drawdown > 20% kill)
-        def ps(m, p): return (0.30, 0.30)   # prices at 0.30 → reduce MTM
+        def ps(m, p): return (0.30, 0.30)   # prices at 0.30 в†’ reduce MTM
         pm = PortfolioManager(700.0, ps)
         object.__setattr__(pm, '_peak_equity', 1000.0)  # force peak higher
 
@@ -828,9 +822,9 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         run(pm.stop())
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# III. Portfolio ↔ FillRecord integration
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# III. Portfolio в†” FillRecord integration
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestPortfolioIntegration(unittest.TestCase):
     """Portfolio fill recording, delta, MTM, and P&L computation."""
@@ -873,7 +867,7 @@ class TestPortfolioIntegration(unittest.TestCase):
         run(pm.stop())
 
     def test_buy_yes_and_no_flat_delta(self):
-        """Equal YES and NO positions → delta ≈ 0."""
+        """Equal YES and NO positions в†’ delta в‰€ 0."""
         pm = self._make_pm()
         run(pm.start())
         run(pm.record_fill(self._fill(side="buy_yes", usdc=100.0, price=0.50)))
@@ -952,9 +946,9 @@ class TestPortfolioIntegration(unittest.TestCase):
         run(pm.stop())
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 # IV. ArbitrageStrategy integration with FeatureVector
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestArbitrageStrategyIntegration(unittest.TestCase):
 
@@ -1054,11 +1048,11 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
         )
 
     def test_now_ts_overrides_signal_age(self):
-        """Backtest: passing now_ts=fv.ts means age=0 → always fresh."""
+        """Backtest: passing now_ts=fv.ts means age=0 в†’ always fresh."""
         from strategies.arbitrage import ArbitrageStrategy, ArbConfig
         arb = ArbitrageStrategy(ArbConfig(max_signal_age_ms=100))
         fv = self._fv(age_ms=10_000)  # 10 seconds old in wall-clock
-        # With simulated time = fv.ts, age = 0 → should pass
+        # With simulated time = fv.ts, age = 0 в†’ should pass
         result = arb.evaluate(fv, now_ts=fv.ts)
         self.assertTrue(result.accepted or result.rejection_reason != "signal_age")
 
@@ -1100,9 +1094,9 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
         self.assertAlmostEqual(result_short.final_size_usdc, result_long.final_size_usdc * 0.5, delta=1.0)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 # V. System test: full backtest pipeline
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestBacktestSystem(unittest.TestCase):
     """End-to-end backtest system tests with seeded determinism."""
@@ -1121,7 +1115,7 @@ class TestBacktestSystem(unittest.TestCase):
         self.assertIsNotNone(result)
 
     def test_backtest_produces_positive_pnl(self):
-        """Seeded arb opportunities → net positive P&L (uses main.py config)."""
+        """Seeded arb opportunities в†’ net positive P&L (uses main.py config)."""
         import subprocess
         import sys
         r = subprocess.run(
@@ -1154,7 +1148,7 @@ class TestBacktestSystem(unittest.TestCase):
         self.assertGreater(full + partial, 0, f"Backtest produced no trades:\n{r.stdout}")
 
     def test_backtest_is_deterministic(self):
-        """Same seed → identical P&L."""
+        """Same seed в†’ identical P&L."""
         r1 = self._run_backtest(ticks=600, capital=10_000.0, seed=99)
         r2 = self._run_backtest(ticks=600, capital=10_000.0, seed=99)
         self.assertAlmostEqual(r1.total_pnl, r2.total_pnl, places=4)
@@ -1175,7 +1169,7 @@ class TestBacktestSystem(unittest.TestCase):
             )
 
     def test_fill_prices_in_valid_range(self):
-        """All fill prices must be in (0, 1) — valid probability range."""
+        """All fill prices must be in (0, 1) вЂ” valid probability range."""
         result = self._run_backtest(ticks=2_000, capital=10_000.0)
         for trade in result.trades:
             if trade.fill_price is not None:
@@ -1185,7 +1179,7 @@ class TestBacktestSystem(unittest.TestCase):
                                 f"fill_price {trade.fill_price} >= 1")
 
     def test_slippage_is_bounded(self):
-        """Slippage must not exceed 500 bps — catch price model bugs."""
+        """Slippage must not exceed 500 bps вЂ” catch price model bugs."""
         result = self._run_backtest(ticks=2_000, capital=10_000.0)
         for trade in result.trades:
             if trade.slippage_bps is not None:
@@ -1202,10 +1196,10 @@ class TestBacktestSystem(unittest.TestCase):
             self.assertAlmostEqual(equity, 5_000.0, delta=100.0)
 
     def test_zero_fills_below_min_capital(self):
-        """Capital too small to meet MIN_ORDER_USDC → no proposals."""
+        """Capital too small to meet MIN_ORDER_USDC в†’ no proposals."""
         result = self._run_backtest(ticks=600, capital=50.0)
         # $50 capital with $1 min order and 10% liquidity buffer:
-        # available = 45, needed = min_order = 1 → proposals may fire
+        # available = 45, needed = min_order = 1 в†’ proposals may fire
         # but max_order should also be tiny
         # Main check: no crashes
         self.assertIsNotNone(result)
@@ -1221,20 +1215,20 @@ class TestBacktestSystem(unittest.TestCase):
         self.assertGreater(engine._fe.vectors_emitted, 0)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# VI. Regression tests — specific bugs that must never return
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# VI. Regression tests вЂ” specific bugs that must never return
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestRegressions(unittest.TestCase):
 
     def test_fe_se_callback_is_wired_in_backtest(self):
-        """BUG: BacktestEngine was missing FE→SE callback → 0 proposals."""
+        """BUG: BacktestEngine was missing FEв†’SE callback в†’ 0 proposals."""
         from backtest.engine import BacktestEngine, build_synthetic_tick_stream
         streams = {"BTC-Q4": build_synthetic_tick_stream("BTC-Q4", n_ticks=50, seed=42)}
         engine = BacktestEngine(tick_streams=streams, initial_capital=10_000.0, seed=42)
         # FE must have at least 1 callback (to SE or wrapper)
         self.assertGreater(len(engine._fe._callbacks), 0,
-                           "FeatureEngine has no callbacks — FE→SE wire is missing")
+                           "FeatureEngine has no callbacks вЂ” FEв†’SE wire is missing")
 
     def test_simulated_time_prevents_stale_signal_rejection(self):
         """BUG: Signal age was computed against wall-clock, rejecting all backtest signals."""
@@ -1254,9 +1248,9 @@ class TestRegressions(unittest.TestCase):
             bid_depth_pm=500, ask_depth_pm=500,
             bid_depth_op=500, ask_depth_op=500,
         )
-        # Wall-clock evaluation → stale
+        # Wall-clock evaluation в†’ stale
         result_wall = arb.evaluate(fv)
-        # Simulated-time evaluation → fresh (now_ts == fv.ts → age == 0)
+        # Simulated-time evaluation в†’ fresh (now_ts == fv.ts в†’ age == 0)
         result_sim  = arb.evaluate(fv, now_ts=old_ts + 50)
         self.assertFalse(result_wall.accepted)
         self.assertTrue(result_sim.accepted,
@@ -1293,7 +1287,7 @@ class TestRegressions(unittest.TestCase):
         age = now_ms() - ts0
         self.assertLess(
             age, 5_000 * 10,  # ticks[0] is n_ticks * interval_ms in the past
-            f"Tick ts={ts0} is too old ({age}ms) — default start_ts is wrong"
+            f"Tick ts={ts0} is too old ({age}ms) вЂ” default start_ts is wrong"
         )
 
     def test_order_proposal_arb_requires_leg_fields(self):
@@ -1306,7 +1300,7 @@ class TestRegressions(unittest.TestCase):
                 market_id="X", platform=Platform.POLYMARKET,
                 side=Side.BUY_YES, size_usdc=100.0, limit_price=0.50,
                 order_type=OrderType.LIMIT,
-                strategy_id=StrategyId.ARB,  # ARB without leg_group_id → error
+                strategy_id=StrategyId.ARB,  # ARB without leg_group_id в†’ error
                 expiry_ms=now_ms() + 30_000,
                 source_ts=now_ms(),
             )
@@ -1319,7 +1313,7 @@ class TestRegressions(unittest.TestCase):
         with self.assertRaises(CrossedBookError):
             MarketSnapshot(
                 market_id="X", platform=Platform.POLYMARKET,
-                yes_bid=0.55, yes_ask=0.45,  # bid > ask → crossed
+                yes_bid=0.55, yes_ask=0.45,  # bid > ask в†’ crossed
                 no_bid=0.45, no_ask=0.55,
                 bid_depth_usdc=100, ask_depth_usdc=100,
                 taker_fee_bps=20, ts=now_ms(), received_ts=now_ms(),
@@ -1350,9 +1344,9 @@ class TestRegressions(unittest.TestCase):
             )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# VII. Kill switch system test — full kill → cancel → reset cycle
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# VII. Kill switch system test вЂ” full kill в†’ cancel в†’ reset cycle
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestKillSwitchSystem(unittest.TestCase):
 
@@ -1369,11 +1363,11 @@ class TestKillSwitchSystem(unittest.TestCase):
         self.assertEqual(rec.reason, "test_reason")
         self.assertEqual(ks.activation_count, 1)
 
-        # Wrong token → stays active
+        # Wrong token в†’ stays active
         self.assertFalse(ks.reset("wrong"))
         self.assertTrue(ks.is_active)
 
-        # Correct token → clears
+        # Correct token в†’ clears
         self.assertTrue(ks.reset("secret-token-abc", operator_id="ops-team"))
         self.assertFalse(ks.is_active)
         self.assertEqual(len(ks.audit_trail()["resets"]), 1)
@@ -1392,9 +1386,9 @@ class TestKillSwitchSystem(unittest.TestCase):
             KillSwitch("")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 # VIII. Order tracker integration
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestOrderTrackerIntegration(unittest.TestCase):
 
@@ -1510,9 +1504,9 @@ class TestExecutionEngineRetention(unittest.TestCase):
         self.assertEqual(engine._exch_to_proposal, {})
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 # IX. Config and logging smoke tests
-# ─────────────────────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 class TestProductionValidationScenarios(unittest.TestCase):
 

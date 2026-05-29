@@ -297,7 +297,7 @@ class TestFailureModes(unittest.TestCase):
             tasks = [evaluate_async(i) for i in range(20)]
             return await asyncio.gather(*tasks)
 
-        results = asyncio.get_event_loop().run_until_complete(run_concurrent())
+        results = asyncio.run(run_concurrent())
         approved = [r for r in results if r.approved]
 
         self.assertEqual(len(approved), 10)
@@ -328,7 +328,7 @@ class TestFailureModes(unittest.TestCase):
             tasks = [record_fill_async(i) for i in range(10)]
             await asyncio.gather(*tasks)
 
-        asyncio.get_event_loop().run_until_complete(run_concurrent())
+        asyncio.run(run_concurrent())
 
         delta = pm.get_delta("M1")
         self.assertAlmostEqual(delta.net_delta, 2000.0)
@@ -364,7 +364,7 @@ class TestFailureModes(unittest.TestCase):
             tasks = [submit_async(i) for i in range(5)]
             await asyncio.gather(*tasks)
 
-        asyncio.get_event_loop().run_until_complete(run_concurrent())
+        asyncio.run(run_concurrent())
 
         self.assertEqual(engine._queue.qsize(), 5)
 

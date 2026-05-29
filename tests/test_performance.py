@@ -58,20 +58,23 @@ class TestPortfolioManagerPerformance:
 
         pm = PortfolioManager(initial_cash_usdc=10000.0, price_source=price_fn)
         n = 10_000
+        async def _run_fills():
+            for i in range(n):
+                fill = FillRecord(
+                    proposal_id=f"p-{i}",
+                    order_id=f"o-{i}",
+                    market_id="test-market",
+                    platform=Platform.POLYMARKET,
+                    side=Side.BUY_YES.value,
+                    filled_usdc=10.0,
+                    fill_price=0.50,
+                    ts=i * 1000,
+                )
+                await pm.record_fill(fill)
+                
         start = time.perf_counter()
-        for i in range(n):
-            fill = FillRecord(
-                proposal_id=f"p-{i}",
-                order_id=f"o-{i}",
-                market_id="test-market",
-                platform=Platform.POLYMARKET,
-                side=Side.BUY_YES.value,
-                filled_usdc=10.0,
-                fill_price=0.50,
-                ts=i * 1000,
-            )
-            import asyncio
-            asyncio.get_event_loop().run_until_complete(pm.record_fill(fill))
+        import asyncio
+        asyncio.run(_run_fills())
         elapsed = time.perf_counter() - start
         assert elapsed < 5.0, f"10k fills took {elapsed:.3f}s (limit: 5.0s)"
         print(f"10k fills: {elapsed:.3f}s ({n / elapsed:,.0f} ops/s)")
@@ -81,19 +84,21 @@ class TestPortfolioManagerPerformance:
             return (0.50, 0.50)
 
         pm = PortfolioManager(initial_cash_usdc=10000.0, price_source=price_fn)
-        for i in range(100):
-            fill = FillRecord(
-                proposal_id=f"p-{i}",
-                order_id=f"o-{i}",
-                market_id=f"market-{i % 10}",
-                platform=Platform.POLYMARKET,
-                side=Side.BUY_YES.value,
-                filled_usdc=10.0,
-                fill_price=0.50,
-                ts=i * 1000,
-            )
-            import asyncio
-            asyncio.get_event_loop().run_until_complete(pm.record_fill(fill))
+        async def _run_mtm_fills():
+            for i in range(100):
+                fill = FillRecord(
+                    proposal_id=f"p-{i}",
+                    order_id=f"o-{i}",
+                    market_id=f"market-{i % 10}",
+                    platform=Platform.POLYMARKET,
+                    side=Side.BUY_YES.value,
+                    filled_usdc=10.0,
+                    fill_price=0.50,
+                    ts=i * 1000,
+                )
+                await pm.record_fill(fill)
+        import asyncio
+        asyncio.run(_run_mtm_fills())
 
         start = time.perf_counter()
         for _ in range(1000):
