@@ -1,9 +1,9 @@
 import hashlib
 import hmac
 import json
-import time
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiohttp
 from asyncio_throttle import Throttler
@@ -31,10 +31,11 @@ _EIP712_DOMAIN = {
     "name": "Polymarket CLOB",
     "version": "1",
     "chainId": 137,
-    "verifyingContract": "0x4bFb9717C5521096C6E419519A619717C5521096" 
+    "verifyingContract": "0x4bFb9717C5521096C6E419519A619717C5521096",
 }
 
 _SANDBOX_HOST: str = "https://clob-sandbox.polymarket.com"
+
 
 class PolymarketClient:
     """
@@ -46,28 +47,37 @@ class PolymarketClient:
 
     def __init__(
         self,
-        api_key:             str,
-        secret:              str,
-        passphrase:          str,
-        wallet_private_key:  str,
-        host:                Optional[str] = None,
-        rate_limit_per_s:    int = 10,
-        sandbox:             bool = False,
-        market_id_map:       Optional[Dict[str, str]] = None,
+        api_key: str,
+        secret: str,
+        passphrase: str,
+        wallet_private_key: str,
+        host: Optional[str] = None,
+        rate_limit_per_s: int = 10,
+        sandbox: bool = False,
+        market_id_map: Optional[Dict[str, str]] = None,
     ) -> None:
-        self._api_key            = api_key
-        self._secret             = secret
-        self._passphrase         = passphrase
+        if not api_key or not api_key.strip():
+            raise ValueError("api_key must not be empty")
+        if not secret or not secret.strip():
+            raise ValueError("secret must not be empty")
+        if not passphrase or not passphrase.strip():
+            raise ValueError("passphrase must not be empty")
+        if not wallet_private_key or not wallet_private_key.strip():
+            raise ValueError("wallet_private_key must not be empty")
+
+        self._api_key = api_key
+        self._secret = secret
+        self._passphrase = passphrase
         self._wallet_private_key = wallet_private_key
-        self._sandbox            = sandbox
-        self._market_id_map      = market_id_map or {}
-        
+        self._sandbox = sandbox
+        self._market_id_map = market_id_map or {}
+
         if host:
             self._host = host.rstrip("/")
         else:
             self._host = _SANDBOX_HOST if sandbox else _DEFAULT_HOST
 
-        self._address            = Account.from_key(wallet_private_key).address
+        self._address = Account.from_key(wallet_private_key).address
         self._domain = _EIP712_DOMAIN.copy()
         if sandbox:
             self._domain["chainId"] = 80002
@@ -77,8 +87,7 @@ class PolymarketClient:
         self._last_status_filled_usdc: Dict[str, float] = {}
 
         logger.info(
-            "PolymarketClient initialized: host=%s, address=%s, sandbox=%s",
-            self._host, self._address, self._sandbox
+            "PolymarketClient initialized: host=%s, address=%s, sandbox=%s", self._host, self._address, self._sandbox
         )
 
     @property
@@ -87,10 +96,7 @@ class PolymarketClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                base_url=self._host,
-                headers={"Content-Type": "application/json"}
-            )
+            self._session = aiohttp.ClientSession(base_url=self._host, headers={"Content-Type": "application/json"})
         return self._session
 
     async def close(self) -> None:
@@ -109,17 +115,13 @@ class PolymarketClient:
         """Generate HMAC-SHA256 headers for Polymarket L2 Auth."""
         timestamp = str(int(time.time() * 1000))
         message = timestamp + method.upper() + path + body
-        
-        signature = hmac.new(
-            self._secret.encode("utf-8"),
-            message.encode("utf-8"),
-            hashlib.sha256
-        ).hexdigest()
+
+        signature = hmac.new(self._secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
 
         return {
-            "POLY-API-KEY":    self._api_key,
-            "POLY-SIGNATURE":  signature,
-            "POLY-TIMESTAMP":  timestamp,
+            "POLY-API-KEY": self._api_key,
+            "POLY-SIGNATURE": signature,
+            "POLY-TIMESTAMP": timestamp,
             "POLY-PASSPHRASE": self._passphrase,
         }
 
@@ -136,7 +138,7 @@ class PolymarketClient:
                 {"name": "nonce", "type": "uint256"},
             ]
         }
-        
+
         order_to_sign = {
             "maker": self._address,
             "taker": "0x0000000000000000000000000000000000000000",
@@ -155,13 +157,13 @@ class PolymarketClient:
                     {"name": "chainId", "type": "uint256"},
                     {"name": "verifyingContract", "type": "address"},
                 ],
-                **types
+                **types,
             },
             "domain": self._domain,
             "primaryType": "Order",
             "message": order_to_sign,
         }
-        
+
         signed = Account.sign_typed_data(self._wallet_private_key, full_message=structured_data)
         return signed.signature.hex()
 
@@ -171,8 +173,8 @@ class PolymarketClient:
         """Submit a limit order to Polymarket CLOB."""
         async with self._throttler:
             tokens = int(submission.token_quantity)
-            usdc_amount = int(submission.size_usdc * 1_000_000) 
-            
+            usdc_amount = int(submission.size_usdc * 1_000_000)
+
             if "BUY" in submission.side.value:
                 maker_amount = usdc_amount
                 taker_amount = tokens
@@ -193,19 +195,15 @@ class PolymarketClient:
                 "expiration": str(int(time.time()) + 3600),
                 "nonce": str(final_nonce),
             }
-            
+
             order_params["signature"] = self._sign_order(order_params)
-            
-            payload = {
-                "order": order_params,
-                "owner": self._address,
-                "orderType": "GTC"
-            }
-            
+
+            payload = {"order": order_params, "owner": self._address, "orderType": "GTC"}
+
             body = json.dumps(payload)
             headers = self._get_auth_headers("POST", "/order", body)
             session = await self._get_session()
-            
+
             async with session.post("/order", data=body, headers=headers) as resp:
                 raw = await self._read_json_or_text(resp)
                 if resp.status in _REJECTION_STATUS_CODES:
@@ -214,15 +212,11 @@ class PolymarketClient:
                         platform=self.PLATFORM.value,
                         proposal_id=submission.proposal_id,
                         status_code=resp.status,
-                        exchange_error=str(raw)
+                        exchange_error=str(raw),
                     )
                 resp.raise_for_status()
-                
-                return PlacedOrderResponse(
-                    exchange_order_id=raw.get("orderID", "N/A"),
-                    status="live",
-                    fills=[] 
-                )
+
+                return PlacedOrderResponse(exchange_order_id=raw.get("orderID", "N/A"), status="live", fills=[])
 
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
         """Cancel an order on Polymarket."""
@@ -232,7 +226,7 @@ class PolymarketClient:
             body = json.dumps(payload)
             headers = self._get_auth_headers("DELETE", "/order", body)
             session = await self._get_session()
-            
+
             async with session.delete("/order", data=body, headers=headers) as resp:
                 if resp.status == 404:
                     return True
@@ -242,19 +236,17 @@ class PolymarketClient:
                 resp.raise_for_status()
                 return True
 
-    async def get_order_status(
-        self, exchange_order_id: str, market_id: str
-    ) -> OrderStatusResponse:
+    async def get_order_status(self, exchange_order_id: str, market_id: str) -> OrderStatusResponse:
         """Fetch status and fills for a Polymarket order."""
         async with self._throttler:
             path = f"/order/{exchange_order_id}"
             headers = self._get_auth_headers("GET", path)
             session = await self._get_session()
-            
+
             async with session.get(path, headers=headers) as resp:
                 resp.raise_for_status()
                 raw = await self._read_json_or_text(resp)
-                
+
                 status = raw.get("status", "").lower()
                 is_filled = status == "filled"
                 is_cancelled = status == "canceled"
@@ -275,14 +267,16 @@ class PolymarketClient:
                 if delta > 0:
                     price = float(raw.get("averagePrice", raw.get("price", raw.get("limitPrice", 0.0))) or 0.0)
                     if price > 0:
-                        new_fills.append(OrderStatusFill(
-                            fill_usdc=delta,
-                            fill_price=price,
-                            fill_tokens=delta / price,
-                            ts=int(time.time() * 1000),
-                        ))
+                        new_fills.append(
+                            OrderStatusFill(
+                                fill_usdc=delta,
+                                fill_price=price,
+                                fill_tokens=delta / price,
+                                ts=int(time.time() * 1000),
+                            )
+                        )
                     self._last_status_filled_usdc[exchange_order_id] = cumulative_filled
-                
+
                 return OrderStatusResponse(
                     exchange_order_id=exchange_order_id,
                     is_live=is_live,
@@ -300,26 +294,28 @@ class PolymarketClient:
             path = "/orders"
             if market_ids and len(market_ids) == 1:
                 path += f"?market_id={market_ids[0]}"
-            
+
             headers = self._get_auth_headers("GET", path)
             session = await self._get_session()
-            
+
             async with session.get(path, headers=headers) as resp:
                 resp.raise_for_status()
                 raw = await resp.json()
-                
+
                 # Polymarket returns a list of order objects
                 orders = []
                 for o in raw:
-                    orders.append(OpenOrder(
-                        exchange_order_id=o["orderID"],
-                        market_id=o["tokenId"],
-                        side=o["side"],
-                        size_usdc=float(o.get("originalSize", 0.0)),
-                        filled_usdc=float(o.get("originalSize", 0.0)) - float(o.get("remainingSize", 0.0)),
-                        limit_price=float(o.get("price", 0.0)),
-                        ts=int(time.time() * 1000) # Fallback ts
-                        ))
+                    orders.append(
+                        OpenOrder(
+                            exchange_order_id=o["orderID"],
+                            market_id=o["tokenId"],
+                            side=o["side"],
+                            size_usdc=float(o.get("originalSize", 0.0)),
+                            filled_usdc=float(o.get("originalSize", 0.0)) - float(o.get("remainingSize", 0.0)),
+                            limit_price=float(o.get("price", 0.0)),
+                            ts=int(time.time() * 1000),  # Fallback ts
+                        )
+                    )
                 return orders
 
     async def get_market(self, condition_id: str) -> Optional[Dict[str, Any]]:
@@ -362,8 +358,9 @@ class PolymarketClient:
             logger.error("Polymarket connectivity error: %s", exc)
             return False
 
+
 if TYPE_CHECKING:
-    _: ExchangeClient = PolymarketClient(api_key="", secret="", passphrase="", wallet_private_key="0x" + "0"*64)
+    _: ExchangeClient = PolymarketClient(api_key="", secret="", passphrase="", wallet_private_key="0x" + "0" * 64)
 
 
 def _assert_protocol_compat() -> None:

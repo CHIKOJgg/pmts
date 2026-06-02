@@ -1,7 +1,7 @@
+import logging
 import time
 import uuid
-import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiohttp
 from asyncio_throttle import Throttler
@@ -34,6 +34,7 @@ _EIP712_DOMAIN = {
 
 _SANDBOX_HOST: str = "https://openapi-testnet.opinion.trade/openapi"
 
+
 class OpinionClient:
     """
     Opinion Markets REST API Client implementation.
@@ -44,30 +45,34 @@ class OpinionClient:
 
     def __init__(
         self,
-        api_key:             str,
-        wallet_private_key:  str,
-        ctf_exchange_addr:   str,
-        host:                Optional[str] = None,
-        rate_limit_per_s:    int = 5,
-        sandbox:             bool = False,
-        market_id_map:       Optional[Dict[str, str]] = None,
+        api_key: str,
+        wallet_private_key: str,
+        ctf_exchange_addr: str,
+        host: Optional[str] = None,
+        rate_limit_per_s: int = 5,
+        sandbox: bool = False,
+        market_id_map: Optional[Dict[str, str]] = None,
     ) -> None:
+        if not api_key or not api_key.strip():
+            raise ValueError("api_key must not be empty")
+        if not wallet_private_key or not wallet_private_key.strip():
+            raise ValueError("wallet_private_key must not be empty")
         if not ctf_exchange_addr or ctf_exchange_addr == "0x0000000000000000000000000000000000000000":
             raise ValueError("ctf_exchange_addr must be a valid non-zero contract address")
 
-        self._api_key            = api_key
+        self._api_key = api_key
         self._wallet_private_key = wallet_private_key
-        self._sandbox            = sandbox
-        self._market_id_map      = market_id_map or {}
-        
+        self._sandbox = sandbox
+        self._market_id_map = market_id_map or {}
+
         if host:
             self._host = host.rstrip("/")
         else:
             self._host = _SANDBOX_HOST if sandbox else _DEFAULT_HOST
 
-        self._address            = Account.from_key(wallet_private_key).address
-        self._ctf_exchange_addr  = ctf_exchange_addr
-        
+        self._address = Account.from_key(wallet_private_key).address
+        self._ctf_exchange_addr = ctf_exchange_addr
+
         # Update chainId for EIP-712 if sandbox (BSC Testnet is 97)
         self._domain = _EIP712_DOMAIN.copy()
         if sandbox:
@@ -78,8 +83,7 @@ class OpinionClient:
         self._last_status_filled_usdc: Dict[str, float] = {}
 
         logger.info(
-            "OpinionClient initialized: host=%s, address=%s, sandbox=%s",
-            self._host, self._address, self._sandbox
+            "OpinionClient initialized: host=%s, address=%s, sandbox=%s", self._host, self._address, self._sandbox
         )
 
     def _parse_market_id(self, market_id: str) -> int:
@@ -97,11 +101,7 @@ class OpinionClient:
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
-                base_url=self._host,
-                headers={
-                    "Content-Type": "application/json",
-                    "apikey": self._api_key
-                }
+                base_url=self._host, headers={"Content-Type": "application/json", "apikey": self._api_key}
             )
         return self._session
 
@@ -147,13 +147,13 @@ class OpinionClient:
                     {"name": "chainId", "type": "uint256"},
                     {"name": "verifyingContract", "type": "address"},
                 ],
-                **types
+                **types,
             },
             "domain": domain,
             "primaryType": "Order",
             "message": order,
         }
-        
+
         signed = Account.sign_typed_data(self._wallet_private_key, full_message=structured_data)
         return signed.signature.hex()
 
@@ -164,11 +164,11 @@ class OpinionClient:
         async with self._throttler:
             # Side mapping: 0 for Buy, 1 for Sell (Typical Opinion side mapping)
             side_val = 0 if "BUY" in submission.side.value else 1
-            
+
             # Placeholder amounts
             tokens = int(submission.token_quantity)
-            usdc_amount = int(submission.size_usdc * 1_000_000) 
-            
+            usdc_amount = int(submission.size_usdc * 1_000_000)
+
             maker_amount, taker_amount = (usdc_amount, tokens) if side_val == 0 else (tokens, usdc_amount)
 
             # Use provided nonce for idempotency
@@ -189,15 +189,11 @@ class OpinionClient:
                 "side": side_val,
                 "signatureType": 1,
             }
-            
+
             signature = self._sign_order(order_msg)
-            
-            payload = {
-                "marketId": venue_market_id,
-                "order": order_msg,
-                "signature": signature
-            }
-            
+
+            payload = {"marketId": venue_market_id, "order": order_msg, "signature": signature}
+
             session = await self._get_session()
             async with session.post("/order", json=payload) as resp:
                 raw = await self._read_json_or_text(resp)
@@ -207,15 +203,11 @@ class OpinionClient:
                         platform=self.PLATFORM.value,
                         proposal_id=submission.proposal_id,
                         status_code=resp.status,
-                        exchange_error=str(raw)
+                        exchange_error=str(raw),
                     )
                 resp.raise_for_status()
-                
-                return PlacedOrderResponse(
-                    exchange_order_id=raw.get("orderId", "N/A"),
-                    status="live",
-                    fills=[]
-                )
+
+                return PlacedOrderResponse(exchange_order_id=raw.get("orderId", "N/A"), status="live", fills=[])
 
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
         """Cancel an order on Opinion."""
@@ -230,9 +222,7 @@ class OpinionClient:
                 resp.raise_for_status()
                 return True
 
-    async def get_order_status(
-        self, exchange_order_id: str, market_id: str
-    ) -> OrderStatusResponse:
+    async def get_order_status(self, exchange_order_id: str, market_id: str) -> OrderStatusResponse:
         """Fetch status for an Opinion order."""
         async with self._throttler:
             session = await self._get_session()
@@ -240,7 +230,7 @@ class OpinionClient:
             async with session.get(path) as resp:
                 resp.raise_for_status()
                 raw = await self._read_json_or_text(resp)
-                
+
                 status = raw.get("status", "").lower()
                 remaining = float(raw.get("remainingAmount", raw.get("remaining", 0.0)) or 0.0)
                 original = raw.get("originalAmount", raw.get("amount", raw.get("size")))
@@ -258,12 +248,14 @@ class OpinionClient:
                 if delta > 0:
                     price = float(raw.get("averagePrice", raw.get("price", 0.0)) or 0.0)
                     if price > 0:
-                        new_fills.append(OrderStatusFill(
-                            fill_usdc=delta,
-                            fill_price=price,
-                            fill_tokens=delta / price,
-                            ts=int(time.time() * 1000),
-                        ))
+                        new_fills.append(
+                            OrderStatusFill(
+                                fill_usdc=delta,
+                                fill_price=price,
+                                fill_tokens=delta / price,
+                                ts=int(time.time() * 1000),
+                            )
+                        )
                     self._last_status_filled_usdc[exchange_order_id] = cumulative_filled
                 return OrderStatusResponse(
                     exchange_order_id=exchange_order_id,
@@ -282,19 +274,21 @@ class OpinionClient:
             async with session.get(path) as resp:
                 resp.raise_for_status()
                 raw = await resp.json()
-                
+
                 # Assume raw is a list of open orders
                 orders = []
                 for o in raw:
-                    orders.append(OpenOrder(
-                        exchange_order_id=o["orderId"],
-                        market_id=o["marketId"],
-                        side="BUY" if o["side"] == 0 else "SELL",
-                        size_usdc=float(o.get("originalAmount", 0.0)),
-                        filled_usdc=float(o.get("originalAmount", 0.0)) - float(o.get("remainingAmount", 0.0)),
-                        limit_price=float(o.get("price", 0.0)),
-                        ts=int(time.time() * 1000)
-                    ))
+                    orders.append(
+                        OpenOrder(
+                            exchange_order_id=o["orderId"],
+                            market_id=o["marketId"],
+                            side="BUY" if o["side"] == 0 else "SELL",
+                            size_usdc=float(o.get("originalAmount", 0.0)),
+                            filled_usdc=float(o.get("originalAmount", 0.0)) - float(o.get("remainingAmount", 0.0)),
+                            limit_price=float(o.get("price", 0.0)),
+                            ts=int(time.time() * 1000),
+                        )
+                    )
                 return orders
 
     async def verify_connectivity(self) -> bool:
@@ -312,5 +306,6 @@ class OpinionClient:
             logger.error("Opinion connectivity error: %s", exc)
             return False
 
+
 if TYPE_CHECKING:
-    _: ExchangeClient = OpinionClient(api_key="", wallet_private_key="0x" + "0"*64)
+    _: ExchangeClient = OpinionClient(api_key="", wallet_private_key="0x" + "0" * 64)

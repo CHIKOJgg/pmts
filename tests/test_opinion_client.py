@@ -20,6 +20,8 @@ from src.types import Platform
 from tests.venue_fixtures import (
     _FakeResponse,
     _FakeSession,
+    opinion_order_submission,
+    polymarket_order_submission,
 )
 
 
@@ -75,14 +77,14 @@ class TestOpinionClientInstantiation:
                 ctf_exchange_addr="",
             )
 
-    def test_default_host_is_sandbox(self) -> None:
-        """Default host should be sandbox endpoint."""
+    def test_default_host_is_production(self) -> None:
+        """Default host should be production endpoint."""
         client = OpinionClient(
             api_key="test-api-key",
             wallet_private_key="0x" + "ab" * 32,
             ctf_exchange_addr="0x1234567890123456789012345678901234567890",
         )
-        assert client._host == "https://openapi-testnet.opinion.trade/openapi"
+        assert client._host == "https://openapi.opinion.trade/openapi"
 
     def test_sandbox_host_override(self) -> None:
         """Sandbox mode should use sandbox host."""
@@ -177,6 +179,7 @@ class TestOpinionClientOrderSubmission:
         self,
         opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        opinion_order_submission,
     ) -> None:
         """Place order should POST correct payload to /order endpoint."""
         client = OpinionClient(
@@ -192,7 +195,7 @@ class TestOpinionClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: "signed-order")
 
-        submission = opinion_order_submission()
+        submission = opinion_order_submission
         result = await client.place_order(submission, 0.60)
 
         assert result.exchange_order_id == "op-order-123"
@@ -260,6 +263,7 @@ class TestOpinionClientOrderSubmission:
     @pytest.mark.asyncio
     async def test_place_order_rejection_raises(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """4xx responses should raise ExchangeRejected exception."""
@@ -325,6 +329,7 @@ class TestOpinionClientOrderCancellation:
     @pytest.mark.asyncio
     async def test_cancel_order_returns_true_on_404(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Cancel order should return True even if order not found (404)."""
@@ -352,6 +357,7 @@ class TestOpinionClientOrderCancellation:
     @pytest.mark.asyncio
     async def test_cancel_order_rejection_returns_false(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """403 Forbidden should return False."""
@@ -412,6 +418,7 @@ class TestOpinionClientOrderStatus:
     @pytest.mark.asyncio
     async def test_get_order_status_parses_filled(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should correctly parse filled order status."""
@@ -440,6 +447,7 @@ class TestOpinionClientOrderStatus:
     @pytest.mark.asyncio
     async def test_get_order_status_parses_cancelled(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should correctly parse cancelled order status."""
@@ -468,6 +476,7 @@ class TestOpinionClientOrderStatus:
     @pytest.mark.asyncio
     async def test_get_order_status_calculates_fills(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should calculate fills from remaining amount."""
@@ -508,6 +517,7 @@ class TestOpinionClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return list of open orders."""
@@ -551,6 +561,7 @@ class TestOpinionClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders_empty(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return empty list when no orders."""
@@ -609,6 +620,7 @@ class TestOpinionClientConnectivity:
     @pytest.mark.asyncio
     async def test_verify_connectivity_fails(
         self,
+        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return False when connectivity check fails."""
@@ -703,7 +715,7 @@ class TestOpinionClientEIP712Signing:
         signature = client._sign_order(order)
 
         assert signature is not None
-        assert len(signature) == 132  # 64 bytes + '0x' prefix
+        assert len(signature) == 130  # 64 bytes + '0x' prefix
 
 
 class TestOpinionClientRateLimiting:

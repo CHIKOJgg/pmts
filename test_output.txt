@@ -1,0 +1,1058 @@
+Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+
+  Traceback (most recent call last):
+    File "<frozen site>", line 195, in addpackage
+    File "<string>", line 1, in <module>
+  ModuleNotFoundError: No module named '_distutils_hack'
+
+Remainder of file ignored
+Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+
+  Traceback (most recent call last):
+    File "<frozen site>", line 195, in addpackage
+    File "<string>", line 1, in <module>
+  ModuleNotFoundError: No module named '_distutils_hack'
+
+Remainder of file ignored
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage
+configfile: pyproject.toml
+plugins: asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 306 items
+
+tests/test_ai_enhancer.py::TestAISignalEnhancerDisabled::test_returns_heuristic_when_disabled PASSED [  0%]
+tests/test_ai_enhancer.py::TestAISignalEnhancerDisabled::test_returns_heuristic_when_heuristic_only PASSED [  0%]
+tests/test_ai_enhancer.py::TestAISignalEnhancerCache::test_cache_hit PASSED [  0%]
+tests/test_ai_enhancer.py::TestAISignalEnhancerErrors::test_disables_after_max_errors PASSED [  1%]
+tests/test_ai_enhancer.py::TestAISignalEnhancerErrors::test_re_enable_clears_disabled PASSED [  1%]
+tests/test_ai_enhancer.py::TestParseResponse::test_parses_valid_response PASSED [  1%]
+tests/test_ai_enhancer.py::TestParseResponse::test_clamps_confidence PASSED [  2%]
+tests/test_ai_enhancer.py::TestParseResponse::test_clamps_arb_quality PASSED [  2%]
+tests/test_ai_enhancer.py::TestParseResponse::test_handles_unknown_regime PASSED [  2%]
+tests/test_ai_enhancer.py::TestParseResponse::test_strips_markdown_code_blocks PASSED [  3%]
+tests/test_ai_enhancer.py::TestParseResponse::test_raises_on_invalid_json PASSED [  3%]
+tests/test_ai_enhancer.py::TestAIEnhancerConfig::test_default_config PASSED [  3%]
+tests/test_ai_enhancer.py::TestAIEnhancerConfig::test_custom_config PASSED [  4%]
+tests/test_core.py::TestTypes::test_execution_result_fill_price_required PASSED [  4%]
+tests/test_core.py::TestTypes::test_feature_vector_nan_requires_stale PASSED [  4%]
+tests/test_core.py::TestTypes::test_feature_vector_valid_with_stale PASSED [  5%]
+tests/test_core.py::TestTypes::test_market_snapshot_properties PASSED    [  5%]
+tests/test_core.py::TestTypes::test_market_snapshot_validation PASSED    [  5%]
+tests/test_core.py::TestTypes::test_order_proposal_arb_requires_group PASSED [  6%]
+tests/test_core.py::TestTypes::test_order_proposal_validation PASSED     [  6%]
+tests/test_core.py::TestTypes::test_order_status_terminal PASSED         [  6%]
+tests/test_core.py::TestTypes::test_side_is_buy PASSED                   [  7%]
+tests/test_core.py::TestTypes::test_side_is_yes PASSED                   [  7%]
+tests/test_core.py::TestOrderTracker::test_cancellation_terminal PASSED  [  7%]
+tests/test_core.py::TestOrderTracker::test_cannot_fill_after_terminal PASSED [  8%]
+tests/test_core.py::TestOrderTracker::test_dust_tolerance PASSED         [  8%]
+tests/test_core.py::TestOrderTracker::test_expiry PASSED                 [  8%]
+tests/test_core.py::TestOrderTracker::test_full_fill PASSED              [  9%]
+tests/test_core.py::TestOrderTracker::test_initial_state PASSED          [  9%]
+tests/test_core.py::TestOrderTracker::test_partial_fill PASSED           [  9%]
+tests/test_core.py::TestOrderTracker::test_record_submission PASSED      [ 10%]
+tests/test_core.py::TestOrderTracker::test_rejection_terminal PASSED     [ 10%]
+tests/test_core.py::TestOrderTracker::test_slippage_bps PASSED           [ 10%]
+tests/test_core.py::TestOrderTracker::test_weighted_avg_price PASSED     [ 11%]
+tests/test_core.py::TestPortfolioManager::test_capital_reservation_sync PASSED [ 11%]
+tests/test_core.py::TestPortfolioManager::test_delta_neutral_after_yes_and_no FAILED [ 11%]
+tests/test_core.py::TestPortfolioManager::test_get_delta_after_buy FAILED [ 12%]
+tests/test_core.py::TestPortfolioManager::test_initial_equity PASSED     [ 12%]
+tests/test_core.py::TestPortfolioManager::test_negative_holdings_raises FAILED [ 12%]
+tests/test_core.py::TestPortfolioManager::test_record_fill_decreases_cash FAILED [ 13%]
+tests/test_core.py::TestKillSwitch::test_activate PASSED                 [ 13%]
+tests/test_core.py::TestKillSwitch::test_audit_trail PASSED              [ 13%]
+tests/test_core.py::TestKillSwitch::test_correct_token_resets PASSED     [ 14%]
+tests/test_core.py::TestKillSwitch::test_empty_token_raises PASSED       [ 14%]
+tests/test_core.py::TestKillSwitch::test_initially_inactive PASSED       [ 14%]
+tests/test_core.py::TestKillSwitch::test_wrong_token_blocked PASSED      [ 15%]
+tests/test_core.py::TestRiskEngine::test_approve_valid_proposal PASSED   [ 15%]
+tests/test_core.py::TestRiskEngine::test_buy_no_reduces_delta_allowed FAILED [ 15%]
+tests/test_core.py::TestRiskEngine::test_drawdown_triggers_kill_switch PASSED [ 16%]
+tests/test_core.py::TestRiskEngine::test_get_portfolio_mtm_synchronous_lock PASSED [ 16%]
+tests/test_core.py::TestRiskEngine::test_kill_switch_blocks PASSED       [ 16%]
+tests/test_core.py::TestRiskEngine::test_projected_delta_check FAILED    [ 16%]
+tests/test_core.py::TestRiskEngine::test_reservation_immediate PASSED    [ 17%]
+tests/test_core.py::TestRiskEngine::test_terminal_release FAILED         [ 17%]
+tests/test_core.py::TestRiskEngine::test_toctou_fix_second_proposal_sees_reservation PASSED [ 17%]
+tests/test_core.py::TestSignalContext::test_confidence_out_of_range PASSED [ 18%]
+tests/test_core.py::TestSignalContext::test_is_urgent_hedge PASSED       [ 18%]
+tests/test_core.py::TestSignalContext::test_total_blackout_prevented PASSED [ 18%]
+tests/test_core.py::TestSignalContext::test_valid_construction PASSED    [ 19%]
+tests/test_core.py::TestHeuristic::test_hedge_urgency_max_on_large_delta PASSED [ 19%]
+tests/test_core.py::TestHeuristic::test_hedge_urgency_zero_when_flat PASSED [ 19%]
+tests/test_core.py::TestHeuristic::test_never_raises_on_edge_cases PASSED [ 20%]
+tests/test_core.py::TestHeuristic::test_returns_signal_context PASSED    [ 20%]
+tests/test_core.py::TestHeuristic::test_suppress_mm_near_resolution PASSED [ 20%]
+tests/test_core.py::TestHeuristic::test_thin_regime_on_wide_spread PASSED [ 21%]
+tests/test_core.py::TestHeuristic::test_zero_arb_quality_on_nan PASSED   [ 21%]
+tests/test_core.py::TestArbitrageStrategy::test_arb_cross_venue PASSED   [ 21%]
+tests/test_core.py::TestArbitrageStrategy::test_cost_estimate_sqrt_scaling PASSED [ 22%]
+tests/test_core.py::TestArbitrageStrategy::test_nan_signal_rejected PASSED [ 22%]
+tests/test_core.py::TestArbitrageStrategy::test_net_edge_less_than_gross PASSED [ 22%]
+tests/test_core.py::TestArbitrageStrategy::test_no_edge_rejected PASSED  [ 23%]
+tests/test_core.py::TestArbitrageStrategy::test_profitable_arb_accepted PASSED [ 23%]
+tests/test_core.py::TestArbitrageStrategy::test_thin_book_rejected PASSED [ 23%]
+tests/test_core.py::TestArbitrageStrategy::test_wide_spread_rejected PASSED [ 24%]
+tests/test_core.py::TestFillSimulator::test_expiry_cancels_order PASSED  [ 24%]
+tests/test_core.py::TestFillSimulator::test_fill_when_crossing PASSED    [ 24%]
+tests/test_core.py::TestFillSimulator::test_no_fill_when_not_crossing PASSED [ 25%]
+tests/test_core.py::TestFillSimulator::test_partial_when_order_exceeds_depth PASSED [ 25%]
+tests/test_core.py::TestFillSimulator::test_slippage_computed PASSED     [ 25%]
+tests/test_core.py::TestFillSimulator::test_wrong_market_no_fill PASSED  [ 26%]
+tests/test_core.py::TestBacktestEngine::test_approved_plus_rejected_equals_total PASSED [ 26%]
+tests/test_core.py::TestBacktestEngine::test_equity_series_starts_at_capital PASSED [ 26%]
+tests/test_core.py::TestBacktestEngine::test_fill_rate_in_bounds PASSED  [ 27%]
+tests/test_core.py::TestBacktestEngine::test_multi_market PASSED         [ 27%]
+tests/test_core.py::TestBacktestEngine::test_runs_to_completion PASSED   [ 27%]
+tests/test_core.py::TestBacktestEngine::test_summary_contains_expected_fields PASSED [ 28%]
+tests/test_core.py::TestBacktestEngine::test_zero_pnl_when_all_rejected PASSED [ 28%]
+tests/test_core.py::TestSyntheticData::test_correct_length PASSED        [ 28%]
+tests/test_core.py::TestSyntheticData::test_prices_in_bounds PASSED      [ 29%]
+tests/test_core.py::TestSyntheticData::test_reproducible_with_seed PASSED [ 29%]
+tests/test_core.py::TestSyntheticData::test_timestamps_monotonic PASSED  [ 29%]
+tests/test_core.py::TestStatistics::test_max_drawdown_computes_correctly PASSED [ 30%]
+tests/test_core.py::TestStatistics::test_max_drawdown_zero_no_series PASSED [ 30%]
+tests/test_core.py::TestStatistics::test_sharpe_computes PASSED          [ 30%]
+tests/test_core.py::TestStatistics::test_sharpe_none_for_short_series PASSED [ 31%]
+tests/test_failures.py::TestFailureModes::test_duplicate_fills PASSED    [ 31%]
+tests/test_failures.py::TestFailureModes::test_exchange_5xx_retries PASSED [ 31%]
+tests/test_failures.py::TestFailureModes::test_execution_engine_concurrent_submit PASSED [ 32%]
+tests/test_failures.py::TestFailureModes::test_kill_switch_during_arb PASSED [ 32%]
+tests/test_failures.py::TestFailureModes::test_partial_fill_expiry PASSED [ 32%]
+tests/test_failures.py::TestFailureModes::test_portfolio_manager_concurrent_record_fill PASSED [ 33%]
+tests/test_failures.py::TestFailureModes::test_risk_engine_concurrency PASSED [ 33%]
+tests/test_failures.py::TestFailureModes::test_risk_engine_concurrent_async_evaluate PASSED [ 33%]
+tests/test_failures.py::TestFailureModes::test_service_restart_recovery PASSED [ 33%]
+tests/test_failures.py::TestFailureModes::test_sqlite_write_failure PASSED [ 34%]
+tests/test_failures.py::TestFailureModes::test_ws_reconnect PASSED       [ 34%]
+tests/test_integration.py::TestMDPFeatureEngineIntegration::test_arb_signal_value PASSED [ 34%]
+tests/test_integration.py::TestMDPFeatureEngineIntegration::test_both_venues_produce_valid_fv PASSED [ 35%]
+tests/test_integration.py::TestMDPFeatureEngineIntegration::test_dedup_suppresses_identical_snaps PASSED [ 35%]
+tests/test_integration.py::TestMDPFeatureEngineIntegration::test_single_venue_snap_produces_stale_fv PASSED [ 35%]
+tests/test_integration.py::TestMDPFeatureEngineIntegration::test_stale_snap_marked PASSED [ 36%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_ai_confidence_tightens_arb_threshold PASSED [ 36%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_ai_suppress_mm_blocks_quotes PASSED [ 36%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_capital_reservation_is_synchronous PASSED [ 37%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_dedup_blocks_repeated_proposal_id PASSED [ 37%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_kill_switch_fires_at_drawdown PASSED [ 37%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_kill_switch_reset PASSED [ 38%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_kill_switch_reset_flushes_strategy_state PASSED [ 38%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_mm_disabled_near_expiry PASSED [ 38%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_mm_requires_both_venues_fresh PASSED [ 39%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_orchestrator_kill_switch_reset_clears_bookkeeping PASSED [ 39%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_order_too_large_rejected PASSED [ 39%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_order_too_small_rejected PASSED [ 40%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_stale_mtm_blocks_new_proposals PASSED [ 40%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_terminal_notification_releases_reservation PASSED [ 40%]
+tests/test_integration.py::TestStrategyRiskIntegration::test_valid_proposal_approved PASSED [ 41%]
+tests/test_integration.py::TestPortfolioIntegration::test_available_capital_respects_reservations PASSED [ 41%]
+tests/test_integration.py::TestPortfolioIntegration::test_buy_no_decreases_delta PASSED [ 41%]
+tests/test_integration.py::TestPortfolioIntegration::test_buy_yes_and_no_flat_delta PASSED [ 42%]
+tests/test_integration.py::TestPortfolioIntegration::test_buy_yes_increases_delta PASSED [ 42%]
+tests/test_integration.py::TestPortfolioIntegration::test_cash_decreases_on_buy PASSED [ 42%]
+tests/test_integration.py::TestPortfolioIntegration::test_cash_increases_on_sell PASSED [ 43%]
+tests/test_integration.py::TestPortfolioIntegration::test_mtm_with_price_change PASSED [ 43%]
+tests/test_integration.py::TestPortfolioIntegration::test_sell_exceeds_holdings_raises PASSED [ 43%]
+tests/test_integration.py::TestPortfolioIntegration::test_wavg_cost_basis PASSED [ 44%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_good_arb_accepted PASSED [ 44%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_leg_proposals_have_correct_leg_numbers PASSED [ 44%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_legs_share_group_id PASSED [ 45%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_nan_signal_rejected PASSED [ 45%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_near_expiry_halves_arb_size PASSED [ 45%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_now_ts_overrides_signal_age PASSED [ 46%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_stale_signal_rejected PASSED [ 46%]
+tests/test_integration.py::TestArbitrageStrategyIntegration::test_thin_book_rejected PASSED [ 46%]
+tests/test_integration.py::TestBacktestSystem::test_backtest_cli_emits_trades PASSED [ 47%]
+tests/test_integration.py::TestBacktestSystem::test_backtest_is_deterministic PASSED [ 47%]
+tests/test_integration.py::TestBacktestSystem::test_backtest_produces_positive_pnl PASSED [ 47%]
+tests/test_integration.py::TestBacktestSystem::test_backtest_runs_without_error PASSED [ 48%]
+tests/test_integration.py::TestBacktestSystem::test_drawdown_never_exceeds_kill_threshold PASSED [ 48%]
+tests/test_integration.py::TestBacktestSystem::test_equity_series_starts_at_capital PASSED [ 48%]
+tests/test_integration.py::TestBacktestSystem::test_fill_prices_in_valid_range PASSED [ 49%]
+tests/test_integration.py::TestBacktestSystem::test_no_order_exceeds_max_order_usdc PASSED [ 49%]
+tests/test_integration.py::TestBacktestSystem::test_slippage_is_bounded PASSED [ 49%]
+tests/test_integration.py::TestBacktestSystem::test_three_markets_active PASSED [ 50%]
+tests/test_integration.py::TestBacktestSystem::test_zero_fills_below_min_capital PASSED [ 50%]
+tests/test_integration.py::TestRegressions::test_build_synthetic_stream_default_ts_is_current PASSED [ 50%]
+tests/test_integration.py::TestRegressions::test_crossed_book_raises PASSED [ 50%]
+tests/test_integration.py::TestRegressions::test_fe_se_callback_is_wired_in_backtest PASSED [ 51%]
+tests/test_integration.py::TestRegressions::test_featurevector_staleness_check_is_relative PASSED [ 51%]
+tests/test_integration.py::TestRegressions::test_order_proposal_arb_requires_leg_fields PASSED [ 51%]
+tests/test_integration.py::TestRegressions::test_risk_limits_validation PASSED [ 52%]
+tests/test_integration.py::TestRegressions::test_signal_context_prevents_total_blackout PASSED [ 52%]
+tests/test_integration.py::TestRegressions::test_simulated_time_prevents_stale_signal_rejection PASSED [ 52%]
+tests/test_integration.py::TestRegressions::test_slippage_uses_round_not_truncate PASSED [ 53%]
+tests/test_integration.py::TestKillSwitchSystem::test_empty_token_rejected_at_construction PASSED [ 53%]
+tests/test_integration.py::TestKillSwitchSystem::test_full_cycle PASSED  [ 53%]
+tests/test_integration.py::TestKillSwitchSystem::test_multiple_activations_tracked PASSED [ 54%]
+tests/test_integration.py::TestOrderTrackerIntegration::test_cancellation_is_terminal PASSED [ 54%]
+tests/test_integration.py::TestOrderTrackerIntegration::test_expiry_check PASSED [ 54%]
+tests/test_integration.py::TestOrderTrackerIntegration::test_fresh_tracker_is_awaiting PASSED [ 55%]
+tests/test_integration.py::TestOrderTrackerIntegration::test_submission_to_partial_to_filled PASSED [ 55%]
+tests/test_integration.py::TestOrderTrackerIntegration::test_wavg_price_computation PASSED [ 55%]
+tests/test_integration.py::TestExecutionEngineRetention::test_prunes_old_terminal_trackers PASSED [ 56%]
+tests/test_integration.py::TestProductionValidationScenarios::test_kill_switch_cancels_all_open_orders PASSED [ 56%]
+tests/test_integration.py::TestProductionValidationScenarios::test_market_resolution_auto_removes_market PASSED [ 56%]
+tests/test_integration.py::TestProductionValidationScenarios::test_normal_arb_leg2_submits_after_leg1_fill PASSED [ 57%]
+tests/test_integration.py::TestProductionValidationScenarios::test_partial_leg1_below_min_ratio_skips_leg2 PASSED [ 57%]
+tests/test_integration.py::TestConfigSmoke::test_logging_setup_runs PASSED [ 57%]
+tests/test_integration.py::TestConfigSmoke::test_settings_load_defaults PASSED [ 58%]
+tests/test_integration.py::TestProductionFixes::test_backtest_seed_is_stable PASSED [ 58%]
+tests/test_integration.py::TestProductionFixes::test_market_registry_validation PASSED [ 58%]
+tests/test_integration.py::TestProductionFixes::test_paper_status_fills_are_delta_based PASSED [ 59%]
+tests/test_integration.py::TestProductionFixes::test_settings_validation_profiles PASSED [ 59%]
+tests/test_integration.py::TestProductionFixes::test_sqlite_fill_ledger_allows_multiple_partial_fills PASSED [ 59%]
+tests/test_kill_switch_persistence.py::test_kill_switch_persistence_activation PASSED [ 60%]
+tests/test_kill_switch_persistence.py::test_kill_switch_persistence_reset PASSED [ 60%]
+tests/test_kill_switch_persistence.py::test_kill_switch_recovery_on_startup PASSED [ 60%]
+tests/test_kill_switch_persistence.py::test_kill_switch_no_recovery_if_not_activated PASSED [ 61%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_creates_without_error PASSED [ 61%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_platform_is_opinion PASSED [ 61%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_satisfies_exchange_client_protocol PASSED [ 62%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_rejects_null_contract_address PASSED [ 62%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_rejects_empty_contract_address PASSED [ 62%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_default_host_is_sandbox FAILED [ 63%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_sandbox_host_override PASSED [ 63%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_custom_host_override PASSED [ 63%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_domain_chain_id_mainnet PASSED [ 64%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_domain_chain_id_sandbox PASSED [ 64%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_rejects_empty_api_key FAILED [ 64%]
+tests/test_opinion_client.py::TestOpinionClientInstantiation::test_rejects_empty_wallet_key PASSED [ 65%]
+tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_posts_payload FAILED [ 65%]
+tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_includes_signature FAILED [ 65%]
+tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_with_custom_nonce FAILED [ 66%]
+tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_rejection_raises FAILED [ 66%]
+tests/test_opinion_client.py::TestOpinionClientOrderCancellation::test_cancel_order_returns_true PASSED [ 66%]
+tests/test_opinion_client.py::TestOpinionClientOrderCancellation::test_cancel_order_returns_true_on_404 PASSED [ 66%]
+tests/test_opinion_client.py::TestOpinionClientOrderCancellation::test_cancel_order_rejection_returns_false PASSED [ 67%]
+tests/test_opinion_client.py::TestOpinionClientOrderStatus::test_get_order_status_parses_open FAILED [ 67%]
+tests/test_opinion_client.py::TestOpinionClientOrderStatus::test_get_order_status_parses_filled PASSED [ 67%]
+tests/test_opinion_client.py::TestOpinionClientOrderStatus::test_get_order_status_parses_cancelled PASSED [ 68%]
+tests/test_opinion_client.py::TestOpinionClientOrderStatus::test_get_order_status_calculates_fills PASSED [ 68%]
+tests/test_opinion_client.py::TestOpinionClientOpenOrders::test_get_open_orders ERROR [ 68%]
+tests/test_opinion_client.py::TestOpinionClientOpenOrders::test_get_open_orders_empty ERROR [ 69%]
+tests/test_opinion_client.py::TestOpinionClientConnectivity::test_verify_connectivity PASSED [ 69%]
+tests/test_opinion_client.py::TestOpinionClientConnectivity::test_verify_connectivity_fails PASSED [ 69%]
+tests/test_opinion_client.py::TestOpinionClientWindowsCompatibility::test_temp_dir_windows_path_handling ERROR [ 70%]
+tests/test_opinion_client.py::TestOpinionClientWindowsCompatibility::test_normalize_path_windows_forward_slashes ERROR [ 70%]
+tests/test_opinion_client.py::TestOpinionClientWindowsCompatibility::test_dict_comparison_windows_safe ERROR [ 70%]
+tests/test_opinion_client.py::TestOpinionClientEIP712Signing::test_sign_order_creates_signature PASSED [ 71%]
+tests/test_opinion_client.py::TestOpinionClientRateLimiting::test_throttler_initialized PASSED [ 71%]
+tests/test_opinion_client.py::TestOpinionClientSessionManagement::test_session_creation PASSED [ 71%]
+tests/test_opinion_client.py::TestOpinionClientSessionManagement::test_session_reuse PASSED [ 72%]
+tests/test_opinion_client.py::TestOpinionClientSessionManagement::test_close_cleans_up_session PASSED [ 72%]
+tests/test_performance.py::TestPortfolioManagerPerformance::test_10k_fills_under_1s PASSED [ 72%]
+tests/test_performance.py::TestPortfolioManagerPerformance::test_mtm_computation_under_100ms PASSED [ 73%]
+tests/test_performance.py::TestRiskEnginePerformance::test_10k_evaluations_under_1s PASSED [ 73%]
+tests/test_performance.py::TestFeatureVectorPerformance::test_10k_constructions_under_1s PASSED [ 73%]
+tests/test_performance.py::TestSnapshotPerformance::test_10k_constructions_under_1s PASSED [ 74%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_creates_without_error PASSED [ 74%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_platform_is_polymarket PASSED [ 74%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_satisfies_exchange_client_protocol PASSED [ 75%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_protocol_compat_function_does_not_raise PASSED [ 75%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_rejects_empty_api_key FAILED [ 75%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_rejects_empty_secret FAILED [ 76%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_rejects_empty_passphrase FAILED [ 76%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_rejects_empty_wallet_key PASSED [ 76%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_default_host_is_polymarket_clob PASSED [ 77%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_sandbox_host_override PASSED [ 77%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_custom_host_override PASSED [ 77%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_domain_chain_id_mainnet PASSED [ 78%]
+tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_domain_chain_id_sandbox PASSED [ 78%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_posts_payload FAILED [ 78%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_includes_signature FAILED [ 79%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_with_custom_nonce FAILED [ 79%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_rejection_raises FAILED [ 79%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderCancellation::test_cancel_order_returns_true PASSED [ 80%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderCancellation::test_cancel_order_returns_true_on_404 PASSED [ 80%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderCancellation::test_cancel_order_rejection_returns_false PASSED [ 80%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderStatus::test_get_order_status_parses_open FAILED [ 81%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderStatus::test_get_order_status_parses_filled PASSED [ 81%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderStatus::test_get_order_status_parses_cancelled PASSED [ 81%]
+tests/test_polymarket_client.py::TestPolymarketClientOrderStatus::test_get_order_status_calculates_fills PASSED [ 82%]
+tests/test_polymarket_client.py::TestPolymarketClientOpenOrders::test_get_open_orders ERROR [ 82%]
+tests/test_polymarket_client.py::TestPolymarketClientOpenOrders::test_get_open_orders_empty ERROR [ 82%]
+tests/test_polymarket_client.py::TestPolymarketClientConnectivity::test_verify_connectivity PASSED [ 83%]
+tests/test_polymarket_client.py::TestPolymarketClientConnectivity::test_verify_connectivity_fails PASSED [ 83%]
+tests/test_polymarket_client.py::TestPolymarketClientWindowsCompatibility::test_temp_dir_windows_path_handling ERROR [ 83%]
+tests/test_polymarket_client.py::TestPolymarketClientWindowsCompatibility::test_normalize_path_windows_forward_slashes ERROR [ 83%]
+tests/test_polymarket_client.py::TestPolymarketClientWindowsCompatibility::test_dict_comparison_windows_safe ERROR [ 84%]
+tests/test_polymarket_client.py::TestPolymarketClientMarketFunctions::test_get_market_success PASSED [ 84%]
+tests/test_polymarket_client.py::TestPolymarketClientMarketFunctions::test_get_market_not_found PASSED [ 84%]
+tests/test_polymarket_client.py::TestPolymarketClientMarketFunctions::test_redeem_market_success PASSED [ 85%]
+tests/test_polymarket_client.py::TestPolymarketClientRateLimiting::test_throttler_initialized PASSED [ 85%]
+tests/test_polymarket_client.py::TestPolymarketClientSessionManagement::test_session_creation PASSED [ 85%]
+tests/test_polymarket_client.py::TestPolymarketClientSessionManagement::test_session_reuse PASSED [ 86%]
+tests/test_polymarket_client.py::TestPolymarketClientSessionManagement::test_close_cleans_up_session PASSED [ 86%]
+tests/test_polymarket_client.py::TestPolymarketClientEIP712Signing::test_sign_order_creates_signature PASSED [ 86%]
+tests/test_sandbox_validation.py::TestSmokeTests::test_backtest_produces_trades_200_ticks FAILED [ 87%]
+tests/test_sandbox_validation.py::TestSmokeTests::test_backtest_produces_trades_500_ticks FAILED [ 87%]
+tests/test_sandbox_validation.py::TestSmokeTests::test_paper_mode_starts_without_live_credentials FAILED [ 87%]
+tests/test_sandbox_validation.py::TestDeterminism::test_consecutive_runs_identical_200_ticks FAILED [ 88%]
+tests/test_sandbox_validation.py::TestDeterminism::test_multiple_seeds_same_behavior FAILED [ 88%]
+tests/test_sandbox_validation.py::TestKillSwitchScenarios::test_drawdown_kill_at_20_percent PASSED [ 88%]
+tests/test_sandbox_validation.py::TestKillSwitchScenarios::test_drawdown_warning_at_15_percent PASSED [ 89%]
+tests/test_sandbox_validation.py::TestKillSwitchScenarios::test_kill_switch_persists_state PASSED [ 89%]
+tests/test_sandbox_validation.py::TestKillSwitchScenarios::test_kill_switch_reset_requires_token PASSED [ 89%]
+tests/test_sandbox_validation.py::TestPaperToLiveMigration::test_config_transition_validates_live_credentials FAILED [ 90%]
+tests/test_sandbox_validation.py::TestPaperToLiveMigration::test_enable_trading_defaults_to_false PASSED [ 90%]
+tests/test_sandbox_validation.py::test_sandbox_acceptance ERROR          [ 90%]
+tests/test_sandbox_validation.py::test_kill_switch_activation_flow FAILED [ 91%]
+tests/test_sandbox_validation.py::test_backtest_determinism FAILED       [ 91%]
+tests/test_smoke.py::test_backtest_zero_trade_regression FAILED          [ 91%]
+tests/test_smoke.py::test_backtest_produces_positive_pnl FAILED          [ 92%]
+tests/test_smoke.py::test_backtest_determinism FAILED                    [ 92%]
+tests/test_smoke.py::test_paper_mode_validation FAILED                   [ 92%]
+tests/test_smoke.py::test_kill_switch_token_security FAILED              [ 93%]
+tests/test_smoke.py::test_risk_engine_latency FAILED                     [ 93%]
+tests/test_smoke.py::test_config_validation_coverage PASSED              [ 93%]
+tests/test_smoke.py::test_backtest_metrics_extraction FAILED             [ 94%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_platform_is_polymarket PASSED [ 94%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_set_snapshot_callback PASSED [ 94%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_handle_message_parses_order_book PASSED [ 95%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_handle_message_ignores_non_order_book PASSED [ 95%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_handle_message_ignores_empty_book PASSED [ 95%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_handle_message_invalid_json PASSED [ 96%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_start_creates_task PASSED [ 96%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_stop_cancels_task PASSED [ 96%]
+tests/test_ws_adapters.py::TestPolymarketWSAdapter::test_start_idempotent PASSED [ 97%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_platform_is_opinion PASSED [ 97%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_set_snapshot_callback PASSED [ 97%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_handle_message_parses_ticker PASSED [ 98%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_handle_message_ignores_non_ticker PASSED [ 98%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_handle_message_ignores_zero_prices PASSED [ 98%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_handle_message_invalid_json PASSED [ 99%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_start_creates_task PASSED [ 99%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_stop_cancels_task PASSED [ 99%]
+tests/test_ws_adapters.py::TestOpinionWSAdapter::test_start_idempotent PASSED [100%]
+
+=================================== ERRORS ====================================
+_____ ERROR at setup of TestOpinionClientOpenOrders.test_get_open_orders ______
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py, line 514
+      @pytest.mark.asyncio
+      async def test_get_open_orders(
+          self,
+          opinion_fake_session: _FakeSession,
+          monkeypatch: pytest.MonkeyPatch,
+      ) -> None:
+          """Should return list of open orders."""
+          client = OpinionClient(
+              api_key="test-api-key",
+              wallet_private_key="0x" + "ab" * 32,
+              ctf_exchange_addr="0x1234567890123456789012345678901234567890",
+              host="https://placeholder.invalid",
+          )
+
+          class _FakeSessionOrders(_FakeSession):
+              def get(self, path: str, headers=None):
+E       fixture 'opinion_fake_session' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:514
+__ ERROR at setup of TestOpinionClientOpenOrders.test_get_open_orders_empty ___
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py, line 558
+      @pytest.mark.asyncio
+      async def test_get_open_orders_empty(
+          self,
+          opinion_fake_session: _FakeSession,
+          monkeypatch: pytest.MonkeyPatch,
+      ) -> None:
+          """Should return empty list when no orders."""
+          client = OpinionClient(
+              api_key="test-api-key",
+              wallet_private_key="0x" + "ab" * 32,
+              ctf_exchange_addr="0x1234567890123456789012345678901234567890",
+              host="https://placeholder.invalid",
+          )
+
+          class _FakeSessionEmpty(_FakeSession):
+              def get(self, path: str, headers=None):
+E       fixture 'opinion_fake_session' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:558
+_ ERROR at setup of TestOpinionClientWindowsCompatibility.test_temp_dir_windows_path_handling _
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py, line 649
+      @pytest.mark.windows_only
+      def test_temp_dir_windows_path_handling(self, temp_dir_windows_safe: Path) -> None:
+E       fixture 'temp_dir_windows_safe' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:649
+_ ERROR at setup of TestOpinionClientWindowsCompatibility.test_normalize_path_windows_forward_slashes _
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py, line 660
+      @pytest.mark.windows_only
+      def test_normalize_path_windows_forward_slashes(self, temp_dir_windows_safe: Path) -> None:
+E       fixture 'temp_dir_windows_safe' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:660
+_ ERROR at setup of TestOpinionClientWindowsCompatibility.test_dict_comparison_windows_safe _
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py, line 673
+      @pytest.mark.windows_only
+      def test_dict_comparison_windows_safe(self, temp_dir_windows_safe: Path) -> None:
+E       fixture 'temp_dir_windows_safe' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:673
+____ ERROR at setup of TestPolymarketClientOpenOrders.test_get_open_orders ____
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py, line 541
+      @pytest.mark.asyncio
+      async def test_get_open_orders(
+          self,
+          polymarket_fake_session: _FakeSession,
+          monkeypatch: pytest.MonkeyPatch,
+      ) -> None:
+          """Should return list of open orders."""
+          client = PolymarketClient(
+              api_key="test-api-key",
+              secret="test-secret",
+              passphrase="test-passphrase",
+              wallet_private_key="0x" + "ab" * 32,
+              host="https://placeholder.invalid",
+          )
+
+          class _FakeSessionOrders(_FakeSession):
+              def get(self, path: str, headers=None):
+E       fixture 'polymarket_fake_session' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:541
+_ ERROR at setup of TestPolymarketClientOpenOrders.test_get_open_orders_empty _
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py, line 586
+      @pytest.mark.asyncio
+      async def test_get_open_orders_empty(
+          self,
+          polymarket_fake_session: _FakeSession,
+          monkeypatch: pytest.MonkeyPatch,
+      ) -> None:
+          """Should return empty list when no orders."""
+          client = PolymarketClient(
+              api_key="test-api-key",
+              secret="test-secret",
+              passphrase="test-passphrase",
+              wallet_private_key="0x" + "ab" * 32,
+              host="https://placeholder.invalid",
+          )
+
+          class _FakeSessionEmpty(_FakeSession):
+              def get(self, path: str, headers=None):
+E       fixture 'polymarket_fake_session' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:586
+_ ERROR at setup of TestPolymarketClientWindowsCompatibility.test_temp_dir_windows_path_handling _
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py, line 680
+      @pytest.mark.windows_only
+      def test_temp_dir_windows_path_handling(self, temp_dir_windows_safe: Path) -> None:
+E       fixture 'temp_dir_windows_safe' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:680
+_ ERROR at setup of TestPolymarketClientWindowsCompatibility.test_normalize_path_windows_forward_slashes _
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py, line 691
+      @pytest.mark.windows_only
+      def test_normalize_path_windows_forward_slashes(self, temp_dir_windows_safe: Path) -> None:
+E       fixture 'temp_dir_windows_safe' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:691
+_ ERROR at setup of TestPolymarketClientWindowsCompatibility.test_dict_comparison_windows_safe _
+file C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py, line 704
+      @pytest.mark.windows_only
+      def test_dict_comparison_windows_safe(self, temp_dir_windows_safe: Path) -> None:
+E       fixture 'temp_dir_windows_safe' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:704
+__________________ ERROR at setup of test_sandbox_acceptance __________________
+tests\test_sandbox_validation.py:335: in paper_mode_settings
+    settings.validate(mode="paper")
+config\settings.py:270: in validate
+    raise ValueError(f"Configuration validation failed:\n{msg}")
+E   ValueError: Configuration validation failed:
+E     - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+E     - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+E     - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+================================== FAILURES ===================================
+__________ TestPortfolioManager.test_delta_neutral_after_yes_and_no ___________
+tests\test_core.py:475: in test_delta_neutral_after_yes_and_no
+    run_async(pm.stop())
+tests\test_core.py:194: in run_async
+    return asyncio.run(coro)
+           ^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:190: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+portfolio\manager.py:270: in stop
+    await asyncio.gather(*self._tasks, return_exceptions=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\tasks.py:839: in gather
+    fut.add_done_callback(_done_callback)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:762: in call_soon
+    self._check_closed()
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:520: in _check_closed
+    raise RuntimeError('Event loop is closed')
+E   RuntimeError: Event loop is closed
+________________ TestPortfolioManager.test_get_delta_after_buy ________________
+tests\test_core.py:453: in test_get_delta_after_buy
+    run_async(pm.stop())
+tests\test_core.py:194: in run_async
+    return asyncio.run(coro)
+           ^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:190: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+portfolio\manager.py:270: in stop
+    await asyncio.gather(*self._tasks, return_exceptions=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\tasks.py:839: in gather
+    fut.add_done_callback(_done_callback)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:762: in call_soon
+    self._check_closed()
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:520: in _check_closed
+    raise RuntimeError('Event loop is closed')
+E   RuntimeError: Event loop is closed
+_____________ TestPortfolioManager.test_negative_holdings_raises ______________
+tests\test_core.py:509: in test_negative_holdings_raises
+    run_async(pm.stop())
+tests\test_core.py:194: in run_async
+    return asyncio.run(coro)
+           ^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:190: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+portfolio\manager.py:270: in stop
+    await asyncio.gather(*self._tasks, return_exceptions=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\tasks.py:839: in gather
+    fut.add_done_callback(_done_callback)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:762: in call_soon
+    self._check_closed()
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:520: in _check_closed
+    raise RuntimeError('Event loop is closed')
+E   RuntimeError: Event loop is closed
+____________ TestPortfolioManager.test_record_fill_decreases_cash _____________
+tests\test_core.py:431: in test_record_fill_decreases_cash
+    run_async(pm.stop())
+tests\test_core.py:194: in run_async
+    return asyncio.run(coro)
+           ^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:190: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+portfolio\manager.py:270: in stop
+    await asyncio.gather(*self._tasks, return_exceptions=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\tasks.py:839: in gather
+    fut.add_done_callback(_done_callback)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:762: in call_soon
+    self._check_closed()
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:520: in _check_closed
+    raise RuntimeError('Event loop is closed')
+E   RuntimeError: Event loop is closed
+______________ TestRiskEngine.test_buy_no_reduces_delta_allowed _______________
+tests\test_core.py:752: in test_buy_no_reduces_delta_allowed
+    run_async(pm.stop())
+tests\test_core.py:194: in run_async
+    return asyncio.run(coro)
+           ^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:190: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+portfolio\manager.py:270: in stop
+    await asyncio.gather(*self._tasks, return_exceptions=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\tasks.py:839: in gather
+    fut.add_done_callback(_done_callback)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:762: in call_soon
+    self._check_closed()
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:520: in _check_closed
+    raise RuntimeError('Event loop is closed')
+E   RuntimeError: Event loop is closed
+__________________ TestRiskEngine.test_projected_delta_check __________________
+tests\test_core.py:726: in test_projected_delta_check
+    run_async(pm.stop())
+tests\test_core.py:194: in run_async
+    return asyncio.run(coro)
+           ^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:190: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+portfolio\manager.py:270: in stop
+    await asyncio.gather(*self._tasks, return_exceptions=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\tasks.py:839: in gather
+    fut.add_done_callback(_done_callback)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:762: in call_soon
+    self._check_closed()
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:520: in _check_closed
+    raise RuntimeError('Event loop is closed')
+E   RuntimeError: Event loop is closed
+------------------------------ Captured log call ------------------------------
+WARNING  risk.engine:engine.py:456 REJECT proposal=3d50bc19 strategy=mm market=BTC $10.00 reason=delta_limit - Projected |Δ|=100.00 > limit 50.00
+____________________ TestRiskEngine.test_terminal_release _____________________
+tests\test_core.py:643: in test_terminal_release
+    run_async(pm.stop())
+tests\test_core.py:194: in run_async
+    return asyncio.run(coro)
+           ^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:190: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+portfolio\manager.py:270: in stop
+    await asyncio.gather(*self._tasks, return_exceptions=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\tasks.py:839: in gather
+    fut.add_done_callback(_done_callback)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:762: in call_soon
+    self._check_closed()
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py:520: in _check_closed
+    raise RuntimeError('Event loop is closed')
+E   RuntimeError: Event loop is closed
+_________ TestOpinionClientInstantiation.test_default_host_is_sandbox _________
+tests\test_opinion_client.py:85: in test_default_host_is_sandbox
+    assert client._host == "https://openapi-testnet.opinion.trade/openapi"
+E   AssertionError: assert 'https://openapi.opinion.trade/openapi' == 'https://openapi-testnet.opinion.trade/openapi'
+E     
+E     - https://openapi-testnet.opinion.trade/openapi
+E     ?                --------
+E     + https://openapi.opinion.trade/openapi
+__________ TestOpinionClientInstantiation.test_rejects_empty_api_key __________
+tests\test_opinion_client.py:129: in test_rejects_empty_api_key
+    with pytest.raises((ValueError, TypeError)):
+E   Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+_______ TestOpinionClientOrderSubmission.test_place_order_posts_payload _______
+tests\test_opinion_client.py:195: in test_place_order_posts_payload
+    submission = opinion_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'opinion_order_submission' is not defined
+____ TestOpinionClientOrderSubmission.test_place_order_includes_signature _____
+tests\test_opinion_client.py:227: in test_place_order_includes_signature
+    submission = opinion_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'opinion_order_submission' is not defined
+_____ TestOpinionClientOrderSubmission.test_place_order_with_custom_nonce _____
+tests\test_opinion_client.py:254: in test_place_order_with_custom_nonce
+    submission = opinion_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'opinion_order_submission' is not defined
+_____ TestOpinionClientOrderSubmission.test_place_order_rejection_raises ______
+tests\test_opinion_client.py:287: in test_place_order_rejection_raises
+    submission = opinion_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'opinion_order_submission' is not defined
+_______ TestOpinionClientOrderStatus.test_get_order_status_parses_open ________
+tests\test_opinion_client.py:409: in test_get_order_status_parses_open
+    result = await client.get_order_status("exch-ord-999", "mkt-1")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+execution\clients\opinion.py:244: in get_order_status
+    status = raw.get("status", "").lower()
+             ^^^^^^^
+E   AttributeError: 'list' object has no attribute 'get'
+________ TestPolymarketClientInstantiation.test_rejects_empty_api_key _________
+tests\test_polymarket_client.py:69: in test_rejects_empty_api_key
+    with pytest.raises((ValueError, TypeError)):
+E   Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+_________ TestPolymarketClientInstantiation.test_rejects_empty_secret _________
+tests\test_polymarket_client.py:79: in test_rejects_empty_secret
+    with pytest.raises((ValueError, TypeError)):
+E   Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+_______ TestPolymarketClientInstantiation.test_rejects_empty_passphrase _______
+tests\test_polymarket_client.py:89: in test_rejects_empty_passphrase
+    with pytest.raises((ValueError, TypeError)):
+E   Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+_____ TestPolymarketClientOrderSubmission.test_place_order_posts_payload ______
+tests\test_polymarket_client.py:212: in test_place_order_posts_payload
+    submission = polymarket_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'polymarket_order_submission' is not defined
+___ TestPolymarketClientOrderSubmission.test_place_order_includes_signature ___
+tests\test_polymarket_client.py:245: in test_place_order_includes_signature
+    submission = polymarket_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'polymarket_order_submission' is not defined
+___ TestPolymarketClientOrderSubmission.test_place_order_with_custom_nonce ____
+tests\test_polymarket_client.py:273: in test_place_order_with_custom_nonce
+    submission = polymarket_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'polymarket_order_submission' is not defined
+____ TestPolymarketClientOrderSubmission.test_place_order_rejection_raises ____
+tests\test_polymarket_client.py:307: in test_place_order_rejection_raises
+    submission = polymarket_order_submission()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'polymarket_order_submission' is not defined
+______ TestPolymarketClientOrderStatus.test_get_order_status_parses_open ______
+tests\test_polymarket_client.py:433: in test_get_order_status_parses_open
+    result = await client.get_order_status("exch-ord-999", "mkt-1")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+execution\clients\polymarket.py:258: in get_order_status
+    status = raw.get("status", "").lower()
+             ^^^^^^^
+E   AttributeError: 'list' object has no attribute 'get'
+___________ TestSmokeTests.test_backtest_produces_trades_200_ticks ____________
+tests\test_sandbox_validation.py:61: in test_backtest_produces_trades_200_ticks
+    self.assertIn("evaluated", output, "No proposals evaluated")
+E   AssertionError: 'evaluated' not found in '2026-05-29 20:34:24 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=BTC-Q4 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0445 c1=0.0199 c2=0.0203 age=65ms\n2026-05-29 20:34:24 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=ETH-Q1 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0523 c1=0.0196 c2=0.0201 age=66ms\n2026-05-29 20:34:24 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=SOL-Q2 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0425 c1=0.0228 c2=0.0207 age=42ms\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-36.26→-2.00 buy_yes $15.46@0.4511 on polymarket\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.11@0.4593 on opinion\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.24@0.4638 on opinion\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-28.87→-2.00 buy_yes $11.82@0.4399 on polymarket\n═══ BACKTEST RESULTS ═══\nDuration:     0.0 days  |  198 ticks\nMarkets:      BTC-Q4, ETH-Q1, SOL-Q2\nP&L:          $+42.45  (+0.42%)\nMax Drawdown: 0.00%\nSharpe:       N/A  |  Sortino: N/A\n\nProposals:    10 eval  |  10 approved  |  0 rejected\nFills:        8 full  |  4 partial  |  0 expired\nFill rate:    100.0%  |  Avg fill ratio: 83.3%\nAvg slippage: 40.6 bps\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\n' : No proposals evaluated
+___________ TestSmokeTests.test_backtest_produces_trades_500_ticks ____________
+tests\test_sandbox_validation.py:80: in test_backtest_produces_trades_500_ticks
+    self.assertIn("evaluated", output)
+E   AssertionError: 'evaluated' not found in '2026-05-29 20:34:25 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=BTC-Q4 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0445 c1=0.0199 c2=0.0203 age=65ms\n2026-05-29 20:34:25 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=ETH-Q1 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0523 c1=0.0196 c2=0.0201 age=66ms\n2026-05-29 20:34:25 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=SOL-Q2 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0425 c1=0.0228 c2=0.0207 age=42ms\n2026-05-29 20:34:25 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-36.26→-2.00 buy_yes $15.46@0.4511 on polymarket\n2026-05-29 20:34:25 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.11@0.4593 on opinion\n2026-05-29 20:34:25 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.24@0.4638 on opinion\n2026-05-29 20:34:26 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-28.87→-2.00 buy_yes $11.82@0.4399 on polymarket\n═══ BACKTEST RESULTS ═══\nDuration:     0.0 days  |  498 ticks\nMarkets:      BTC-Q4, ETH-Q1, SOL-Q2\nP&L:          $+103.91  (+1.04%)\nMax Drawdown: 0.00%\nSharpe:       N/A  |  Sortino: N/A\n\nProposals:    10 eval  |  10 approved  |  0 rejected\nFills:        8 full  |  4 partial  |  0 expired\nFill rate:    100.0%  |  Avg fill ratio: 83.3%\nAvg slippage: 40.6 bps\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\n'
+_______ TestSmokeTests.test_paper_mode_starts_without_live_credentials ________
+tests\test_sandbox_validation.py:116: in test_paper_mode_starts_without_live_credentials
+    self.assertEqual(result.returncode, 0, f"Validation failed: {result.stderr}")
+E   AssertionError: 1 != 0 : Validation failed: Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+E   
+E     Traceback (most recent call last):
+E       File "<frozen site>", line 195, in addpackage
+E       File "<string>", line 1, in <module>
+E     ModuleNotFoundError: No module named '_distutils_hack'
+E   
+E   Remainder of file ignored
+E   Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+E   
+E     Traceback (most recent call last):
+E       File "<frozen site>", line 195, in addpackage
+E       File "<string>", line 1, in <module>
+E     ModuleNotFoundError: No module named '_distutils_hack'
+E   
+E   Remainder of file ignored
+E   Traceback (most recent call last):
+E     File "<string>", line 8, in <module>
+E     File "C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\config\settings.py", line 270, in validate
+E       raise ValueError(f"Configuration validation failed:\n{msg}")
+E   ValueError: Configuration validation failed:
+E     - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+E     - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+E     - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+__________ TestDeterminism.test_consecutive_runs_identical_200_ticks __________
+tests\test_sandbox_validation.py:145: in test_consecutive_runs_identical_200_ticks
+    self.assertIsNotNone(pnl_match, f"P&L not found in run {i + 1}")
+E   AssertionError: unexpectedly None : P&L not found in run 1
+______________ TestDeterminism.test_multiple_seeds_same_behavior ______________
+tests\test_sandbox_validation.py:169: in test_multiple_seeds_same_behavior
+    self.assertIsNotNone(pnl_match, f"P&L not found for seed {seed}")
+E   AssertionError: unexpectedly None : P&L not found for seed 42
+_ TestPaperToLiveMigration.test_config_transition_validates_live_credentials __
+tests\test_sandbox_validation.py:295: in test_config_transition_validates_live_credentials
+    settings.validate(mode="paper")
+config\settings.py:270: in validate
+    raise ValueError(f"Configuration validation failed:\n{msg}")
+E   ValueError: Configuration validation failed:
+E     - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+E     - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+E     - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+
+During handling of the above exception, another exception occurred:
+tests\test_sandbox_validation.py:297: in test_config_transition_validates_live_credentials
+    self.fail(f"Paper mode validation failed unexpectedly: {e}")
+E   AssertionError: Paper mode validation failed unexpectedly: Configuration validation failed:
+E     - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+E     - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+E     - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+______________________ test_kill_switch_activation_flow _______________________
+tests\test_sandbox_validation.py:397: in test_kill_switch_activation_flow
+    ks = KillSwitch(token)
+         ^^^^^^^^^^^^^^^^^
+risk\kill_switch.py:44: in __init__
+    raise ValueError(f"confirmation_token must be at least 16 characters, got {len(confirmation_token)}")
+E   ValueError: confirmation_token must be at least 16 characters, got 15
+__________________________ test_backtest_determinism __________________________
+tests\test_sandbox_validation.py:436: in test_backtest_determinism
+    assert pnl_match is not None, f"P&L not found in run {i}"
+E   AssertionError: P&L not found in run 0
+E   assert None is not None
+_____________________ test_backtest_zero_trade_regression _____________________
+tests\test_smoke.py:52: in test_backtest_zero_trade_regression
+    result = subprocess.run(
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1462: in _execute_child
+    args = list2cmdline(args)
+           ^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:608: in list2cmdline
+    for arg in map(os.fsdecode, seq):
+<frozen os>:824: in fsdecode
+    ???
+E   TypeError: expected str, bytes or os.PathLike object, not int
+_____________________ test_backtest_produces_positive_pnl _____________________
+tests\test_smoke.py:95: in test_backtest_produces_positive_pnl
+    result = subprocess.run(
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1462: in _execute_child
+    args = list2cmdline(args)
+           ^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:608: in list2cmdline
+    for arg in map(os.fsdecode, seq):
+<frozen os>:824: in fsdecode
+    ???
+E   TypeError: expected str, bytes or os.PathLike object, not int
+__________________________ test_backtest_determinism __________________________
+tests\test_smoke.py:131: in test_backtest_determinism
+    result = subprocess.run(
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1462: in _execute_child
+    args = list2cmdline(args)
+           ^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:608: in list2cmdline
+    for arg in map(os.fsdecode, seq):
+<frozen os>:824: in fsdecode
+    ???
+E   TypeError: expected str, bytes or os.PathLike object, not int
+_________________________ test_paper_mode_validation __________________________
+tests\test_smoke.py:195: in test_paper_mode_validation
+    assert result.returncode == 0, f"Paper mode validation failed: {result.stderr}"
+E   AssertionError: Paper mode validation failed: Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+E     
+E       Traceback (most recent call last):
+E         File "<frozen site>", line 195, in addpackage
+E         File "<string>", line 1, in <module>
+E       ModuleNotFoundError: No module named '_distutils_hack'
+E     
+E     Remainder of file ignored
+E     Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+E     
+E       Traceback (most recent call last):
+E         File "<frozen site>", line 195, in addpackage
+E         File "<string>", line 1, in <module>
+E       ModuleNotFoundError: No module named '_distutils_hack'
+E     
+E     Remainder of file ignored
+E     Traceback (most recent call last):
+E       File "<string>", line 8, in <module>
+E       File "C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\config\settings.py", line 270, in validate
+E         raise ValueError(f"Configuration validation failed:\n{msg}")
+E     ValueError: Configuration validation failed:
+E       - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+E       - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+E       - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Scripts\\python.exe', '-c', '\nimport sys\nsys.path.insert(0, \'.\')\nfrom config.settings import get_settings\n\ntry:\n    settings = get_settings()\n    settings.validate(mode="paper")\n    print("VALIDATION_PASSED")\nexcept ValueError as e:\n    if "missing" in str(e).lower():\n        # Credential-related error - this is the bug we\'re catching\n        sys.exit(1)\n    raise\n'], returncode=1, stdout='', stderr='Error processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nTraceback (most recent call last):\n  File "<string>", line 8, in <module>\n  File "C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\config\\settings.py", line 270, in validate\n    raise ValueError(f"Configuration validation failed:\\n{msg}")\nValueError: Configuration validation failed:\n  - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).\n  - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.\n  - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)\n').returncode
+_______________________ test_kill_switch_token_security _______________________
+tests\test_smoke.py:231: in test_kill_switch_token_security
+    with pytest.raises(ValueError):
+E   Failed: DID NOT RAISE <class 'ValueError'>
+__________________________ test_risk_engine_latency ___________________________
+tests\test_smoke.py:259: in test_risk_engine_latency
+    proposal = OrderProposal(
+E   TypeError: OrderProposal.__init__() got an unexpected keyword argument 'leg_1_market_id'
+______________________ test_backtest_metrics_extraction _______________________
+tests\test_smoke.py:314: in test_backtest_metrics_extraction
+    result = subprocess.run(
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:1462: in _execute_child
+    args = list2cmdline(args)
+           ^^^^^^^^^^^^^^^^^^
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py:608: in list2cmdline
+    for arg in map(os.fsdecode, seq):
+<frozen os>:824: in fsdecode
+    ???
+E   TypeError: expected str, bytes or os.PathLike object, not int
+============================== warnings summary ===============================
+tests\test_opinion_client.py:649
+  C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:649: PytestUnknownMarkWarning: Unknown pytest.mark.windows_only - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.windows_only
+
+tests\test_opinion_client.py:660
+  C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:660: PytestUnknownMarkWarning: Unknown pytest.mark.windows_only - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.windows_only
+
+tests\test_opinion_client.py:673
+  C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_opinion_client.py:673: PytestUnknownMarkWarning: Unknown pytest.mark.windows_only - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.windows_only
+
+tests\test_polymarket_client.py:680
+  C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:680: PytestUnknownMarkWarning: Unknown pytest.mark.windows_only - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.windows_only
+
+tests\test_polymarket_client.py:691
+  C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:691: PytestUnknownMarkWarning: Unknown pytest.mark.windows_only - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.windows_only
+
+tests\test_polymarket_client.py:704
+  C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\tests\test_polymarket_client.py:704: PytestUnknownMarkWarning: Unknown pytest.mark.windows_only - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.windows_only
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_core.py::TestPortfolioManager::test_delta_neutral_after_yes_and_no - RuntimeError: Event loop is closed
+FAILED tests/test_core.py::TestPortfolioManager::test_get_delta_after_buy - RuntimeError: Event loop is closed
+FAILED tests/test_core.py::TestPortfolioManager::test_negative_holdings_raises - RuntimeError: Event loop is closed
+FAILED tests/test_core.py::TestPortfolioManager::test_record_fill_decreases_cash - RuntimeError: Event loop is closed
+FAILED tests/test_core.py::TestRiskEngine::test_buy_no_reduces_delta_allowed - RuntimeError: Event loop is closed
+FAILED tests/test_core.py::TestRiskEngine::test_projected_delta_check - RuntimeError: Event loop is closed
+FAILED tests/test_core.py::TestRiskEngine::test_terminal_release - RuntimeError: Event loop is closed
+FAILED tests/test_opinion_client.py::TestOpinionClientInstantiation::test_default_host_is_sandbox - AssertionError: assert 'https://openapi.opinion.trade/openapi' == 'https://openapi-testnet.opinion.trade/openapi'
+  
+  - https://openapi-testnet.opinion.trade/openapi
+  ?                --------
+  + https://openapi.opinion.trade/openapi
+FAILED tests/test_opinion_client.py::TestOpinionClientInstantiation::test_rejects_empty_api_key - Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+FAILED tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_posts_payload - NameError: name 'opinion_order_submission' is not defined
+FAILED tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_includes_signature - NameError: name 'opinion_order_submission' is not defined
+FAILED tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_with_custom_nonce - NameError: name 'opinion_order_submission' is not defined
+FAILED tests/test_opinion_client.py::TestOpinionClientOrderSubmission::test_place_order_rejection_raises - NameError: name 'opinion_order_submission' is not defined
+FAILED tests/test_opinion_client.py::TestOpinionClientOrderStatus::test_get_order_status_parses_open - AttributeError: 'list' object has no attribute 'get'
+FAILED tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_rejects_empty_api_key - Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+FAILED tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_rejects_empty_secret - Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+FAILED tests/test_polymarket_client.py::TestPolymarketClientInstantiation::test_rejects_empty_passphrase - Failed: DID NOT RAISE any of (<class 'ValueError'>, <class 'TypeError'>)
+FAILED tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_posts_payload - NameError: name 'polymarket_order_submission' is not defined
+FAILED tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_includes_signature - NameError: name 'polymarket_order_submission' is not defined
+FAILED tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_with_custom_nonce - NameError: name 'polymarket_order_submission' is not defined
+FAILED tests/test_polymarket_client.py::TestPolymarketClientOrderSubmission::test_place_order_rejection_raises - NameError: name 'polymarket_order_submission' is not defined
+FAILED tests/test_polymarket_client.py::TestPolymarketClientOrderStatus::test_get_order_status_parses_open - AttributeError: 'list' object has no attribute 'get'
+FAILED tests/test_sandbox_validation.py::TestSmokeTests::test_backtest_produces_trades_200_ticks - AssertionError: 'evaluated' not found in '2026-05-29 20:34:24 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=BTC-Q4 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0445 c1=0.0199 c2=0.0203 age=65ms\n2026-05-29 20:34:24 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=ETH-Q1 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0523 c1=0.0196 c2=0.0201 age=66ms\n2026-05-29 20:34:24 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=SOL-Q2 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0425 c1=0.0228 c2=0.0207 age=42ms\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-36.26→-2.00 buy_yes $15.46@0.4511 on polymarket\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.11@0.4593 on opinion\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.24@0.4638 on opinion\n2026-05-29 20:34:24 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-28.87→-2.00 buy_yes $11.82@0.4399 on polymarket\n═══ BACKTEST RESULTS ═══\nDuration:     0.0 days  |  198 ticks\nMarkets:      BTC-Q4, ETH-Q1, SOL-Q2\nP&L:          $+42.45  (+0.42%)\nMax Drawdown: 0.00%\nSharpe:       N/A  |  Sortino: N/A\n\nProposals:    10 eval  |  10 approved  |  0 rejected\nFills:        8 full  |  4 partial  |  0 expired\nFill rate:    100.0%  |  Avg fill ratio: 83.3%\nAvg slippage: 40.6 bps\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\n' : No proposals evaluated
+FAILED tests/test_sandbox_validation.py::TestSmokeTests::test_backtest_produces_trades_500_ticks - AssertionError: 'evaluated' not found in '2026-05-29 20:34:25 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=BTC-Q4 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0445 c1=0.0199 c2=0.0203 age=65ms\n2026-05-29 20:34:25 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=ETH-Q1 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0523 c1=0.0196 c2=0.0201 age=66ms\n2026-05-29 20:34:25 [INFO    ] strategies.arbitrage: ARB ACCEPTED market=SOL-Q2 dir=PM_YES_OP_NO size=$200.00 net_edge=0.0425 c1=0.0228 c2=0.0207 age=42ms\n2026-05-29 20:34:25 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-36.26→-2.00 buy_yes $15.46@0.4511 on polymarket\n2026-05-29 20:34:25 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.11@0.4593 on opinion\n2026-05-29 20:34:25 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=32.71→2.00 buy_no $14.24@0.4638 on opinion\n2026-05-29 20:34:26 [INFO    ] strategies.delta_neutral: HEDGE market=ETH-Q1 Δ=-28.87→-2.00 buy_yes $11.82@0.4399 on polymarket\n═══ BACKTEST RESULTS ═══\nDuration:     0.0 days  |  498 ticks\nMarkets:      BTC-Q4, ETH-Q1, SOL-Q2\nP&L:          $+103.91  (+1.04%)\nMax Drawdown: 0.00%\nSharpe:       N/A  |  Sortino: N/A\n\nProposals:    10 eval  |  10 approved  |  0 rejected\nFills:        8 full  |  4 partial  |  0 expired\nFill rate:    100.0%  |  Avg fill ratio: 83.3%\nAvg slippage: 40.6 bps\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\n'
+FAILED tests/test_sandbox_validation.py::TestSmokeTests::test_paper_mode_starts_without_live_credentials - AssertionError: 1 != 0 : Validation failed: Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+
+  Traceback (most recent call last):
+    File "<frozen site>", line 195, in addpackage
+    File "<string>", line 1, in <module>
+  ModuleNotFoundError: No module named '_distutils_hack'
+
+Remainder of file ignored
+Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+
+  Traceback (most recent call last):
+    File "<frozen site>", line 195, in addpackage
+    File "<string>", line 1, in <module>
+  ModuleNotFoundError: No module named '_distutils_hack'
+
+Remainder of file ignored
+Traceback (most recent call last):
+  File "<string>", line 8, in <module>
+  File "C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\config\settings.py", line 270, in validate
+    raise ValueError(f"Configuration validation failed:\n{msg}")
+ValueError: Configuration validation failed:
+  - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+  - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+  - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+FAILED tests/test_sandbox_validation.py::TestDeterminism::test_consecutive_runs_identical_200_ticks - AssertionError: unexpectedly None : P&L not found in run 1
+FAILED tests/test_sandbox_validation.py::TestDeterminism::test_multiple_seeds_same_behavior - AssertionError: unexpectedly None : P&L not found for seed 42
+FAILED tests/test_sandbox_validation.py::TestPaperToLiveMigration::test_config_transition_validates_live_credentials - AssertionError: Paper mode validation failed unexpectedly: Configuration validation failed:
+  - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+  - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+  - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+FAILED tests/test_sandbox_validation.py::test_kill_switch_activation_flow - ValueError: confirmation_token must be at least 16 characters, got 15
+FAILED tests/test_sandbox_validation.py::test_backtest_determinism - AssertionError: P&L not found in run 0
+assert None is not None
+FAILED tests/test_smoke.py::test_backtest_zero_trade_regression - TypeError: expected str, bytes or os.PathLike object, not int
+FAILED tests/test_smoke.py::test_backtest_produces_positive_pnl - TypeError: expected str, bytes or os.PathLike object, not int
+FAILED tests/test_smoke.py::test_backtest_determinism - TypeError: expected str, bytes or os.PathLike object, not int
+FAILED tests/test_smoke.py::test_paper_mode_validation - AssertionError: Paper mode validation failed: Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+  
+    Traceback (most recent call last):
+      File "<frozen site>", line 195, in addpackage
+      File "<string>", line 1, in <module>
+    ModuleNotFoundError: No module named '_distutils_hack'
+  
+  Remainder of file ignored
+  Error processing line 1 of C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\.venv\Lib\site-packages\distutils-precedence.pth:
+  
+    Traceback (most recent call last):
+      File "<frozen site>", line 195, in addpackage
+      File "<string>", line 1, in <module>
+    ModuleNotFoundError: No module named '_distutils_hack'
+  
+  Remainder of file ignored
+  Traceback (most recent call last):
+    File "<string>", line 8, in <module>
+    File "C:\Users\Honor\Desktop\polymarket-under-openclaw\polymarket-arbitrage\config\settings.py", line 270, in validate
+      raise ValueError(f"Configuration validation failed:\n{msg}")
+  ValueError: Configuration validation failed:
+    - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+    - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+    - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+  
+assert 1 == 0
+ +  where 1 = CompletedProcess(args=['C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Scripts\\python.exe', '-c', '\nimport sys\nsys.path.insert(0, \'.\')\nfrom config.settings import get_settings\n\ntry:\n    settings = get_settings()\n    settings.validate(mode="paper")\n    print("VALIDATION_PASSED")\nexcept ValueError as e:\n    if "missing" in str(e).lower():\n        # Credential-related error - this is the bug we\'re catching\n        sys.exit(1)\n    raise\n'], returncode=1, stdout='', stderr='Error processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nError processing line 1 of C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\.venv\\Lib\\site-packages\\distutils-precedence.pth:\n\n  Traceback (most recent call last):\n    File "<frozen site>", line 195, in addpackage\n    File "<string>", line 1, in <module>\n  ModuleNotFoundError: No module named \'_distutils_hack\'\n\nRemainder of file ignored\nTraceback (most recent call last):\n  File "<string>", line 8, in <module>\n  File "C:\\Users\\Honor\\Desktop\\polymarket-under-openclaw\\polymarket-arbitrage\\config\\settings.py", line 270, in validate\n    raise ValueError(f"Configuration validation failed:\\n{msg}")\nValueError: Configuration validation failed:\n  - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).\n  - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.\n  - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)\n').returncode
+FAILED tests/test_smoke.py::test_kill_switch_token_security - Failed: DID NOT RAISE <class 'ValueError'>
+FAILED tests/test_smoke.py::test_risk_engine_latency - TypeError: OrderProposal.__init__() got an unexpected keyword argument 'leg_1_market_id'
+FAILED tests/test_smoke.py::test_backtest_metrics_extraction - TypeError: expected str, bytes or os.PathLike object, not int
+ERROR tests/test_opinion_client.py::TestOpinionClientOpenOrders::test_get_open_orders
+ERROR tests/test_opinion_client.py::TestOpinionClientOpenOrders::test_get_open_orders_empty
+ERROR tests/test_opinion_client.py::TestOpinionClientWindowsCompatibility::test_temp_dir_windows_path_handling
+ERROR tests/test_opinion_client.py::TestOpinionClientWindowsCompatibility::test_normalize_path_windows_forward_slashes
+ERROR tests/test_opinion_client.py::TestOpinionClientWindowsCompatibility::test_dict_comparison_windows_safe
+ERROR tests/test_polymarket_client.py::TestPolymarketClientOpenOrders::test_get_open_orders
+ERROR tests/test_polymarket_client.py::TestPolymarketClientOpenOrders::test_get_open_orders_empty
+ERROR tests/test_polymarket_client.py::TestPolymarketClientWindowsCompatibility::test_temp_dir_windows_path_handling
+ERROR tests/test_polymarket_client.py::TestPolymarketClientWindowsCompatibility::test_normalize_path_windows_forward_slashes
+ERROR tests/test_polymarket_client.py::TestPolymarketClientWindowsCompatibility::test_dict_comparison_windows_safe
+ERROR tests/test_sandbox_validation.py::test_sandbox_acceptance - ValueError: Configuration validation failed:
+  - MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).
+  - KILL_SWITCH_TOKEN not set correctly. Please set a secure random string.
+  - KILL_SWITCH_TOKEN must be at least 16 characters (current: 9)
+=========== 37 failed, 258 passed, 6 warnings, 11 errors in 31.08s ============

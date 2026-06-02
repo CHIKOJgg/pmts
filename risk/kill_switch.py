@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 import time
@@ -106,7 +107,8 @@ class KillSwitch:
     def reset(self, token: str, operator_id: Optional[str] = None) -> bool:
         if not self._active:
             return False
-        if token != self._token:
+        # Use constant-time comparison to prevent timing attacks
+        if not hmac.compare_digest(token.encode(), self._token.encode()):
             logger.warning("Kill switch reset rejected — wrong token (operator=%s)", operator_id)
             return False
         self._resets.append(

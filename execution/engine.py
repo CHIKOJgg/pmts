@@ -172,7 +172,7 @@ class ExecutionEngine:
         mdb: Optional[MarketDataProvider] = None,
         max_concurrent: int = 5,
         tracker_retention_ms: int = TRACKER_RETENTION_MS,
-        alert_router=None,
+        alert_router: Optional[Any] = None,  # AlertRouter type
         clock: Optional[Clock] = None,
     ) -> None:
         self._client = client

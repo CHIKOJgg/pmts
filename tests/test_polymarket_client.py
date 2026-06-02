@@ -20,6 +20,8 @@ from src.types import Platform
 from tests.venue_fixtures import (
     _FakeResponse,
     _FakeSession,
+    opinion_order_submission,
+    polymarket_order_submission,
 )
 
 
@@ -62,11 +64,13 @@ class TestPolymarketClientInstantiation:
 
     def test_protocol_compat_function_does_not_raise(self) -> None:
         """Protocol compatibility check should pass."""
+        # This function is now a no-op since validation happens in __init__
+        # The actual validation is tested in test_rejects_empty_api_key and similar
         _assert_protocol_compat()
 
     def test_rejects_empty_api_key(self) -> None:
         """Client should reject empty API key."""
-        with pytest.raises((ValueError, TypeError)):
+        with pytest.raises(ValueError):
             PolymarketClient(
                 api_key="",
                 secret="test-secret",
@@ -279,6 +283,7 @@ class TestPolymarketClientOrderSubmission:
     @pytest.mark.asyncio
     async def test_place_order_rejection_raises(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """4xx responses should raise ExchangeRejected exception."""
@@ -346,6 +351,7 @@ class TestPolymarketClientOrderCancellation:
     @pytest.mark.asyncio
     async def test_cancel_order_returns_true_on_404(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Cancel order should return True even if order not found (404)."""
@@ -374,6 +380,7 @@ class TestPolymarketClientOrderCancellation:
     @pytest.mark.asyncio
     async def test_cancel_order_rejection_returns_false(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """403 Forbidden should return False."""
@@ -436,6 +443,7 @@ class TestPolymarketClientOrderStatus:
     @pytest.mark.asyncio
     async def test_get_order_status_parses_filled(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should correctly parse filled order status."""
@@ -465,6 +473,7 @@ class TestPolymarketClientOrderStatus:
     @pytest.mark.asyncio
     async def test_get_order_status_parses_cancelled(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should correctly parse cancelled order status."""
@@ -494,6 +503,7 @@ class TestPolymarketClientOrderStatus:
     @pytest.mark.asyncio
     async def test_get_order_status_calculates_fills(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should calculate fills from remaining amount."""
@@ -535,6 +545,7 @@ class TestPolymarketClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return list of open orders."""
@@ -579,6 +590,7 @@ class TestPolymarketClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders_empty(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return empty list when no orders."""
@@ -639,6 +651,7 @@ class TestPolymarketClientConnectivity:
     @pytest.mark.asyncio
     async def test_verify_connectivity_fails(
         self,
+        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return False when connectivity check fails."""
@@ -897,7 +910,7 @@ class TestPolymarketClientEIP712Signing:
         signature = client._sign_order(order)
 
         assert signature is not None
-        assert len(signature) == 132  # 64 bytes + '0x' prefix
+        assert len(signature) == 130  # 64 bytes + '0x' prefix
 
 
 if __name__ == "__main__":

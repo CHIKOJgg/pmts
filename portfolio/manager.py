@@ -264,15 +264,32 @@ class PortfolioManager:
 
     async def stop(self) -> None:
         self._stopped = True
+        if not self._tasks:
+            return
+        # Cancel all tasks safely
         for t in self._tasks:
             t.cancel()
-        if self._tasks:
+        # Create a new event loop if the current one is closed
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and not loop.is_closed():
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+        # Handle background tasks similarly
+        if not self._background_tasks:
+            return
         for t in self._background_tasks:
             t.cancel()
-        if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        try:
+            loop = asyncio.get_running_loop()
+            if loop is not None and not loop.is_closed():
+                await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        except RuntimeError:
+            pass  # No running loop
         self._background_tasks.clear()
 
     # ── Mutations (locked) ────────────────────────────────────────────────────

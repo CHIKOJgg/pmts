@@ -39,7 +39,15 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from typing import Any
+
+from src.types import OrderType
+
+
+def _now_ms() -> int:
+    """Get current timestamp in milliseconds."""
+    return int(time.time() * 1000)
 
 
 def test_backtest_zero_trade_regression():
@@ -50,7 +58,7 @@ def test_backtest_zero_trade_regression():
     The system must produce valid proposals and fills in backtest mode.
     """
     result = subprocess.run(
-        [sys.executable, "main.py", "--mode", "backtest", "--ticks", 200, "--capital", 10_000],
+        [sys.executable, "main.py", "--mode", "backtest", "--ticks", "200", "--capital", "10000"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -93,7 +101,7 @@ def test_backtest_produces_positive_pnl():
     This catches regressions that would cause the strategy to lose money.
     """
     result = subprocess.run(
-        [sys.executable, "main.py", "--mode", "backtest", "--ticks", 200, "--capital", 10_000],
+        [sys.executable, "main.py", "--mode", "backtest", "--ticks", "200", "--capital", "10000"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -103,8 +111,8 @@ def test_backtest_produces_positive_pnl():
 
     output = result.stdout + result.stderr
 
-    # Extract P&L (format: "+$XX.XX (+XX.XX%)" or "-$XX.XX (-XX.XX%)")
-    pnl_match = re.search(r"P\&L:\s*([+-]\$\d+\.\d+)\s*\(([+-]\d+\.\d+)%\)", output)
+    # Extract P&L - use format from backtest output: "$+XX.XX  (+XX.XX%)"
+    pnl_match = re.search(r"P\&L:\s*([+-]\$[\d.]+)\s+\(([+-]\d+\.\d+)%%\)", output)
 
     assert pnl_match is not None, "No P&L information found in backtest output"
 
@@ -129,7 +137,7 @@ def test_backtest_determinism():
 
     for i in range(2):
         result = subprocess.run(
-            [sys.executable, "main.py", "--mode", "backtest", "--ticks", 200, "--capital", 10_000],
+            [sys.executable, "main.py", "--mode", "backtest", "--ticks", "200", "--capital", "10000"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -139,8 +147,8 @@ def test_backtest_determinism():
 
         output = result.stdout + result.stderr
 
-        # Extract P&L for comparison
-        pnl_match = re.search(r"P\&L:\s*([+-]\$\d+\.\d+)", output)
+        # Extract P&L for comparison - use regex that captures full amount
+        pnl_match = re.search(r"P\&L:\s*([+-]\$[\d.]+)", output)
 
         assert pnl_match is not None, f"P&L not found in run {i + 1}"
         results.append(pnl_match.group(1))
@@ -209,25 +217,15 @@ def test_kill_switch_token_security():
 
     This catches configuration bugs that would allow weak tokens in production.
     """
-    from config.settings import get_settings
-
-    settings = get_settings()
-
-    # Test with secure token (should pass)
-    try:
-        settings.validate(mode="paper")  # Paper mode doesn't enforce full security
-    except ValueError:
-        pass  # Expected if no token set
-
-    # Verify kill switch module enforces security
     import pytest
 
     from risk.kill_switch import KillSwitch
 
-    # Weak tokens should raise errors
+    # Weak tokens should raise errors - too short (need 16+)
     with pytest.raises(ValueError):
         KillSwitch("weak")  # Too short, no complexity
 
+    # Weak tokens should raise errors - no special chars but meets length
     with pytest.raises(ValueError):
         KillSwitch("alllowercase123456789")  # No special chars
 
@@ -243,7 +241,7 @@ def test_risk_engine_latency():
     from portfolio.manager import PortfolioManager
     from risk.engine import DEFAULT_LIMITS, RiskEngine
     from risk.kill_switch import KillSwitch
-    from src.types import Platform, Side, StrategyId
+    from src.types import ArbLeg, Platform, Side, StrategyId
 
     def price_source(m, p):
         return (0.50, 0.50)
@@ -263,11 +261,13 @@ def test_risk_engine_latency():
         side=Side.BUY_YES,
         size_usdc=100.0,
         limit_price=0.50,
-        order_type="LIMIT",
+        order_type=OrderType.LIMIT,
         strategy_id=StrategyId.ARB,
+        expiry_ms=_now_ms() + 3600_000,  # 1 hour from now
+        source_ts=_now_ms(),
         leg_group_id="test-group",
-        leg_1_market_id="TEST-1",
-        leg_2_market_id="TEST-1",
+        leg_number=ArbLeg.LEG_1,
+        min_fill_ratio=0.5,
     )
 
     # Measure latency
@@ -312,7 +312,7 @@ def test_backtest_metrics_extraction():
     This ensures metrics are properly formatted and available.
     """
     result = subprocess.run(
-        [sys.executable, "main.py", "--mode", "backtest", "--ticks", 200, "--capital", 10_000],
+        [sys.executable, "main.py", "--mode", "backtest", "--ticks", "200", "--capital", "10000"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -324,7 +324,7 @@ def test_backtest_metrics_extraction():
 
     # Extract various metrics
     metrics = {
-        "evaluated": None,
+        "eval": None,
         "approved": None,
         "rejected": None,
         "full_fills": None,
@@ -333,12 +333,12 @@ def test_backtest_metrics_extraction():
     }
 
     patterns = {
-        "evaluated": r"(\d+)\s+eval",
+        "eval": r"(\d+)\s+eval",
         "approved": r"(\d+)\s+approved",
         "rejected": r"(\d+)\s+rejected",
         "full_fills": r"(\d+)\s+full",
         "partial_fills": r"(\d+)\s+partial",
-        "pnl": r"P\&L:\s*([+-]\$\d+\.\d+)",
+        "pnl": r"P\&L:\s*([+-]\$[\d.]+)",
     }
 
     for key, pattern in patterns.items():
@@ -346,8 +346,8 @@ def test_backtest_metrics_extraction():
         if match:
             metrics[key] = match.group(1)
 
-    # Verify critical metrics exist
-    assert metrics["evaluated"] is not None, "No evaluated proposals metric"
+    # Verify critical metrics exist (note: uses 'eval' not 'evaluated')
+    assert metrics["eval"] is not None, "No evaluated proposals metric"
     assert metrics["approved"] is not None, "No approved proposals metric"
     assert metrics["pnl"] is not None, "No P&L metric"
 
