@@ -300,7 +300,7 @@ class ExecutionEngine:
                     sub_dict["leg_number"] = ArbLeg(sub_dict["leg_number"])
 
                 submission = OrderSubmission(**sub_dict)
-                tracker = OrderTracker(submission)
+                tracker = OrderTracker(submission, clock=self._clock)
 
                 if exch_id and exch_id in exch_map:
                     # Order is still live on exchange
@@ -357,7 +357,7 @@ class ExecutionEngine:
     async def submit(self, submission: OrderSubmission) -> None:
         priority = 0 if submission.strategy_id == StrategyId.ARB else 1
         self._seq += 1
-        self._trackers[submission.proposal_id] = OrderTracker(submission)
+        self._trackers[submission.proposal_id] = OrderTracker(submission, clock=self._clock)
         self._update_active_order_metric()
 
         if self._store:

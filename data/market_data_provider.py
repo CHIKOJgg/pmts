@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Callable, Coroutine, Dict, List, Optional, Protocol, Set, runtime_checkable
 
 from data.models import MarketSnapshot
@@ -170,6 +169,15 @@ class MarketDataProvider:
     def get_all_markets(self) -> set[str]:
         return {mid for (mid, _) in self._index}
 
+    def get_market_counts_by_platform(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for _, platform in self._index:
+            counts[platform.value] = counts.get(platform.value, 0) + 1
+        return counts
+
+    def get_total_markets_seen(self) -> int:
+        return len(self._index)
+
     def get_health(self) -> dict:
         """Check if adapters have received recent data."""
         now = self._clock.now_ms()
@@ -243,7 +251,3 @@ def _is_duplicate(prev: MarketSnapshot, curr: MarketSnapshot) -> bool:
         and abs(prev.no_bid - curr.no_bid) < 1e-6
         and abs(prev.no_ask - curr.no_ask) < 1e-6
     )
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

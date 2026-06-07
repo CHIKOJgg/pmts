@@ -23,7 +23,6 @@ import asyncio
 import json
 import logging
 import math
-import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -36,6 +35,7 @@ from ai.signal_context import (
     VolRegime,
 )
 from data.models import FeatureVector
+from src.clock import Clock, LiveClock
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,13 @@ class AISignalEnhancer:
     Never raises. Falls back to heuristic on any failure.
     """
 
-    def __init__(self, config: AIEnhancerConfig = AIEnhancerConfig()) -> None:
+    def __init__(
+        self,
+        config: AIEnhancerConfig = AIEnhancerConfig(),
+        clock: Clock = LiveClock(),
+    ) -> None:
         self._cfg = config
+        self._clock: Clock = clock
         self._cache: dict[str, _CacheEntry] = {}
         self._err_count: int = 0
         self._disabled: bool = False
@@ -152,9 +157,6 @@ class AISignalEnhancer:
         except Exception as exc:
             logger.warning(f"Auto-re-enable failed: {exc}. Keeping disabled.")
             # Will retry on next tick after another 5 minutes
-
-        self.heuristic_fallbacks += 1
-        return heuristic_enhance(fv)
 
     def re_enable(self) -> None:
         """Re-enable after manual operator intervention."""
@@ -255,7 +257,7 @@ class AISignalEnhancer:
         entry = self._cache.get(fv.market_id)
         if entry is None:
             return None
-        now = _now_ms()
+        now = self._clock.now_ms()
 
         # Dynamic TTL based on volatility - higher vol → shorter TTL
         base_ttl = self._cfg.cache_ttl_ms
@@ -283,7 +285,7 @@ class AISignalEnhancer:
 
         self._cache[fv.market_id] = _CacheEntry(
             context=ctx,
-            created_at=_now_ms(),
+            created_at=self._clock.now_ms(),
             arb_signal=fv.arb_signal if not math.isnan(fv.arb_signal) else 0.0,
         )
 
@@ -367,7 +369,3 @@ def _parse_response(fv: FeatureVector, text: str, model_version: str = _CLAUDE_M
         feature_count=20,
         is_fallback=False,
     )
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

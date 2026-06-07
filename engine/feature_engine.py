@@ -6,7 +6,6 @@ import collections
 import logging
 import math
 import statistics
-import time
 from typing import Callable, Coroutine, Deque, Dict, List, Optional, Tuple
 
 from data.models import FeatureVector, MarketSnapshot
@@ -161,7 +160,3 @@ class FeatureEngine:
             return statistics.stdev(p for _, p in hist)
         except statistics.StatisticsError:
             return None
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
@@ -557,7 +556,3 @@ class PortfolioManager:
             if prices:
                 total_pos += pos.mtm(*prices)
         return self._cash_usdc + total_pos
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

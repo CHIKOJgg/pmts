@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import Callable, Coroutine, Dict, List, Optional
 
@@ -11,6 +10,7 @@ from ai.enhancer import AISignalEnhancer
 from ai.signal_context import NEUTRAL_CONTEXT, SignalContext
 from data.models import FeatureVector
 from execution.models import OrderProposal
+from src.clock import Clock, LiveClock
 from src.types import Platform
 from strategies.arbitrage import ArbConfig, ArbitrageStrategy
 from strategies.delta_neutral import DeltaNeutralConfig, DeltaNeutralStrategy
@@ -67,11 +67,13 @@ class StrategyEngine:
         arb_config: ArbConfig = ArbConfig(),
         dn_config: DeltaNeutralConfig = DeltaNeutralConfig(),
         ai_enhancer: Optional[AISignalEnhancer] = None,
+        clock: Clock = LiveClock(),
     ) -> None:
         self._config = config
-        self._arb = ArbitrageStrategy(config=arb_config)
-        self._dn = DeltaNeutralStrategy(config=dn_config)
+        self._arb = ArbitrageStrategy(config=arb_config, clock=clock)
+        self._dn = DeltaNeutralStrategy(config=dn_config, clock=clock)
         self._ai = ai_enhancer
+        self._clock: Clock = clock
         self._arb_alloc: float = 0.0
         self._mm_alloc: float = 0.0
         self._market: Dict[str, _MarketState] = {}
@@ -96,7 +98,7 @@ class StrategyEngine:
 
         now_ts: simulated current time (backtest).  None = wall-clock (live).
         """
-        now = now_ts if now_ts is not None else _now_ms()
+        now = now_ts if now_ts is not None else self._clock.now_ms()
         st = self._get_state(fv.market_id)
         proposals: List[OrderProposal] = []
 
@@ -278,7 +280,3 @@ class StrategyEngine:
                 await cb(proposal)
             except Exception as exc:
                 logger.error("Proposal callback raised: %s", exc, exc_info=True)
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

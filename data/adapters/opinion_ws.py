@@ -12,6 +12,7 @@ from infrastructure.observability import API_ERRORS_TOTAL, FEED_LAST_TS, RECONNE
 from src.types import Platform
 
 logger = logging.getLogger(__name__)
+ConnectionClosed = getattr(getattr(websockets, "exceptions", None), "ConnectionClosed", Exception)
 
 
 class OpinionWSAdapter:
@@ -109,7 +110,7 @@ class OpinionWSAdapter:
                 if not self._running:
                     break
                 await self._handle_message(message)
-        except websockets.exceptions.ConnectionClosed:
+        except ConnectionClosed:
             logger.info("Opinion WS connection closed")
         except Exception as exc:
             if self._running:

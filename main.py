@@ -64,6 +64,16 @@ def _venue_to_logical_map(settings, venue: str) -> dict[str, str]:
         return {}
     return {registry[m][venue]: m for m in settings.trading.markets}
 
+
+def _market_data_metrics(mdp) -> dict:
+    return {
+        "snapshots_received": mdp.snapshots_received,
+        "stale_emitted": mdp.stale_emitted,
+        "dedup_suppressed": mdp.dedup_suppressed,
+        "markets_seen_total": mdp.get_total_markets_seen(),
+        "markets_seen_by_platform": mdp.get_market_counts_by_platform(),
+    }
+
 async def run_live() -> None:
     from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
     from data.adapters.opinion_ws import OpinionWSAdapter
@@ -232,7 +242,8 @@ async def run_live() -> None:
     )
     
     obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_server = ObservabilityServer(port=8080, bind_host=obs_bind_host)
+    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
     
     monitor = HealthMonitor(
         mdp=mdp,
@@ -265,7 +276,8 @@ async def run_live() -> None:
             "total_value": portfolio.get_portfolio_mtm().total_equity_usdc,
             "cash_usdc": portfolio.cash_usdc,
             "reserved_capital": risk.reserved_capital,
-        }
+        },
+        "market_data": _market_data_metrics(mdp),
     })
 
     # Graceful Shutdown
@@ -475,7 +487,8 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     )
     
     obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_server = ObservabilityServer(port=8080, bind_host=obs_bind_host)
+    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
     
     monitor = HealthMonitor(
         mdp=mdp,
@@ -508,7 +521,8 @@ async def run_paper(fill_prob: float = 0.85) -> None:
             "total_value": portfolio.get_portfolio_mtm().total_equity_usdc,
             "cash_usdc": portfolio.cash_usdc,
             "reserved_capital": risk.reserved_capital,
-        }
+        },
+        "market_data": _market_data_metrics(mdp),
     })
 
     shutdown_event = asyncio.Event()
@@ -561,6 +575,230 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     logger.info("Paper trading shutdown complete.")
 
 
+async def run_paper_offline(fill_prob: float = 0.85) -> None:
+    from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
+    from data.adapters.synthetic import SyntheticMarketFeedAdapter
+    from data.market_data_provider import MarketDataProvider
+    from engine.orchestrator import Orchestrator
+    from engine.strategy_engine import StrategyEngine, StrategyConfig
+    from execution.clients.paper import PaperTradingClient
+    from execution.engine import ExecutionEngine
+    from infrastructure.observability import HealthMonitor, ObservabilityServer
+    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
+    from portfolio.manager import PortfolioManager
+    from portfolio.storage import SqlitePortfolioStore
+    from risk.engine import RiskEngine
+    from risk.kill_switch import KillSwitch
+    from risk.limits import RiskLimits
+    from strategies.arbitrage import ArbConfig
+    from strategies.delta_neutral import DeltaNeutralConfig
+
+    settings = get_settings()
+    settings.validate(mode="paper")
+
+    logger.info("Offline paper trading initializing: markets=%s", settings.trading.markets)
+
+    db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
+    store = SqlitePortfolioStore(db_path=db_path)
+    clock = LiveClock()
+
+    alert_cfg = AlertCfg(
+        slack_webhook_url=settings.alerts.slack_webhook_url or None,
+        email_smtp_host=settings.alerts.email_smtp_host,
+        email_smtp_port=settings.alerts.email_smtp_port,
+        email_username=settings.alerts.email_username or None,
+        email_password=settings.alerts.email_password or None,
+        email_recipients=[r.strip() for r in settings.alerts.email_recipients.split(",") if r.strip()],
+        webhook_urls=[u.strip() for u in settings.alerts.webhook_urls.split(",") if u.strip()],
+    )
+    alert_router = AlertRouter(alert_cfg)
+
+    markets = settings.trading.markets or DEFAULT_BACKTEST_MARKETS
+    pm_feed = SyntheticMarketFeedAdapter(
+        market_ids=markets,
+        platform=Platform.POLYMARKET,
+        taker_fee_bps=settings.polymarket.taker_fee_bps,
+        seed=42,
+        base_mid=0.46,
+    )
+    op_feed = SyntheticMarketFeedAdapter(
+        market_ids=markets,
+        platform=Platform.OPINION,
+        taker_fee_bps=settings.opinion.taker_fee_bps,
+        seed=43,
+        base_mid=0.54,
+    )
+
+    mdp = MarketDataProvider(adapters=[pm_feed, op_feed], alert_router=alert_router, clock=clock)
+
+    def price_source(market_id: str, platform) -> tuple[float, float]:
+        mid = mdp.get_mid_prices(market_id, platform)
+        return mid if mid is not None else (0.50, 0.50)
+
+    portfolio = PortfolioManager(
+        initial_cash_usdc=settings.trading.initial_cash_usdc,
+        price_source=price_source,
+        store=store,
+        clock=clock,
+    )
+
+    risk_limits = RiskLimits(
+        drawdown_kill_pct=settings.trading.drawdown_kill_pct,
+        drawdown_warn_pct=settings.trading.drawdown_warn_pct,
+        max_single_order_usdc=settings.trading.max_order_usdc,
+        min_single_order_usdc=settings.trading.min_order_usdc,
+        max_market_exposure_pct=settings.trading.max_market_exposure_pct,
+        max_market_exposure_usdc=settings.trading.max_market_exposure_usdc,
+        max_net_delta_per_market=settings.trading.max_net_delta,
+    )
+
+    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
+    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, alert_router=alert_router, clock=clock)
+
+    ai_cfg = AIEnhancerConfig(
+        enabled=settings.ai.enabled,
+        use_heuristic_only=settings.ai.heuristic_only,
+        provider=settings.ai.provider,
+        anthropic_api_key=settings.ai.anthropic_api_key,
+        openrouter_api_key=settings.ai.openrouter_api_key,
+        openrouter_model=settings.ai.openrouter_model,
+        api_timeout_ms=settings.ai.api_timeout_ms,
+        cache_ttl_ms=settings.ai.cache_ttl_ms,
+    )
+    ai_enhancer = AISignalEnhancer(config=ai_cfg)
+
+    strat_cfg = StrategyConfig(
+        arb_enabled=settings.trading.enable_arb,
+        mm_enabled=settings.trading.enable_mm,
+        hedge_enabled=settings.trading.enable_hedge,
+        arb_budget_usdc=settings.trading.arb_budget_usdc,
+        mm_budget_usdc=settings.trading.mm_budget_usdc,
+    )
+    arb_cfg = ArbConfig(
+        min_net_edge=0.006,
+        max_order_usdc=settings.trading.max_order_usdc,
+        min_order_usdc=settings.trading.min_order_usdc,
+    )
+    dn_cfg = DeltaNeutralConfig(
+        hedge_threshold=10.0,
+        mm_quote_size_usdc=25.0,
+    )
+
+    strategy = StrategyEngine(
+        config=strat_cfg,
+        arb_config=arb_cfg,
+        dn_config=dn_cfg,
+        ai_enhancer=ai_enhancer,
+    )
+
+    pm_client = PaperTradingClient(fill_probability=fill_prob, seed=42)
+    op_client = PaperTradingClient(fill_probability=fill_prob, seed=43)
+    pm_client.PLATFORM = Platform.POLYMARKET
+    op_client.PLATFORM = Platform.OPINION
+
+    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
+    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
+
+    orchestrator = Orchestrator(
+        mdp=mdp,
+        portfolio=portfolio,
+        risk=risk,
+        strategy=strategy,
+        pm_engine=pm_engine,
+        op_engine=op_engine,
+        markets=markets,
+        ai_enhancer=ai_enhancer,
+        enable_trading=settings.trading.enable_trading,
+        clock=clock,
+    )
+    risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
+
+    obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
+    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
+
+    monitor = HealthMonitor(
+        mdp=mdp,
+        engines=[pm_engine, op_engine],
+        risk=risk,
+        store=store,
+        kill_switch=kill_switch,
+        obs_server=obs_server,
+        mode="paper",
+    )
+
+    obs_server.set_health_monitor(monitor)
+    obs_server.set_kill_switch_config(
+        token=settings.trading.kill_switch_token,
+        reset_callback=orchestrator._on_kill_switch_reset,
+        activate_callback=orchestrator.emergency_stop,
+    )
+
+    obs_server.register_provider(lambda: {
+        "orchestrator": {
+            "proposals_evaluated": orchestrator.proposals_evaluated,
+            "proposals_approved": orchestrator.proposals_approved,
+            "proposals_rejected": orchestrator.proposals_rejected,
+        },
+        "risk": {
+            "kill_switch_active": risk.kill_switch_active,
+            "drawdown": risk.current_drawdown
+        },
+        "portfolio": {
+            "total_value": portfolio.get_portfolio_mtm().total_equity_usdc,
+            "cash_usdc": portfolio.cash_usdc,
+            "reserved_capital": risk.reserved_capital,
+        },
+        "market_data": _market_data_metrics(mdp),
+    })
+
+    shutdown_event = asyncio.Event()
+
+    def handle_sig(*args):
+        logger.info("Received shutdown signal...")
+        shutdown_event.set()
+
+    try:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, handle_sig)
+    except Exception:
+        pass
+
+    await obs_server.start()
+
+    logger.info("Performing startup reconciliation (offline paper mode)...")
+    await pm_engine.reconcile()
+    await op_engine.reconcile()
+    risk.reconcile_reservations()
+
+    await orchestrator.start()
+
+    async def liveness_tick_loop():
+        while True:
+            monitor.tick_liveness()
+            await asyncio.sleep(5)
+
+    liveness_task = asyncio.create_task(liveness_tick_loop(), name="liveness-tick")
+
+    logger.info("SYSTEM OFFLINE PAPER TRADING mode. No real capital at risk.")
+
+    try:
+        await shutdown_event.wait()
+    except asyncio.CancelledError:
+        pass
+
+    logger.info("Shutting down offline paper trading...")
+    liveness_task.cancel()
+    await orchestrator.stop()
+    await obs_server.stop()
+    await pm_client.close()
+    await op_client.close()
+    await alert_router.close()
+    store.close()
+    logger.info("Offline paper trading shutdown complete.")
+
+
 async def run_backtest(ticks: int, capital: float) -> None:
     from backtest.engine import BacktestEngine, build_synthetic_tick_stream
     from risk.limits import RiskLimits
@@ -591,7 +829,7 @@ async def run_backtest(ticks: int, capital: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="PMTS — Prediction Market Trading System")
-    parser.add_argument("--mode", choices=["backtest", "live", "paper"], default="backtest")
+    parser.add_argument("--mode", choices=["backtest", "live", "paper", "paper-offline"], default="backtest")
     parser.add_argument("--ticks", type=int, default=2000)
     parser.add_argument("--capital", type=float, default=10000.0)
     parser.add_argument("--log-level", default="INFO")
@@ -617,6 +855,13 @@ def main() -> None:
             logger.error(str(e))
             sys.exit(1)
         asyncio.run(run_paper(fill_prob=args.paper_fill_prob))
+    elif args.mode == "paper-offline":
+        try:
+            settings.validate(mode="paper")
+        except ValueError as e:
+            logger.error(str(e))
+            sys.exit(1)
+        asyncio.run(run_paper_offline(fill_prob=args.paper_fill_prob))
     else:
         try:
             settings.validate(mode="live")

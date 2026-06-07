@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import time
 import uuid
 from dataclasses import dataclass
 from typing import List, Optional
@@ -13,6 +12,7 @@ from ai.signal_context import SignalContext
 from data.models import FeatureVector
 from execution.models import OrderProposal
 from portfolio.manager import FillRecord
+from src.clock import Clock, LiveClock
 from src.types import OrderType, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
@@ -84,8 +84,13 @@ class MMQuotes:
 class DeltaNeutralStrategy:
     """Stateless per-tick evaluator for MM quotes and delta hedging."""
 
-    def __init__(self, config: DeltaNeutralConfig = DEFAULT_DN_CONFIG) -> None:
+    def __init__(
+        self,
+        config: DeltaNeutralConfig = DEFAULT_DN_CONFIG,
+        clock: Clock = LiveClock(),
+    ) -> None:
         self._cfg = config
+        self._clock = clock
         self.hedges_proposed: int = 0
         self.hedges_skipped: int = 0
         self.mm_quotes_issued: int = 0
@@ -171,7 +176,7 @@ class DeltaNeutralStrategy:
             )
 
         side = Side.BUY_NO if direction == "buy_no" else Side.BUY_YES
-        now = _now_ms()
+        now = self._clock.now_ms()
         try:
             proposal = OrderProposal(
                 proposal_id=str(uuid.uuid4()),
@@ -294,7 +299,7 @@ class DeltaNeutralStrategy:
 
         position_value = abs(delta) * mid  # convert token delta → USDC for unit consistency
         size = self._compute_adaptive_quote_size(position_value, cfg.max_hedge_usdc)
-        now = _now_ms()
+        now = self._clock.now_ms()
 
         # Adverse selection detection — widen spread if recent fills are adverse
         if fills and self._detect_adverse_selection(fv.market_id, fills):
@@ -412,7 +417,3 @@ class DeltaNeutralStrategy:
             if abs(yes_ask_pm - yes_ask_op) <= tol:
                 return (Platform.POLYMARKET, yes_ask_pm) if depth_pm >= depth_op else (Platform.OPINION, yes_ask_op)
             return (Platform.POLYMARKET, yes_ask_pm) if yes_ask_pm < yes_ask_op else (Platform.OPINION, yes_ask_op)
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

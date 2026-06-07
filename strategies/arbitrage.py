@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import time
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -12,6 +11,7 @@ from typing import Optional
 from ai.signal_context import SignalContext
 from data.models import FeatureVector
 from execution.models import OrderProposal
+from src.clock import Clock, LiveClock
 from src.types import ArbLeg, OrderType, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
@@ -128,11 +128,13 @@ class ArbitrageStrategy:
     def __init__(
         self,
         config: ArbConfig = ArbConfig(),
+        clock: Clock = LiveClock(),
     ) -> None:
         self._cfg = config
         # Fees are read from config; defaults provided for backward compatibility
         self._pm_fee = getattr(config, "pm_fee_bps", 20)
         self._op_fee = getattr(config, "op_fee_bps", 25)
+        self._clock: Clock = clock
 
         self.evaluated: int = 0
         self.accepted: int = 0
@@ -152,7 +154,7 @@ class ArbitrageStrategy:
         ctx: AI SignalContext to modulate thresholds.
         """
         self.evaluated += 1
-        now = now_ts if now_ts is not None else _now_ms()
+        now = now_ts if now_ts is not None else self._clock.now_ms()
         signal_age_ms = now - fv.ts
 
         def _reject(reason: str) -> ArbEvaluation:
@@ -422,7 +424,3 @@ class ArbitrageStrategy:
 
     def reload_config(self, config: ArbConfig) -> None:
         self._cfg = config
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

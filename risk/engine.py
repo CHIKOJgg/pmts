@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
-import time
 from typing import Callable, Dict, Optional, Tuple
 
 from execution.models import OrderProposal
@@ -547,8 +546,3 @@ def _projected_delta(current_delta: float, proposal: OrderProposal) -> float:
         return current_delta - qty
     else:  # SELL_NO
         return current_delta + qty
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
