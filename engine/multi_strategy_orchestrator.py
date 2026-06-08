@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import queue
 from typing import Any, Dict, List, Optional
 
 from engine.strategy_runner import run_strategy_process
@@ -14,14 +15,14 @@ class MultiStrategyOrchestrator:
     def __init__(self, strategy_configs: List[Dict[str, Any]]) -> None:
         self._configs = strategy_configs
         self._processes: Dict[str, multiprocessing.Process] = {}
-        self._message_queues: Dict[str, multiprocessing.Queue] = {}
-        self._result_queues: Dict[str, multiprocessing.Queue] = {}
+        self._message_queues: Dict[str, multiprocessing.Queue[Any]] = {}
+        self._result_queues: Dict[str, multiprocessing.Queue[Any]] = {}
 
     def start_all(self) -> None:
         for config in self._configs:
             sid = config["id"]
-            mq: multiprocessing.Queue = multiprocessing.Queue()
-            rq: multiprocessing.Queue = multiprocessing.Queue()
+            mq: multiprocessing.Queue[Any] = multiprocessing.Queue()
+            rq: multiprocessing.Queue[Any] = multiprocessing.Queue()
 
             proc = multiprocessing.Process(
                 target=run_strategy_process,
@@ -57,7 +58,7 @@ class MultiStrategyOrchestrator:
             while not self._result_queues[strategy_id].empty():
                 try:
                     results.append(self._result_queues[strategy_id].get_nowait())
-                except multiprocessing.queues.Empty:
+                except queue.Empty:
                     break
         return results
 
@@ -82,8 +83,8 @@ class MultiStrategyOrchestrator:
                 self._processes[strategy_id].terminate()
                 self._processes[strategy_id].join(timeout=2.0)
 
-        mq = multiprocessing.Queue()
-        rq = multiprocessing.Queue()
+        mq: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        rq: multiprocessing.Queue[Any] = multiprocessing.Queue()
         proc = multiprocessing.Process(
             target=run_strategy_process,
             args=(strategy_id, config, mq, rq),

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from execution.models import OrderProposal
 from infrastructure.observability import CAPITAL_UTILIZATION, DRAWDOWN_PCT, KILL_SWITCH_ACTIVE
@@ -22,7 +22,7 @@ from portfolio.manager import PortfolioManager
 from risk.kill_switch import KillSwitch
 from risk.limits import DEFAULT_LIMITS, RiskLimits
 from src.clock import Clock, LiveClock
-from src.types import (
+from src.enums import (
     ConnectorStatus,
     Platform,
     RejectReason,
@@ -53,6 +53,18 @@ class RiskDecision:
         "kill_switch_active",
         "decided_at",
     )
+
+    proposal_id: str
+    verdict: RiskVerdict
+    reject_reason: Optional[RejectReason]
+    reject_detail: Optional[str]
+    capital_available: float
+    capital_reserved: float
+    mtm_drawdown_pct: float
+    peak_equity_usdc: float
+    current_equity_usdc: float
+    kill_switch_active: bool
+    decided_at: int
 
     def __init__(
         self,
@@ -110,9 +122,9 @@ class RiskEngine:
         kill_switch: KillSwitch,
         limits: RiskLimits = DEFAULT_LIMITS,
         connector_status_fn: Optional[Callable[[Platform], ConnectorStatus]] = None,
-        stream_writer: Optional[Callable] = None,
-        store=None,
-        alert_router=None,
+        stream_writer: Optional[Callable[..., Any]] = None,
+        store: Any = None,
+        alert_router: Any = None,
         clock: Optional[Clock] = None,
     ) -> None:
         self._portfolio = portfolio

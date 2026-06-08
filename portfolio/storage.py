@@ -1,11 +1,11 @@
 import sqlite3
 import logging
 import hashlib
-from typing import Dict, Tuple, Optional, List
+from typing import Any, Dict, Tuple, Optional, List
 
 
 from portfolio.manager import _Position, FillRecord
-from src.types import Platform, StrategyId
+from src.enums import Platform, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +23,12 @@ class SqlitePortfolioStore:
         self._closed = False
         self._init_db()
 
-    def __enter__(self):
+    def __enter__(self) -> "SqlitePortfolioStore":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close()
-        return False
+        return None
 
     def close(self) -> None:
         """Close the SQLite connection safely."""
@@ -179,11 +179,11 @@ class SqlitePortfolioStore:
         except Exception as exc:
             logger.error("Failed to save redemption to SQLite: %s", exc)
 
-    def load_state(self) -> dict:
+    def load_state(self) -> Dict[str, Any]:
         """Load the entire portfolio state on startup."""
         cur = self._conn.cursor()
         
-        state = {"cash_usdc": None, "peak_equity": None, "closed_pnl": 0.0}
+        state: Dict[str, Any] = {"cash_usdc": None, "peak_equity": None, "closed_pnl": 0.0}
         for row in cur.execute("SELECT key, value FROM state"):
             state[row["key"]] = row["value"]
 

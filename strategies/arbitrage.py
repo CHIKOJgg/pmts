@@ -12,7 +12,7 @@ from ai.signal_context import SignalContext
 from data.models import FeatureVector
 from execution.models import OrderProposal
 from src.clock import Clock, LiveClock
-from src.types import ArbLeg, OrderType, Platform, Side, StrategyId
+from src.enums import ArbLeg, OrderType, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,10 @@ OFI_ADVERSE_THRESHOLD: float = 0.25  # OFI above this → adversity premium
 OFI_ADVERSE_MULT: float = 1.60  # impact multiplier when OFI adverse
 MIN_DEPTH_USDC: float = 10.0  # minimum depth for reliable cost estimate
 FILL_CERTAINTY: float = 0.65  # fraction of displayed depth actually fillable
+
+# Advanced signals constants
+LATENCY_ARB_STALENESS_MS: int = 500  # staleness delta for latency arb detection
+LATENCY_ARB_SIZE_BOOST: float = 1.20  # position size boost for latency arb
 
 ARB_EXPIRY_MS: int = 2_000  # 2-second deadline for both legs
 
@@ -87,6 +91,10 @@ class ArbConfig:
     pm_fee_bps: int = 20  # Polymarket taker fee (configurable)
     op_fee_bps: int = 25  # Opinion Markets taker fee (configurable)
     min_days_to_resolution: float = 0.0  # hard reject floor; sizing is reduced below 1 day
+    ofi_adverse_threshold: float = OFI_ADVERSE_THRESHOLD  # NEW
+    ofi_adverse_mult: float = OFI_ADVERSE_MULT  # NEW
+    latency_arb_staleness_ms: int = LATENCY_ARB_STALENESS_MS  # NEW
+    latency_arb_size_boost: float = LATENCY_ARB_SIZE_BOOST  # NEW
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +150,38 @@ class ArbitrageStrategy:
         self.rejected_no_edge: int = 0
         self.rejected_spread: int = 0
         self.rejected_depth: int = 0
+        self.rejected_ofi: int = 0
+
+    # ── Advanced signal adjustments ──────────────────────────────────────────────
+
+    def _adjust_for_ofi(self, raw_edge: float, ofi_pm: float, ofi_op: float) -> float:
+        """Apply OFI adverse-selection penalty to net edge."""
+        ofi_net = ofi_pm - ofi_op  # positive = flow toward PM, favorable for arb
+        if abs(ofi_net) > self._cfg.ofi_adverse_threshold:
+            penalty = 1 + (abs(ofi_net) - self._cfg.ofi_adverse_threshold) * self._cfg.ofi_adverse_mult
+            return raw_edge / penalty
+        return raw_edge
+
+    def _dynamic_min_edge(self, vol_regime: Optional[str]) -> float:
+        """Tighten edge requirement in low-vol (thin books), relax in high-vol."""
+        if vol_regime is None:
+            return self._cfg.min_net_edge
+        return {
+            "LOW":    self._cfg.min_net_edge * 1.5,   # tighter in calm markets
+            "NORMAL": self._cfg.min_net_edge,
+            "HIGH":   self._cfg.min_net_edge * 0.8,   # relax in volatile markets
+            "SPIKE":  self._cfg.min_net_edge * 0.7,   # even more relaxed in spikes
+        }.get(vol_regime, self._cfg.min_net_edge)
+
+    def _detect_latency_arb(self, fv: FeatureVector) -> bool:
+        """Detect cross-venue latency arbitrage opportunity."""
+        # Check if feed age delta between venues exceeds threshold
+        # This requires feed_age_ms to be available on FeatureVector
+        # For now, we check if spread delta suggests latency arb
+        spread_delta = abs(fv.spread_pm - fv.spread_op)
+        return spread_delta > self._cfg.latency_arb_staleness_ms / 10000.0
+
+    # ── End advanced signal adjustments ────────────────────────────────────────
 
     def evaluate(
         self, fv: FeatureVector, now_ts: Optional[int] = None, ctx: Optional[SignalContext] = None
@@ -286,7 +326,11 @@ class ArbitrageStrategy:
         c2_frac = c2.as_fraction(raw_size)
         net_edge = gross_edge - c1_frac - c2_frac
 
-        min_net_edge = self._cfg.min_net_edge
+        # ── Advanced signals: OFI adjustment ──────────────────────────────────
+        net_edge = self._adjust_for_ofi(net_edge, l1_ofi, l2_ofi)
+
+        # ── Advanced signals: Dynamic min_net_edge based on vol regime ─────────
+        min_net_edge = self._dynamic_min_edge(fv.vol_regime)
 
         if fv.vol_30s is not None and fv.vol_30s > 0.01:
             min_net_edge *= 1.5
@@ -297,6 +341,12 @@ class ArbitrageStrategy:
 
         if ctx is not None:
             min_net_edge *= max(0.1, 1.0 + ctx.confidence_adjustment)
+
+        # ── Advanced signals: Latency arb detection ────────────────────────────
+        latency_arb_boost = 1.0
+        if self._detect_latency_arb(fv):
+            latency_arb_boost = self._cfg.latency_arb_size_boost
+            logger.info("LATENCY ARB DETECTED market=%s boost=%.2f", fv.market_id, latency_arb_boost)
 
         if net_edge < min_net_edge:
             self.rejected_no_edge += 1
@@ -324,6 +374,9 @@ class ArbitrageStrategy:
             final_size = max(self._cfg.min_order_usdc, raw_size * scale)
         else:
             final_size = raw_size
+
+        # Apply latency arb size boost if detected
+        final_size *= latency_arb_boost
 
         # ── Build proposals ───────────────────────────────────────────────────
         group_id = str(uuid.uuid4())

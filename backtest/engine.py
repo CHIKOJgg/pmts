@@ -32,7 +32,7 @@ from risk.engine import RiskEngine, _drawdown
 from risk.kill_switch import KillSwitch
 from risk.limits import DEFAULT_LIMITS, RiskLimits
 from src.clock import SimClock
-from src.types import OrderStatus, Platform, Side, StrategyId
+from src.enums import OrderStatus, Platform, Side, StrategyId
 from strategies.arbitrage import ArbConfig
 from strategies.delta_neutral import DeltaNeutralConfig
 

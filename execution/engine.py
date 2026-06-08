@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import Any, Callable, Coroutine, List, Optional, Protocol, runtime_checkable
 
 from execution.models import ExecutionResult, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
+from infrastructure.alerting import AlertRouter
 from infrastructure.observability import (
     ACTIVE_ORDERS_COUNT,
     API_ERRORS_TOTAL,
@@ -23,11 +23,11 @@ from risk.engine import RiskEngine
 from src.clock import Clock, LiveClock
 from src.errors import ExchangeRejected
 from src.protocols import MarketDataProvider, PortfolioStore
-from src.types import ArbLeg, OrderStatus, OrderType, Platform, Side, StrategyId
+from src.enums import ArbLeg, OrderStatus, OrderType, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
 
-_ResultCB = Callable[[ExecutionResult], Coroutine]
+_ResultCB = Callable[[ExecutionResult], Coroutine[Any, Any, None]]
 
 # Retry policy
 MAX_SUBMIT_ATTEMPTS: int = 3
@@ -172,7 +172,7 @@ class ExecutionEngine:
         mdb: Optional[MarketDataProvider] = None,
         max_concurrent: int = 5,
         tracker_retention_ms: int = TRACKER_RETENTION_MS,
-        alert_router: Optional[Any] = None,  # AlertRouter type
+        alert_router: Optional[AlertRouter] = None,
         clock: Optional[Clock] = None,
     ) -> None:
         self._client = client
@@ -187,7 +187,7 @@ class ExecutionEngine:
         self._exch_to_proposal: dict[str, str] = {}
 
         # Priority submission queue
-        self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        self._queue: asyncio.PriorityQueue[_QueueEntry] = asyncio.PriorityQueue()
         self._seq: int = 0
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent)
         self._tracker_retention_ms = tracker_retention_ms
@@ -199,7 +199,7 @@ class ExecutionEngine:
         self.submit_base_delay_s = SUBMIT_BASE_DELAY_S
 
         self._callbacks: list[_ResultCB] = []
-        self._tasks: list[asyncio.Task] = []
+        self._tasks: list[asyncio.Task[None]] = []
         self._stopped: bool = False
 
         # Metrics
@@ -213,6 +213,7 @@ class ExecutionEngine:
         self.total_filled_usdc: float = 0.0
         self.submit_retries: int = 0
         self.reconciliation_complete: bool = False
+        self._consecutive_errors: int = 0
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -362,7 +363,7 @@ class ExecutionEngine:
 
         if self._store:
             # Step 6: Persist submission before trying to send it
-            self._store.save_order(submission.proposal_id, json.dumps(submission.model_dump()))
+            self._store.save_order(submission.proposal_id, json.dumps(submission.model_dump()), exchange_order_id=None)
 
         await self._queue.put(_QueueEntry(priority, self._seq, submission))
 
@@ -484,6 +485,7 @@ class ExecutionEngine:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self._consecutive_errors += 1
                 if attempt < MAX_SUBMIT_ATTEMPTS - 1:
                     self.submit_retries += 1
                     delay = self.submit_base_delay_s * (2**attempt)
@@ -526,6 +528,7 @@ class ExecutionEngine:
             self._store.update_order_exchange_id(submission.proposal_id, placed.exchange_order_id)
 
         self.orders_submitted += 1
+        self._consecutive_errors = 0  # Reset on success
         await self._dispatch(submit_result)
 
         if placed.tx_hash:
@@ -599,8 +602,11 @@ class ExecutionEngine:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            self._consecutive_errors += 1
             logger.warning("Poll error for %s: %s", tracker.proposal_id[:8], exc)
             return False
+
+        self._consecutive_errors = 0  # Reset on success
 
         if resp.tx_hash and not tracker.tx_hash:
             tracker.tx_hash = resp.tx_hash
@@ -780,7 +786,3 @@ class ExecutionEngine:
 
 
 DUST_FLOOR_USDC_LOCAL: float = 0.001
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

@@ -9,6 +9,7 @@ Zero external dependencies. Never fails. Used when:
 
 from __future__ import annotations
 
+import logging
 import math
 
 from ai.signal_context import (
@@ -19,6 +20,8 @@ from ai.signal_context import (
     VolRegime,
 )
 from data.models import FeatureVector
+
+logger = logging.getLogger(__name__)
 
 _SPREAD_THIN = 0.08  # spread/ask > 8% → THIN
 _VOL_HIGH = 0.015  # vol_30s > 1.5% → HIGH

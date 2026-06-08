@@ -13,7 +13,7 @@ from data.models import MarketSnapshot
 from scripts.paper_soak import _build_runtime_env, _coverage_ok
 from scripts.run_paper_validation import SYNTHETIC_MARKETS, _write_synthetic_registry
 from scripts.build_market_registry import _logical_id, _normalize_title, _pair_markets
-from src.types import Platform
+from src.enums import Platform
 
 
 class TestPaperSoakHarness(unittest.TestCase):

@@ -44,7 +44,7 @@ class MarketMonitor:
         self._markets = list(markets) if markets is not None else []
         self._poll_interval_s = poll_interval_s
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: Optional[asyncio.Task[None]] = None
 
     def set_markets(self, markets: Sequence[str]) -> None:
         self._markets = list(markets)

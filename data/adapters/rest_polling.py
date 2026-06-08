@@ -1,13 +1,13 @@
 import asyncio
 import logging
-import time
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 
 from data.market_data_provider import _SnapshotCB
 from data.models import MarketSnapshot
-from src.types import Platform
+from src.clock import Clock, LiveClock
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +25,18 @@ class RestPollingAdapter:
         markets: list[str],
         poll_interval_s: float = 0.5,
         taker_fee_bps: int = 20,
+        clock: Clock = LiveClock(),
     ) -> None:
         self._platform = platform
         self._host = host.rstrip("/")
         self._markets = set(markets)
         self._poll_interval_s = poll_interval_s
         self._taker_fee_bps = taker_fee_bps
+        self._clock = clock
 
         self._cb: Optional[_SnapshotCB] = None
         self._session: Optional[aiohttp.ClientSession] = None
-        self._task: Optional[asyncio.Task] = None
+        self._task: Optional[asyncio.Task[None]] = None
         self._stopped = False
 
     @property
@@ -74,7 +76,7 @@ class RestPollingAdapter:
 
     async def _poll_loop(self) -> None:
         while not self._stopped:
-            start_time = time.time()
+            start_time = self._clock.now_ms()
             
             # Fetch for all markets
             # Note: This is an MVP implementation that fetches each market sequentially.
@@ -91,7 +93,7 @@ class RestPollingAdapter:
                 except Exception as exc:
                     logger.debug("Failed to poll %s %s: %s", self._platform.value, market_id, exc)
 
-            elapsed = time.time() - start_time
+            elapsed = (self._clock.now_ms() - start_time) / 1000.0
             sleep_time = max(0.01, self._poll_interval_s - elapsed)
             
             try:
@@ -118,7 +120,7 @@ class PolymarketPollingAdapter(RestPollingAdapter):
             if resp.status != 200:
                 return None
             data = await resp.json()
-            return _snapshot_from_book(data, market_id, self._platform, self._taker_fee_bps)
+            return _snapshot_from_book(data, market_id, self._platform, self._taker_fee_bps, self._clock)
 
 
 class OpinionPollingAdapter(RestPollingAdapter):
@@ -135,7 +137,7 @@ class OpinionPollingAdapter(RestPollingAdapter):
             if resp.status != 200:
                 return None
             data = await resp.json()
-            return _snapshot_from_book(data, market_id, self._platform, self._taker_fee_bps)
+            return _snapshot_from_book(data, market_id, self._platform, self._taker_fee_bps, self._clock)
 
 
 def _snapshot_from_book(
@@ -143,6 +145,7 @@ def _snapshot_from_book(
     market_id: str,
     platform: Platform,
     taker_fee_bps: int,
+    clock: Clock,
 ) -> Optional[MarketSnapshot]:
     if not isinstance(data, dict):
         return None
@@ -170,7 +173,8 @@ def _snapshot_from_book(
     bid_depth = _depth_from_book(data, "bid_depth_usdc", "bid_depth", bids, yes_bid)
     ask_depth = _depth_from_book(data, "ask_depth_usdc", "ask_depth", asks, yes_ask)
 
-    ts = int(_first_float(data, ("ts", "timestamp", "time")) or time.time() * 1000)
+    now_ms = clock.now_ms()
+    ts = int(_first_float(data, ("ts", "timestamp", "time")) or now_ms)
 
     try:
         return MarketSnapshot(
@@ -184,7 +188,7 @@ def _snapshot_from_book(
             ask_depth_usdc=ask_depth,
             taker_fee_bps=taker_fee_bps,
             ts=ts,
-            received_ts=int(time.time() * 1000),
+            received_ts=now_ms,
             is_stale=False,
         )
     except Exception:

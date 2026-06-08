@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, asdict
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from src.types import Platform
+from src.enums import Platform
 from src.errors import CrossedBookError
 
 
@@ -18,7 +18,7 @@ from src.errors import CrossedBookError
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _model_copy(instance, update: dict = None):
+def _model_copy(instance: Any, update: Optional[dict[str, Any]] = None) -> Any:
     """Return a new instance with updated fields (mirroring pydantic's API)."""
     d = asdict(instance)
     if update:
@@ -26,7 +26,7 @@ def _model_copy(instance, update: dict = None):
     return instance.__class__(**d)
 
 
-def _model_dump(instance) -> dict:
+def _model_dump(instance: Any) -> dict[str, Any]:
     """Return a plain dict (mirroring pydantic's API)."""
     return asdict(instance)
 
@@ -52,7 +52,7 @@ class MarketSnapshot:
     is_stale:       bool = False
     days_to_resolution: Optional[float] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.yes_bid >= self.yes_ask:
             raise CrossedBookError(
                 f"Crossed YES book on {self.market_id}: "
@@ -85,11 +85,14 @@ class MarketSnapshot:
 
     # ── Pydantic-compatible helpers ──────────────────────────────────────────
 
-    def model_copy(self, update: dict = None) -> "MarketSnapshot":
-        return _model_copy(self, update)
+    def model_copy(self, update: Optional[dict[str, Any]] = None) -> "MarketSnapshot":
+        d = asdict(self)
+        if update:
+            d.update(update)
+        return self.__class__(**d)
 
-    def model_dump(self) -> dict:
-        return _model_dump(self)
+    def model_dump(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -132,7 +135,10 @@ class FeatureVector:
     bid_depth_op: float
     ask_depth_op: float
 
-    def __post_init__(self):
+    # Volatility regime (None during warm-up)
+    vol_regime: Optional[str] = None
+
+    def __post_init__(self) -> None:
         if math.isnan(self.arb_signal) and not self.stale_markets:
             raise ValueError("stale_markets must be non-empty when arb_signal is NaN")
         if not math.isnan(self.arb_signal) and self.stale_markets:
@@ -142,7 +148,13 @@ class FeatureVector:
     def arb_tradeable(self) -> bool:
         return not math.isnan(self.arb_signal) and self.arb_signal > 0.0
 
-    def model_dump(self) -> dict:
-        d = _model_dump(self)
+    def model_copy(self, update: Optional[dict[str, Any]] = None) -> "FeatureVector":
+        d = asdict(self)
+        if update:
+            d.update(update)
+        return self.__class__(**d)
+
+    def model_dump(self) -> dict[str, Any]:
+        d = asdict(self)
         d["stale_markets"] = [p.value for p in self.stale_markets]
         return d

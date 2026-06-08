@@ -7,7 +7,7 @@ import logging
 import threading
 import uuid
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from infrastructure.observability import (
     CAPITAL_UTILIZATION,
@@ -18,7 +18,7 @@ from infrastructure.observability import (
 )
 from src.clock import Clock, LiveClock
 from src.errors import NegativeHoldings
-from src.types import Outcome, Platform, Side
+from src.enums import Outcome, Platform, Side
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +216,8 @@ class PortfolioManager:
         self,
         initial_cash_usdc: float,
         price_source: _PriceSource,
-        stream_writer: Optional[Callable] = None,
-        store=None,
+        stream_writer: Optional[Callable[..., Any]] = None,
+        store: Any = None,
         clock: Optional[Clock] = None,
     ) -> None:
         if initial_cash_usdc < 0:
@@ -232,7 +232,7 @@ class PortfolioManager:
         self._peak_equity: float = initial_cash_usdc
         self._closed_pnl: float = 0.0
         self._price_source: _PriceSource = price_source
-        self._stream_writer: Optional[Callable] = stream_writer
+        self._stream_writer: Optional[Callable[..., Any]] = stream_writer
         self._store = store
         self._clock = clock or LiveClock()
 
@@ -248,8 +248,8 @@ class PortfolioManager:
                 "Loaded portfolio state from SQLite. Cash: $%.2f, Positions: %d", self._cash_usdc, len(self._positions)
             )
 
-        self._tasks: list[asyncio.Task] = []
-        self._background_tasks: set[asyncio.Task] = set()
+        self._tasks: list[asyncio.Task[None]] = []
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._stopped: bool = False
 
         self.fill_count: int = 0
@@ -454,7 +454,7 @@ class PortfolioManager:
         markets = {mid for (mid, _) in self._positions}
         return {m: self.get_delta(m).net_delta for m in markets}
 
-    def get_all_positions(self) -> list:
+    def get_all_positions(self) -> List[DeltaResult]:
         """Return all positions as a list of DeltaResult-like objects for API consumption."""
         return [
             DeltaResult(
@@ -488,7 +488,7 @@ class PortfolioManager:
 
     # ── Snapshot ─────────────────────────────────────────────────────────────
 
-    def build_snapshot(self) -> dict:
+    def build_snapshot(self) -> Dict[str, Any]:
         entries = []
         total_pos = 0.0
         for (mid, plat), pos in self._positions.items():

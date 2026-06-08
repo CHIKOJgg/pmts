@@ -80,7 +80,7 @@ class TestMDPFeatureEngineIntegration(unittest.TestCase):
 
     def _snap(self, platform, mid=0.50, spread=0.02, ts_offset=0):
         from data.models import MarketSnapshot
-        from src.types import Platform
+        from src.enums import Platform
         now = now_ms() + ts_offset
         return MarketSnapshot(
             market_id="TEST-1",
@@ -117,7 +117,7 @@ class TestMDPFeatureEngineIntegration(unittest.TestCase):
     def test_arb_signal_value(self):
         """arb_signal = 1 - yes_ask_pm - no_ask_op - fee_pm - fee_op."""
         from data.models import MarketSnapshot
-        from src.types import Platform
+        from src.enums import Platform
         now = now_ms()
         # Construct a specific crossed market for exact calculation
         pm = MarketSnapshot("M", Platform.POLYMARKET,
@@ -150,7 +150,7 @@ class TestMDPFeatureEngineIntegration(unittest.TestCase):
     def test_stale_snap_marked(self):
         """Snapshot with ts far in the past should be marked stale."""
         from data.models import MarketSnapshot
-        from src.types import Platform
+        from src.enums import Platform
         old_ts = now_ms() - 10_000  # 10 seconds ago
         snap = MarketSnapshot("M", Platform.POLYMARKET,
                               yes_bid=0.48, yes_ask=0.52,
@@ -199,7 +199,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
     def _proposal(self, size=100.0, strategy="mm", market="BTC-Q4", price=0.50):
         from execution.models import OrderProposal
-        from src.types import Platform, Side, OrderType, StrategyId
+        from src.enums import Platform, Side, OrderType, StrategyId
         strat = {"mm": StrategyId.MM, "arb": StrategyId.ARB, "hedge": StrategyId.HEDGE}[strategy]
         kwargs = dict(
             proposal_id=str(uuid.uuid4()),
@@ -215,7 +215,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         )
         if strat == StrategyId.ARB:
             kwargs["leg_group_id"] = str(uuid.uuid4())
-            kwargs["leg_number"]   = __import__("src.types", fromlist=["ArbLeg"]).ArbLeg.LEG_1
+            kwargs["leg_number"]   = __import__("src.enums", fromlist=["ArbLeg"]).ArbLeg.LEG_1
             kwargs["min_fill_ratio"] = 0.80
         return OrderProposal(**kwargs)
 
@@ -224,13 +224,13 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         self.assertTrue(d.approved)
 
     def test_order_too_large_rejected(self):
-        from src.types import RejectReason
+        from src.enums import RejectReason
         d = self.risk.evaluate(self._proposal(size=400.0))  # > 300 limit
         self.assertTrue(d.rejected)
         self.assertEqual(d.reject_reason, RejectReason.ORDER_TOO_LARGE)
 
     def test_order_too_small_rejected(self):
-        from src.types import RejectReason
+        from src.enums import RejectReason
         d = self.risk.evaluate(self._proposal(size=0.50))
         self.assertTrue(d.rejected)
         self.assertEqual(d.reject_reason, RejectReason.ORDER_TOO_SMALL)
@@ -267,7 +267,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
     def test_kill_switch_fires_at_drawdown(self):
         """When equity < peak * (1 - kill_pct), kill switch activates."""
-        from src.types import RejectReason
+        from src.enums import RejectReason
         from risk.limits import RiskLimits
         from risk.kill_switch import KillSwitch
         from portfolio.manager import PortfolioManager
@@ -387,7 +387,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         from risk.engine import RiskEngine
         from risk.kill_switch import KillSwitch
         from risk.limits import RiskLimits
-        from src.types import Platform, StrategyId
+        from src.enums import Platform, StrategyId
 
         class _DummyMDP:
             def add_callback(self, cb):
@@ -652,7 +652,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         from risk.engine import RiskEngine
         from risk.kill_switch import KillSwitch
         from risk.limits import RiskLimits
-        from src.types import Platform
+        from src.enums import Platform
 
         def price_source(m, p):
             return (0.50, 0.50)
@@ -695,7 +695,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         """DeltaNeutralStrategy should refuse MM quotes if either venue is stale."""
         from data.models import FeatureVector
         from strategies.delta_neutral import DeltaNeutralStrategy
-        from src.types import Platform
+        from src.enums import Platform
 
         ts = now_ms()
         fresh = FeatureVector(
@@ -747,7 +747,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         """DeltaNeutralStrategy should suppress MM quotes when expiry is within one day."""
         from data.models import FeatureVector
         from strategies.delta_neutral import DeltaNeutralStrategy
-        from src.types import Platform
+        from src.enums import Platform
 
         ts = now_ms()
         fv = FeatureVector(
@@ -779,7 +779,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
     def test_dedup_blocks_repeated_proposal_id(self):
         """Same proposal_id within dedup window is rejected."""
-        from src.types import RejectReason
+        from src.enums import RejectReason
         p = self._proposal(size=50.0)
         d1 = self.risk.evaluate(p)
         d2 = self.risk.evaluate(p)  # same proposal_id
@@ -789,7 +789,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
 
     def test_terminal_notification_releases_reservation(self):
         """After notify_terminal, capital is freed for next proposal."""
-        from src.types import Platform
+        from src.enums import Platform
         self._proposal(size=9_500.0)
 
         from risk.limits import RiskLimits
@@ -838,7 +838,7 @@ class TestPortfolioIntegration(unittest.TestCase):
     def _fill(self, market="BTC-Q4", platform="polymarket",
               side="buy_yes", usdc=100.0, price=0.50):
         from portfolio.manager import FillRecord
-        from src.types import Platform
+        from src.enums import Platform
         return FillRecord(
             proposal_id=str(uuid.uuid4()),
             order_id=str(uuid.uuid4()),
@@ -902,7 +902,7 @@ class TestPortfolioIntegration(unittest.TestCase):
         run(pm.record_fill(self._fill(side="buy_yes", usdc=100.0, price=0.60)))
         # 250 tokens at 0.40 + 166.67 tokens at 0.60 = avg 0.4857
         delta = pm.get_delta("BTC-Q4")
-        pos = pm._positions.get(("BTC-Q4", __import__("src.types", fromlist=["Platform"]).Platform.POLYMARKET))
+        pos = pm._positions.get(("BTC-Q4", __import__("src.enums", fromlist=["Platform"]).Platform.POLYMARKET))
         expected_avg = (100.0 + 100.0) / (100.0/0.40 + 100.0/0.60)
         self.assertAlmostEqual(pos.avg_cost_yes, expected_avg, places=4)
         run(pm.stop())
@@ -955,7 +955,7 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
     def _fv(self, arb_signal=0.08, age_ms=50, spread=0.02,
             depth=500.0, ofi=0.0, mid_pm=0.45, mid_op=0.52):
         from data.models import FeatureVector
-        from src.types import Platform
+        from src.enums import Platform
         ts = now_ms() - age_ms
         return FeatureVector(
             market_id="BTC-Q4",
@@ -992,7 +992,7 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
     def test_nan_signal_rejected(self):
         from strategies.arbitrage import ArbitrageStrategy
         from data.models import FeatureVector
-        from src.types import Platform
+        from src.enums import Platform
         ts = now_ms()
         fv = FeatureVector(
             market_id="X", ts=ts, computed_ts=ts+1,
@@ -1026,7 +1026,7 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
 
     def test_leg_proposals_have_correct_leg_numbers(self):
         from strategies.arbitrage import ArbitrageStrategy, ArbConfig
-        from src.types import ArbLeg
+        from src.enums import ArbLeg
         arb = ArbitrageStrategy(ArbConfig(min_net_edge=0.003))
         result = arb.evaluate(self._fv(
             arb_signal=0.20, depth=1000.0, mid_pm=0.35, mid_op=0.62
@@ -1234,7 +1234,7 @@ class TestRegressions(unittest.TestCase):
         """BUG: Signal age was computed against wall-clock, rejecting all backtest signals."""
         from strategies.arbitrage import ArbitrageStrategy, ArbConfig
         from data.models import FeatureVector
-        from src.types import Platform
+        from src.enums import Platform
         arb = ArbitrageStrategy(ArbConfig(max_signal_age_ms=300))
         # Simulate a tick from 10 seconds ago
         old_ts = now_ms() - 10_000
@@ -1293,7 +1293,7 @@ class TestRegressions(unittest.TestCase):
     def test_order_proposal_arb_requires_leg_fields(self):
         """BUG: ARB proposals without leg fields would crash downstream."""
         from execution.models import OrderProposal
-        from src.types import Platform, Side, OrderType, StrategyId
+        from src.enums import Platform, Side, OrderType, StrategyId
         with self.assertRaises((ValueError, TypeError)):
             OrderProposal(
                 proposal_id=str(uuid.uuid4()),
@@ -1308,7 +1308,7 @@ class TestRegressions(unittest.TestCase):
     def test_crossed_book_raises(self):
         """BUG: Crossed books must raise immediately, not silently produce NaN."""
         from data.models import MarketSnapshot
-        from src.types import Platform
+        from src.enums import Platform
         from src.errors import CrossedBookError
         with self.assertRaises(CrossedBookError):
             MarketSnapshot(
@@ -1394,7 +1394,7 @@ class TestOrderTrackerIntegration(unittest.TestCase):
 
     def _sub(self, size=100.0, price=0.50, strategy="mm"):
         from execution.models import OrderSubmission
-        from src.types import Platform, Side, OrderType, StrategyId
+        from src.enums import Platform, Side, OrderType, StrategyId
         strat = {"mm": StrategyId.MM, "arb": StrategyId.ARB}[strategy]
         return OrderSubmission(
             order_id=str(uuid.uuid4()),
@@ -1419,7 +1419,7 @@ class TestOrderTrackerIntegration(unittest.TestCase):
 
     def test_submission_to_partial_to_filled(self):
         from execution.order_tracker import OrderTracker
-        from src.types import OrderStatus
+        from src.enums import OrderStatus
         t = OrderTracker(self._sub(size=100.0, price=0.50))
         r1 = t.record_submission("exch-001")
         self.assertEqual(r1.status, OrderStatus.SUBMITTED)
@@ -1451,7 +1451,7 @@ class TestOrderTrackerIntegration(unittest.TestCase):
     def test_expiry_check(self):
         from execution.order_tracker import OrderTracker
         from execution.models import OrderSubmission
-        from src.types import Platform, Side, OrderType, StrategyId
+        from src.enums import Platform, Side, OrderType, StrategyId
         sub = OrderSubmission(
             order_id=str(uuid.uuid4()), proposal_id=str(uuid.uuid4()),
             market_id="X", platform=Platform.POLYMARKET,
@@ -1471,7 +1471,7 @@ class TestExecutionEngineRetention(unittest.TestCase):
         from execution.engine import ExecutionEngine
         from execution.models import OrderSubmission
         from execution.order_tracker import OrderTracker
-        from src.types import Platform, Side, OrderType, StrategyId
+        from src.enums import Platform, Side, OrderType, StrategyId
 
         class _DummyClient:
             platform = Platform.POLYMARKET
@@ -1521,7 +1521,7 @@ class TestProductionValidationScenarios(unittest.TestCase):
         from strategies.arbitrage import ArbConfig
         from strategies.delta_neutral import DeltaNeutralConfig
         from engine.strategy_engine import StrategyEngine, StrategyConfig
-        from src.types import Platform, Side, OrderType, StrategyId, ArbLeg
+        from src.enums import Platform, Side, OrderType, StrategyId, ArbLeg
 
         class _DummyMDP:
             def add_callback(self, cb):
@@ -1649,7 +1649,7 @@ class TestProductionValidationScenarios(unittest.TestCase):
 
     def test_normal_arb_leg2_submits_after_leg1_fill(self):
         from execution.models import ExecutionResult
-        from src.types import OrderStatus
+        from src.enums import OrderStatus
 
         orchestrator, _, op_engine, _, leg1, leg2 = self._arb_setup(fill_ratio=1.0)
         result = ExecutionResult(
@@ -1670,7 +1670,7 @@ class TestProductionValidationScenarios(unittest.TestCase):
 
     def test_partial_leg1_below_min_ratio_skips_leg2(self):
         from execution.models import ExecutionResult
-        from src.types import OrderStatus
+        from src.enums import OrderStatus
 
         orchestrator, pm_engine, _, _, leg1, _ = self._arb_setup(fill_ratio=0.4)
         result = ExecutionResult(
@@ -1687,7 +1687,7 @@ class TestProductionValidationScenarios(unittest.TestCase):
         self.assertEqual(pm_engine.submit.await_count, 0)
 
     def test_kill_switch_cancels_all_open_orders(self):
-        from src.types import StrategyId, Platform
+        from src.enums import StrategyId, Platform
 
         orchestrator, pm_engine, op_engine, _, _, _ = self._arb_setup(fill_ratio=1.0)
         orchestrator._in_flight = {
@@ -1701,7 +1701,7 @@ class TestProductionValidationScenarios(unittest.TestCase):
 
     def test_market_resolution_auto_removes_market(self):
         from engine.market_monitor import MarketMonitor
-        from src.types import StrategyId, Platform
+        from src.enums import StrategyId, Platform
 
         orchestrator, pm_engine, op_engine, _, _, _ = self._arb_setup(fill_ratio=1.0)
         orchestrator._markets = ["BTC-Q4", "ETH-Q1"]
@@ -1793,7 +1793,7 @@ class TestProductionFixes(unittest.TestCase):
     def test_sqlite_fill_ledger_allows_multiple_partial_fills(self):
         from portfolio.storage import SqlitePortfolioStore
         from portfolio.manager import FillRecord, _Position
-        from src.types import Platform
+        from src.enums import Platform
 
         store = SqlitePortfolioStore(":memory:")
         position = _Position("M1", Platform.POLYMARKET)
@@ -1810,7 +1810,7 @@ class TestProductionFixes(unittest.TestCase):
     def test_paper_status_fills_are_delta_based(self):
         from execution.clients.paper import PaperTradingClient
         from execution.models import OrderSubmission
-        from src.types import Platform, Side, OrderType, StrategyId
+        from src.enums import Platform, Side, OrderType, StrategyId
 
         client = PaperTradingClient(fill_probability=0.0, seed=1)
         sub = OrderSubmission(

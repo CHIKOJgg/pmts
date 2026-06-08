@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from portfolio.manager import FillRecord
-from src.types import Platform, StrategyId
+from src.enums import Platform, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ except ImportError:
     asyncpg = None
 
 
-def _run_async(coro):
+def _run_async(coro: Any) -> Any:
     """Run a coroutine synchronously using a dedicated event loop."""
     loop = asyncio.new_event_loop()
     try:
@@ -41,8 +41,15 @@ class PostgresPortfolioStore:
         if self._pool:
             await self._pool.close()
 
+    def _require_pool(self) -> Any:
+        pool = self._pool
+        if pool is None:
+            raise RuntimeError("Postgres pool not connected. Call connect() first.")
+        return pool
+
     async def _init_db(self) -> None:
-        async with self._pool.acquire() as conn:
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS positions (
                     market_id TEXT,
@@ -92,14 +99,14 @@ class PostgresPortfolioStore:
     # ── Sync public API (backed by _run_async helper) ──────────────────────
 
     def save_fill_and_position(
-        self, fill: FillRecord, position, cash_usdc: float, peak_equity: float, closed_pnl: float
+        self, fill: FillRecord, position: Any, cash_usdc: float, peak_equity: float, closed_pnl: float
     ) -> None:
         _run_async(self._save_fill_and_position_async(fill, position, cash_usdc, peak_equity, closed_pnl))
 
     async def _save_fill_and_position_async(
-        self, fill: FillRecord, position, cash_usdc: float, peak_equity: float, closed_pnl: float
+        self, fill: FillRecord, position: Any, cash_usdc: float, peak_equity: float, closed_pnl: float
     ) -> None:
-        async with self._pool.acquire() as conn:
+        async with self._require_pool().acquire() as conn:
             await conn.execute("""
                 INSERT INTO positions (market_id, platform, yes_qty, no_qty, avg_cost_yes, avg_cost_no, realised_pnl)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -121,7 +128,7 @@ class PostgresPortfolioStore:
                     fill_price = EXCLUDED.fill_price,
                     ts = EXCLUDED.ts
             """, fill.proposal_id, fill.order_id, fill.market_id, fill.platform.value,
-                fill.side.value, fill.filled_usdc, fill.fill_price, fill.ts)
+                fill.side, fill.filled_usdc, fill.fill_price, fill.ts)
 
             await conn.execute("""
                 INSERT INTO state (key, value) VALUES ($1, $2), ($3, $4), ($5, $6)
@@ -129,15 +136,15 @@ class PostgresPortfolioStore:
             """, "cash_usdc", cash_usdc, "peak_equity", peak_equity, "closed_pnl", closed_pnl)
 
     def load_state(self) -> Dict[str, Any]:
-        async def _load():
-            async with self._pool.acquire() as conn:
+        async def _load() -> Dict[str, Any]:
+            async with self._require_pool().acquire() as conn:
                 rows = await conn.fetch("SELECT key, value FROM state")
                 return {row["key"]: row["value"] for row in rows}
-        return _run_async(_load())
+        return _run_async(_load())  # type: ignore[no-any-return]  # type: ignore[no-any-return]
 
     def save_order(self, proposal_id: str, submission_json: str, exchange_order_id: Optional[str]) -> None:
-        async def _save():
-            async with self._pool.acquire() as conn:
+        async def _save() -> None:
+            async with self._require_pool().acquire() as conn:
                 await conn.execute("""
                     INSERT INTO active_orders (proposal_id, exchange_order_id, submission_json)
                     VALUES ($1, $2, $3)
@@ -148,21 +155,21 @@ class PostgresPortfolioStore:
         _run_async(_save())
 
     def load_active_orders(self) -> List[Tuple[str, Optional[str], str]]:
-        async def _load():
-            async with self._pool.acquire() as conn:
+        async def _load() -> List[Tuple[str, Optional[str], str]]:
+            async with self._require_pool().acquire() as conn:
                 rows = await conn.fetch("SELECT proposal_id, exchange_order_id, submission_json FROM active_orders")
                 return [(r["proposal_id"], r["exchange_order_id"], r["submission_json"]) for r in rows]
-        return _run_async(_load())
+        return _run_async(_load())  # type: ignore[no-any-return]
 
     def remove_order(self, proposal_id: str) -> None:
-        async def _remove():
-            async with self._pool.acquire() as conn:
+        async def _remove() -> None:
+            async with self._require_pool().acquire() as conn:
                 await conn.execute("DELETE FROM active_orders WHERE proposal_id = $1", proposal_id)
         _run_async(_remove())
 
     def save_reservation(self, proposal_id: str, amount: float, platform: Platform, strategy_id: StrategyId) -> None:
-        async def _save():
-            async with self._pool.acquire() as conn:
+        async def _save() -> None:
+            async with self._require_pool().acquire() as conn:
                 await conn.execute("""
                     INSERT INTO reservations (proposal_id, amount, platform, strategy_id)
                     VALUES ($1, $2, $3, $4)
@@ -174,24 +181,24 @@ class PostgresPortfolioStore:
         _run_async(_save())
 
     def remove_reservation(self, proposal_id: str) -> None:
-        async def _remove():
-            async with self._pool.acquire() as conn:
+        async def _remove() -> None:
+            async with self._require_pool().acquire() as conn:
                 await conn.execute("DELETE FROM reservations WHERE proposal_id = $1", proposal_id)
         _run_async(_remove())
 
     def load_reservations(self) -> Dict[str, Tuple[float, Platform, StrategyId]]:
-        async def _load():
-            async with self._pool.acquire() as conn:
+        async def _load() -> Dict[str, Tuple[float, Platform, StrategyId]]:
+            async with self._require_pool().acquire() as conn:
                 rows = await conn.fetch("SELECT proposal_id, amount, platform, strategy_id FROM reservations")
                 return {
                     r["proposal_id"]: (r["amount"], Platform(r["platform"]), StrategyId(r["strategy_id"]))
                     for r in rows
                 }
-        return _run_async(_load())
+        return _run_async(_load())  # type: ignore[no-any-return]
 
     def save_kill_switch(self, active: bool) -> None:
-        async def _save():
-            async with self._pool.acquire() as conn:
+        async def _save() -> None:
+            async with self._require_pool().acquire() as conn:
                 await conn.execute("""
                     INSERT INTO state (key, value) VALUES ($1, $2)
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
@@ -199,11 +206,11 @@ class PostgresPortfolioStore:
         _run_async(_save())
 
     def load_kill_switch(self) -> bool:
-        async def _load():
-            async with self._pool.acquire() as conn:
+        async def _load() -> bool:
+            async with self._require_pool().acquire() as conn:
                 row = await conn.fetchrow("SELECT value FROM state WHERE key = $1", "kill_switch_active")
                 return bool(row["value"]) if row else False
-        return _run_async(_load())
+        return _run_async(_load())  # type: ignore[no-any-return]
 
     def is_healthy(self) -> bool:
         try:

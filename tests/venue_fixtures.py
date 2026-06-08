@@ -45,7 +45,7 @@ def polymarket_order_submission():
     import time as time_module
 
     from execution.models import OrderSubmission
-    from src.types import OrderType, Platform, Side, StrategyId
+    from src.enums import OrderType, Platform, Side, StrategyId
 
     return OrderSubmission(
         order_id="ord-polymarket-001",
@@ -69,7 +69,7 @@ def opinion_order_submission():
     import time as time_module
 
     from execution.models import OrderSubmission
-    from src.types import OrderType, Platform, Side, StrategyId
+    from src.enums import OrderType, Platform, Side, StrategyId
 
     return OrderSubmission(
         order_id="ord-opinion-001",

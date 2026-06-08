@@ -145,7 +145,7 @@ class TestDeterminism(unittest.TestCase):
             # Extract P&L (format: "$+XX.XX (+XX.XX%)") - use simpler regex to handle $ properly
             import re
 
-            pnl_match = re.search(r"P\&L:\s*([+-]\$[\d.]+)", output)
+            pnl_match = re.search(r"P\&L:\s*(\$[+-]?\d+\.\d+)", output)
             self.assertIsNotNone(pnl_match, f"P&L not found in run {i + 1}")
             results.append(pnl_match.group(1))
 
@@ -169,7 +169,7 @@ class TestDeterminism(unittest.TestCase):
 
             import re
 
-            pnl_match = re.search(r"P\&L:\s*([+-]\$[\d.]+)", output)
+            pnl_match = re.search(r"P\&L:\s*(\$[+-]?\d+\.\d+)", output)
             self.assertIsNotNone(pnl_match, f"P&L not found for seed {seed}")
             seed_results.append(float(pnl_match.group(1).replace("$", "")))
 
@@ -289,7 +289,15 @@ class TestPaperToLiveMigration(unittest.TestCase):
 
     def test_config_transition_validates_live_credentials(self):
         """Switching to live mode must validate all credentials are present."""
-        from config.settings import get_settings
+        from config.settings import get_settings, reload_settings
+
+        # Set up paper mode env vars
+        os.environ["MODE"] = "paper"
+        os.environ["ENABLE_TRADING"] = "false"
+        os.environ["MARKETS"] = "BTC-Q4,ETH-Q1,SOL-Q2"
+        os.environ["KILL_SWITCH_TOKEN"] = "TestToken123!@#$Secure"
+
+        reload_settings()
 
         # Create settings with paper mode (no live keys)
         settings = get_settings()
@@ -300,11 +308,22 @@ class TestPaperToLiveMigration(unittest.TestCase):
         except ValueError as e:
             self.fail(f"Paper mode validation failed unexpectedly: {e}")
 
+        # Now test live mode with ENABLE_TRADING=true but no API keys
+        os.environ["ENABLE_TRADING"] = "true"
+        reload_settings()
+        settings_live = get_settings()
+
         # Live mode without credentials should fail
         with self.assertRaises(ValueError) as context:
-            settings.validate(mode="live")
+            settings_live.validate(mode="live")
 
         self.assertIn("missing", str(context.exception).lower(), "Live mode should require credentials")
+
+        # Cleanup
+        for key in ["MODE", "ENABLE_TRADING", "MARKETS", "KILL_SWITCH_TOKEN"]:
+            if key in os.environ:
+                del os.environ[key]
+        reload_settings()
 
     def test_enable_trading_defaults_to_false(self):
         """ENABLE_TRADING must default to False for safety."""
@@ -328,6 +347,8 @@ def paper_mode_settings():
     """Fixture for paper mode configuration."""
     os.environ["MODE"] = "paper"
     os.environ["ENABLE_TRADING"] = "false"
+    os.environ["MARKETS"] = "BTC-Q4,ETH-Q1,SOL-Q2"
+    os.environ["KILL_SWITCH_TOKEN"] = "TestToken123!@#$Secure"
 
     from config.settings import reload_settings
 
@@ -345,6 +366,10 @@ def paper_mode_settings():
         del os.environ["MODE"]
     if "ENABLE_TRADING" in os.environ:
         del os.environ["ENABLE_TRADING"]
+    if "MARKETS" in os.environ:
+        del os.environ["MARKETS"]
+    if "KILL_SWITCH_TOKEN" in os.environ:
+        del os.environ["KILL_SWITCH_TOKEN"]
 
 
 @pytest.fixture
@@ -369,7 +394,7 @@ def backtest_result():
         return match.group(1) if match else None
 
     yield {
-        "pnl": extract_value(r"P\&L:\s*([+-]\$\d+\.\d+)"),
+        "pnl": extract_value(r"P\&L:\s*(\$[+-]?\d+\.\d+)"),
         "pct": extract_value(r"\(([+-]\d+\.\d+)%\)"),
         "evaluated": extract_value(r"(\d+)\s+eval"),
         "approved": extract_value(r"(\d+)\s+approved"),
@@ -397,7 +422,7 @@ def test_kill_switch_activation_flow():
     """Test complete kill switch activation and reset flow."""
     from risk.kill_switch import KillSwitch
 
-    token = "SandboxTest!@#$"
+    token = "SandboxTest!@#$Secure"
     ks = KillSwitch(token)
 
     # Initial state
@@ -435,7 +460,7 @@ def test_backtest_determinism():
         assert result.returncode == 0
 
         output = result.stdout + result.stderr
-        pnl_match = re.search(r"P\&L:\s*([+-]\$\d+\.\d+)", output)
+        pnl_match = re.search(r"P\&L:\s*(\$[+-]?\d+\.\d+)", output)
 
         assert pnl_match is not None, f"P&L not found in run {i}"
         results.append(pnl_match.group(1))

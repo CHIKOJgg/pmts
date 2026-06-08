@@ -6,13 +6,13 @@ import asyncio
 import hashlib
 import logging
 import random
-import time
 from dataclasses import dataclass
 from typing import List, Optional
 
 from data.market_data_provider import _SnapshotCB
 from data.models import MarketSnapshot
-from src.types import Platform
+from src.clock import Clock, LiveClock
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ class SyntheticMarketFeedAdapter:
         spread: float = 0.012,
         volatility: float = 0.008,
         depth_range: tuple[float, float] = (250.0, 2500.0),
+        clock: Clock = LiveClock(),
     ) -> None:
         self._market_ids = list(market_ids)
         self._platform = platform
@@ -62,7 +63,8 @@ class SyntheticMarketFeedAdapter:
         self._rng = random.Random(seed)
         self._callback: Optional[_SnapshotCB] = None
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: Optional[asyncio.Task[None]] = None
+        self._clock = clock
         self._states: dict[str, _SyntheticMarketState] = {}
 
         for market_id in self._market_ids:
@@ -128,7 +130,7 @@ class SyntheticMarketFeedAdapter:
             yes_ask = min(0.99, yes_bid + 0.01)
         no_bid = max(0.01, round(1.0 - yes_ask, 4))
         no_ask = min(0.99, round(1.0 - yes_bid, 4))
-        ts = int(time.time() * 1000)
+        ts = self._clock.now_ms()
 
         return MarketSnapshot(
             market_id=state.market_id,

@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, Coroutine, Dict, List, Optional, Protocol, Set, runtime_checkable
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Protocol, Set, runtime_checkable
 
 from data.models import MarketSnapshot
 from src.clock import Clock, LiveClock
-from src.types import Platform
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
 STALE_THRESHOLD_MS: int = 2_000
 SIDE_WRITE_TIMEOUT_S: float = 0.050
 
-_SnapshotCB = Callable[[MarketSnapshot], Coroutine]
+_SnapshotCB = Callable[[MarketSnapshot], Coroutine[Any, Any, None]]
 
 
 @runtime_checkable
@@ -41,15 +41,15 @@ class MarketDataProvider:
     def __init__(
         self,
         adapters: Optional[List[ExchangeAdapter]] = None,
-        stream_writer: Optional[Callable] = None,
-        alert_router=None,
+        stream_writer: Optional[Callable[..., Any]] = None,
+        alert_router: Any = None,
         clock: Optional[Clock] = None,
     ) -> None:
         self._index: dict[tuple[str, Platform], MarketSnapshot] = {}
         self._callbacks: list[_SnapshotCB] = []
         self._stream_writer = stream_writer
         self._adapters: List[ExchangeAdapter] = adapters or []
-        self._background_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._alert_router = alert_router
         self._clock = clock or LiveClock()
 
@@ -178,10 +178,10 @@ class MarketDataProvider:
     def get_total_markets_seen(self) -> int:
         return len(self._index)
 
-    def get_health(self) -> dict:
+    def get_health(self) -> Dict[str, Any]:
         """Check if adapters have received recent data."""
         now = self._clock.now_ms()
-        health = {}
+        health: Dict[str, Any] = {}
         for plat in Platform:
             # Check if we have ANY snapshot for this platform within threshold
             last_ts = 0
@@ -201,9 +201,12 @@ class MarketDataProvider:
     # ── Internal ─────────────────────────────────────────────────────────────
 
     async def _side_write(self, snapshot: MarketSnapshot) -> None:
+        writer = self._stream_writer
+        if writer is None:
+            return
         try:
             await asyncio.wait_for(
-                self._stream_writer("market_snapshots", snapshot.model_dump()),
+                writer("market_snapshots", snapshot.model_dump()),
                 timeout=SIDE_WRITE_TIMEOUT_S,
             )
         except Exception as exc:

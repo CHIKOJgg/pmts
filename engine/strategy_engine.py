@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Coroutine, Dict, List, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from ai.enhancer import AISignalEnhancer
 from ai.signal_context import NEUTRAL_CONTEXT, SignalContext
 from data.models import FeatureVector
 from execution.models import OrderProposal
 from src.clock import Clock, LiveClock
-from src.types import Platform
+from src.enums import Platform
 from strategies.arbitrage import ArbConfig, ArbitrageStrategy
 from strategies.delta_neutral import DeltaNeutralConfig, DeltaNeutralStrategy
 
 logger = logging.getLogger(__name__)
 
-_ProposalCB = Callable[[OrderProposal], Coroutine]
+_ProposalCB = Callable[[OrderProposal], Coroutine[Any, Any, None]]
 
 
 @dataclass
@@ -32,7 +32,7 @@ class StrategyConfig:
     arb_enabled: bool = True
     mm_enabled: bool = True
     hedge_enabled: bool = True
-    mm_platforms: List = field(default_factory=lambda: list(Platform))
+    mm_platforms: List[Platform] = field(default_factory=lambda: list(Platform))
 
 
 @dataclass
@@ -240,7 +240,7 @@ class StrategyEngine:
                 continue
 
             # Check budget before each proposal to prevent over-allocation
-            total_for_this_platform = 0
+            total_for_this_platform: float = 0.0
             if result.bid_proposal:
                 total_for_this_platform += result.bid_proposal.size_usdc
             if result.ask_proposal:

@@ -6,8 +6,9 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiohttp
-from asyncio_throttle import Throttler
 from eth_account import Account
+
+from execution.rate_limiter import VenueRateLimiter
 
 from execution.engine import (
     ExchangeClient,
@@ -18,7 +19,7 @@ from execution.engine import (
 )
 from execution.models import OrderSubmission
 from src.errors import ExchangeRejected
-from src.types import Platform
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class PolymarketClient:
             self._domain["chainId"] = 80002
 
         self._session: Optional[aiohttp.ClientSession] = None
-        self._throttler = Throttler(rate_limit_per_s)
+        self._limiter = VenueRateLimiter.for_venue("polymarket", rate_limit_per_s)
         self._last_status_filled_usdc: Dict[str, float] = {}
 
         logger.info(
@@ -102,10 +103,10 @@ class PolymarketClient:
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
-        self._wallet_private_key = None
+        self._wallet_private_key = ""
         self._last_status_filled_usdc.clear()
 
-    async def _read_json_or_text(self, resp) -> Any:
+    async def _read_json_or_text(self, resp: aiohttp.ClientResponse) -> Any:
         try:
             return await resp.json()
         except Exception:
@@ -165,69 +166,69 @@ class PolymarketClient:
         }
 
         signed = Account.sign_typed_data(self._wallet_private_key, full_message=structured_data)
-        return signed.signature.hex()
+        return str(signed.signature.hex())
 
     async def place_order(
         self, submission: OrderSubmission, effective_price: float, nonce: Optional[int] = None
     ) -> PlacedOrderResponse:
         """Submit a limit order to Polymarket CLOB."""
-        async with self._throttler:
-            tokens = int(submission.token_quantity)
-            usdc_amount = int(submission.size_usdc * 1_000_000)
+        await self._limiter.acquire()
+        tokens = int(submission.token_quantity)
+        usdc_amount = int(submission.size_usdc * 1_000_000)
 
-            if "BUY" in submission.side.value:
-                maker_amount = usdc_amount
-                taker_amount = tokens
-            else:
-                maker_amount = tokens
-                taker_amount = usdc_amount
+        if "BUY" in submission.side.value:
+            maker_amount = usdc_amount
+            taker_amount = tokens
+        else:
+            maker_amount = tokens
+            taker_amount = usdc_amount
 
-            # Use provided nonce for idempotency, fallback to timestamp
-            final_nonce = nonce if nonce is not None else int(time.time() * 1000)
+        # Use provided nonce for idempotency, fallback to timestamp
+        final_nonce = nonce if nonce is not None else int(time.time() * 1000)
 
-            order_params = {
-                "maker": self._address,
-                "signer": self._address,
-                "tokenId": self._market_id_map.get(submission.market_id, submission.market_id),
-                "makerAmount": str(maker_amount),
-                "takerAmount": str(taker_amount),
-                "side": "BUY" if "BUY" in submission.side.value else "SELL",
-                "expiration": str(int(time.time()) + 3600),
-                "nonce": str(final_nonce),
-            }
+        order_params = {
+            "maker": self._address,
+            "signer": self._address,
+            "tokenId": self._market_id_map.get(submission.market_id, submission.market_id),
+            "makerAmount": str(maker_amount),
+            "takerAmount": str(taker_amount),
+            "side": "BUY" if "BUY" in submission.side.value else "SELL",
+            "expiration": str(int(time.time()) + 3600),
+            "nonce": str(final_nonce),
+        }
 
-            order_params["signature"] = self._sign_order(order_params)
+        order_params["signature"] = self._sign_order(order_params)
 
-            payload = {"order": order_params, "owner": self._address, "orderType": "GTC"}
+        payload = {"order": order_params, "owner": self._address, "orderType": "GTC"}
 
-            body = json.dumps(payload)
-            headers = self._get_auth_headers("POST", "/order", body)
-            session = await self._get_session()
+        body = json.dumps(payload)
+        headers = self._get_auth_headers("POST", "/order", body)
+        session = await self._get_session()
 
-            async with session.post("/order", data=body, headers=headers) as resp:
-                raw = await self._read_json_or_text(resp)
-                if resp.status in _REJECTION_STATUS_CODES:
-                    raise ExchangeRejected(
-                        f"Polymarket rejection: {raw.get('error', 'Unknown error')}",
-                        platform=self.PLATFORM.value,
-                        proposal_id=submission.proposal_id,
-                        status_code=resp.status,
-                        exchange_error=str(raw),
-                    )
-                resp.raise_for_status()
+        async with session.post("/order", data=body, headers=headers) as resp:
+            raw = await self._read_json_or_text(resp)
+            if resp.status in _REJECTION_STATUS_CODES:
+                raise ExchangeRejected(
+                    f"Polymarket rejection: {raw.get('error', 'Unknown error')}",
+                    platform=self.PLATFORM.value,
+                    proposal_id=submission.proposal_id,
+                    status_code=resp.status,
+                    exchange_error=str(raw),
+                )
+            resp.raise_for_status()
 
-                return PlacedOrderResponse(exchange_order_id=raw.get("orderID", "N/A"), status="live", fills=[])
+            return PlacedOrderResponse(exchange_order_id=raw.get("orderID", "N/A"), status="live", fills=[])
 
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
         """Cancel an order on Polymarket."""
-        async with self._throttler:
-            venue_market_id = self._market_id_map.get(market_id, market_id)
-            payload = {"orderID": exchange_order_id, "market_id": venue_market_id}
-            body = json.dumps(payload)
-            headers = self._get_auth_headers("DELETE", "/order", body)
-            session = await self._get_session()
+        await self._limiter.acquire()
+        venue_market_id = self._market_id_map.get(market_id, market_id)
+        payload = {"orderID": exchange_order_id, "market_id": venue_market_id}
+        body = json.dumps(payload)
+        headers = self._get_auth_headers("DELETE", "/order", body)
+        session = await self._get_session()
 
-            async with session.delete("/order", data=body, headers=headers) as resp:
+        async with session.delete("/order", data=body, headers=headers) as resp:
                 if resp.status == 404:
                     return True
                 if resp.status in _REJECTION_STATUS_CODES:
@@ -238,12 +239,12 @@ class PolymarketClient:
 
     async def get_order_status(self, exchange_order_id: str, market_id: str) -> OrderStatusResponse:
         """Fetch status and fills for a Polymarket order."""
-        async with self._throttler:
-            path = f"/order/{exchange_order_id}"
-            headers = self._get_auth_headers("GET", path)
-            session = await self._get_session()
+        await self._limiter.acquire()
+        path = f"/order/{exchange_order_id}"
+        headers = self._get_auth_headers("GET", path)
+        session = await self._get_session()
 
-            async with session.get(path, headers=headers) as resp:
+        async with session.get(path, headers=headers) as resp:
                 resp.raise_for_status()
                 raw = await self._read_json_or_text(resp)
 
@@ -288,17 +289,17 @@ class PolymarketClient:
 
     async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
         """Fetch all open orders from Polymarket CLOB."""
-        async with self._throttler:
-            # Polymarket GET /orders returns open orders
-            # Query params can include market_id
-            path = "/orders"
-            if market_ids and len(market_ids) == 1:
-                path += f"?market_id={market_ids[0]}"
+        await self._limiter.acquire()
+        # Polymarket GET /orders returns open orders
+        # Query params can include market_id
+        path = "/orders"
+        if market_ids and len(market_ids) == 1:
+            path += f"?market_id={market_ids[0]}"
 
-            headers = self._get_auth_headers("GET", path)
-            session = await self._get_session()
+        headers = self._get_auth_headers("GET", path)
+        session = await self._get_session()
 
-            async with session.get(path, headers=headers) as resp:
+        async with session.get(path, headers=headers) as resp:
                 resp.raise_for_status()
                 raw = await resp.json()
 
@@ -320,28 +321,30 @@ class PolymarketClient:
 
     async def get_market(self, condition_id: str) -> Optional[Dict[str, Any]]:
         """Best-effort market lookup used by the resolution monitor."""
-        async with self._throttler:
-            session = await self._get_session()
-            path = f"/markets/{condition_id}"
-            headers = self._get_auth_headers("GET", path)
-            async with session.get(path, headers=headers) as resp:
-                if resp.status == 404:
-                    return None
-                resp.raise_for_status()
-                raw = await resp.json()
-                return raw
+        await self._limiter.acquire()
+        session = await self._get_session()
+        path = f"/markets/{condition_id}"
+        headers = self._get_auth_headers("GET", path)
+        async with session.get(path, headers=headers) as resp:
+            if resp.status == 404:
+                return None
+            resp.raise_for_status()
+            raw = await resp.json()
+            if not isinstance(raw, dict):
+                return None
+            return raw
 
     async def redeem_market(self, condition_id: str) -> bool:
         """Best-effort redemption call for a resolved market."""
-        async with self._throttler:
-            session = await self._get_session()
-            path = f"/markets/{condition_id}/redeem"
-            headers = self._get_auth_headers("POST", path)
-            async with session.post(path, headers=headers) as resp:
-                if resp.status in (200, 202, 204, 404):
-                    return True
-                resp.raise_for_status()
+        await self._limiter.acquire()
+        session = await self._get_session()
+        path = f"/markets/{condition_id}/redeem"
+        headers = self._get_auth_headers("POST", path)
+        async with session.post(path, headers=headers) as resp:
+            if resp.status in (200, 202, 204, 404):
                 return True
+            resp.raise_for_status()
+            return True
 
     async def verify_connectivity(self) -> bool:
         """Verify API keys by fetching the account profile."""

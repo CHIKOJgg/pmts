@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing
+import queue
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -12,8 +13,8 @@ logger = logging.getLogger(__name__)
 def run_strategy_process(
     strategy_id: str,
     config: Dict[str, Any],
-    message_queue: multiprocessing.Queue,
-    result_queue: multiprocessing.Queue,
+    message_queue: multiprocessing.Queue[Any],
+    result_queue: multiprocessing.Queue[Any],
 ) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -30,8 +31,8 @@ def run_strategy_process(
 async def _run_strategy(
     strategy_id: str,
     config: Dict[str, Any],
-    message_queue: multiprocessing.Queue,
-    result_queue: multiprocessing.Queue,
+    message_queue: multiprocessing.Queue[Any],
+    result_queue: multiprocessing.Queue[Any],
 ) -> None:
     logger.info("Strategy %s starting...", strategy_id)
 
@@ -43,7 +44,7 @@ async def _run_strategy(
             if message["type"] == "market_data":
                 result = await _process_market_data(strategy_id, message["data"])
                 result_queue.put(result)
-        except multiprocessing.queues.Empty:
+        except queue.Empty:
             continue
 
     logger.info("Strategy %s stopped.", strategy_id)

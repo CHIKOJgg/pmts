@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config.settings import get_settings
 from config.logging_setup import configure_logging
-from src.types import Platform
+from src.enums import Platform
 from src.clock import LiveClock
 
 logger = logging.getLogger(__name__)
@@ -86,8 +86,10 @@ async def run_live() -> None:
     from execution.clients.polymarket import PolymarketClient
     from execution.engine import ExecutionEngine
     from infrastructure.observability import HealthMonitor, ObservabilityServer
+    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
+    from portfolio.storage_postgres import PostgresPortfolioStore
     from risk.engine import RiskEngine
     from risk.kill_switch import KillSwitch
     from risk.limits import RiskLimits
@@ -102,8 +104,16 @@ async def run_live() -> None:
 
     clock = LiveClock()
     
-    db_path = getattr(settings.trading, "db_path", "portfolio.db")
-    store = SqlitePortfolioStore(db_path=db_path)
+    # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
+    database_url = getattr(settings.trading, "database_url", None) or os.environ.get("DATABASE_URL")
+    if database_url:
+        store = PostgresPortfolioStore(dsn=database_url)
+        await store.connect()
+        logger.info("Using PostgreSQL backend")
+    else:
+        db_path = getattr(settings.trading, "db_path", "portfolio.db")
+        store = SqlitePortfolioStore(db_path=db_path)
+        logger.info("Using SQLite backend")
 
     alert_cfg = AlertCfg(
         slack_webhook_url=settings.alerts.slack_webhook_url or None,
@@ -169,8 +179,8 @@ async def run_live() -> None:
         max_net_delta_per_market=settings.trading.max_net_delta,
     )
 
-    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
-    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, clock=clock)
+    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token, alert_router=alert_router)
+    risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, alert_router=alert_router, clock=clock)
     
     ai_cfg = AIEnhancerConfig(
         enabled=settings.ai.enabled,
@@ -208,8 +218,8 @@ async def run_live() -> None:
         ai_enhancer=ai_enhancer,
     )
 
-    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, clock=clock)
-    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, clock=clock)
+    pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
+    op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
     
     orchestrator = Orchestrator(
         mdp=mdp,
@@ -357,8 +367,16 @@ async def run_paper(fill_prob: float = 0.85) -> None:
 
     logger.info("Paper trading initializing: markets=%s", settings.trading.markets)
     
-    db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
-    store = SqlitePortfolioStore(db_path=db_path)
+    # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
+    database_url = getattr(settings.trading, "database_url", None) or os.environ.get("DATABASE_URL")
+    if database_url:
+        store = PostgresPortfolioStore(dsn=database_url)
+        await store.connect()
+        logger.info("Using PostgreSQL backend")
+    else:
+        db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
+        store = SqlitePortfolioStore(db_path=db_path)
+        logger.info("Using SQLite backend")
 
     clock = LiveClock()
 
@@ -414,7 +432,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         max_net_delta_per_market=settings.trading.max_net_delta,
     )
 
-    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
+    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token, alert_router=alert_router)
     risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, alert_router=alert_router, clock=clock)
 
     ai_cfg = AIEnhancerConfig(
@@ -467,6 +485,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         ai_enhancer=ai_enhancer,
         enable_trading=settings.trading.enable_trading,
         clock=clock,
+        alert_router=alert_router,
     )
     risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
     market_monitor = MarketMonitor(
@@ -598,8 +617,17 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     logger.info("Offline paper trading initializing: markets=%s", settings.trading.markets)
 
-    db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
-    store = SqlitePortfolioStore(db_path=db_path)
+    # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
+    database_url = getattr(settings.trading, "database_url", None) or os.environ.get("DATABASE_URL")
+    if database_url:
+        store = PostgresPortfolioStore(dsn=database_url)
+        await store.connect()
+        logger.info("Using PostgreSQL backend")
+    else:
+        db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
+        store = SqlitePortfolioStore(db_path=db_path)
+        logger.info("Using SQLite backend")
+
     clock = LiveClock()
 
     alert_cfg = AlertCfg(
@@ -652,7 +680,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
         max_net_delta_per_market=settings.trading.max_net_delta,
     )
 
-    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token)
+    kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token, alert_router=alert_router)
     risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, alert_router=alert_router, clock=clock)
 
     ai_cfg = AIEnhancerConfig(
@@ -710,6 +738,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
         ai_enhancer=ai_enhancer,
         enable_trading=settings.trading.enable_trading,
         clock=clock,
+        alert_router=alert_router,
     )
     risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
 

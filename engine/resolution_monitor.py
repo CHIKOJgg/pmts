@@ -5,7 +5,7 @@ import asyncio
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from src.types import Platform
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ResolutionMonitor:
     def __init__(
         self,
-        client,
+        client: Any,
         markets: List[str],
         on_resolution: Callable[[str, str], None],
         poll_interval_s: float = 300.0,
@@ -22,7 +22,7 @@ class ResolutionMonitor:
         self._markets = markets
         self._on_resolution = on_resolution
         self._poll_interval_s = poll_interval_s
-        self._task: Optional[asyncio.Task] = None
+        self._task: Optional[asyncio.Task[None]] = None
         self._resolved: Dict[str, str] = {}
 
     async def start(self) -> None:
@@ -60,8 +60,9 @@ class ResolutionMonitor:
             await asyncio.sleep(self._poll_interval_s)
 
     async def _get_market(self, market_id: str) -> Optional[Dict[str, Any]]:
-        if hasattr(self._client, "get_market"):
-            return await self._client.get_market(market_id)
+        method = getattr(self._client, "get_market", None)
+        if method is not None:
+            return await method(market_id)  # type: ignore[no-any-return]
         return None
 
     async def _redeem(self, market_id: str) -> None:

@@ -1,0 +1,8 @@
+{
+  "orderId": "op-order-789",
+  "status": "cancelled",
+  "remainingAmount": 100,
+  "filledAmount": 0,
+  "filledPrice": 0,
+  "fills": []
+}

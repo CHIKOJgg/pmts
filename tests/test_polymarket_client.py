@@ -14,7 +14,7 @@ import pytest
 
 from execution.clients.polymarket import PolymarketClient, _assert_protocol_compat
 from execution.engine import ExchangeClient
-from src.types import Platform
+from src.enums import Platform
 
 # Import cross-platform fixtures
 from tests.venue_fixtures import (
@@ -175,7 +175,7 @@ class TestPolymarketClientOrderSubmission:
         import time as time_module
 
         from execution.models import OrderSubmission
-        from src.types import OrderType, Side, StrategyId
+        from src.enums import OrderType, Side, StrategyId
 
         return OrderSubmission(
             order_id="ord-polymarket-001",

@@ -12,7 +12,7 @@ import pytest
 from ai.enhancer import AIEnhancerConfig, AISignalEnhancer, _parse_response
 from ai.signal_context import MarketRegime, SignalContext, VolRegime
 from data.models import FeatureVector
-from src.types import Platform
+from src.enums import Platform
 
 
 def _make_feature_vector(

@@ -13,7 +13,7 @@ from data.models import FeatureVector
 from execution.models import OrderProposal
 from portfolio.manager import FillRecord
 from src.clock import Clock, LiveClock
-from src.types import OrderType, Platform, Side, StrategyId
+from src.enums import OrderType, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
 

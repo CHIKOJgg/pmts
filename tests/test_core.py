@@ -38,7 +38,7 @@ from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
 from risk.limits import DEFAULT_LIMITS, RiskLimits
 from src.errors import CrossedBookError, NegativeHoldings
-from src.types import (
+from src.enums import (
     OrderStatus,
     OrderType,
     Platform,

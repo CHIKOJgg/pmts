@@ -11,7 +11,7 @@ from execution.engine import (
     PlacedOrderResponse,
 )
 from execution.models import OrderSubmission
-from src.types import Platform
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 

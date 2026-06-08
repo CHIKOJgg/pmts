@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from ai.enhancer import AISignalEnhancer
 from data.market_data_provider import MarketDataProvider
@@ -15,11 +14,12 @@ from engine.feature_engine import FeatureEngine
 from engine.strategy_engine import StrategyEngine
 from execution.engine import ExecutionEngine
 from execution.models import ExecutionResult, OrderProposal, OrderSubmission
+from infrastructure.alerting import Alert, AlertRouter, AlertSeverity
 from infrastructure.observability import PROPOSALS_TOTAL
 from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
 from src.clock import Clock, LiveClock
-from src.types import ArbLeg, Platform, StrategyId
+from src.enums import ArbLeg, Platform, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,11 @@ class Orchestrator:
         strategy: StrategyEngine,
         pm_engine: ExecutionEngine,
         op_engine: ExecutionEngine,
-        markets: list,
+        markets: list[str],
         ai_enhancer: Optional[AISignalEnhancer] = None,
         enable_trading: bool = True,
         clock: Optional[Clock] = None,
+        alert_router: Optional[AlertRouter] = None,
     ) -> None:
         self._mdp = mdp
         self._portfolio = portfolio
@@ -60,6 +61,7 @@ class Orchestrator:
         self._markets = markets
         self._trading = enable_trading
         self._clock = clock or LiveClock()
+        self._alert_router = alert_router
 
         # Feature engine sits between MDP and StrategyEngine
         self._fe = FeatureEngine(portfolio=portfolio, clock=self._clock)
@@ -83,12 +85,15 @@ class Orchestrator:
         # Lock for arb_groups and in_flight modifications
         self._execution_lock: asyncio.Lock = asyncio.Lock()
 
-        self._background_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
         # Metrics
         self.proposals_evaluated: int = 0
         self.proposals_approved: int = 0
         self.proposals_rejected: int = 0
+
+        # Execution error tracking for alerting
+        self._consecutive_errors: Dict[Platform, int] = {Platform.POLYMARKET: 0, Platform.OPINION: 0}
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -103,6 +108,22 @@ class Orchestrator:
             self._trading,
             self._markets,
         )
+        if self._alert_router:
+            alert = Alert(
+                severity=AlertSeverity.INFO,
+                title="Orchestrator Started",
+                message=f"Trading={'enabled' if self._trading else 'disabled'}. Markets: {', '.join(self._markets)}",
+                source="Orchestrator",
+            )
+            await self._alert_router.send(alert)
+
+        # Start periodic alert check
+        self._alert_check_task = asyncio.create_task(
+            self._alert_check_loop(),
+            name="orchestrator-alert-check",
+        )
+        self._background_tasks.add(self._alert_check_task)
+        self._alert_check_task.add_done_callback(self._background_tasks.discard)
 
     async def stop(self) -> None:
         logger.info("Orchestrator stopping...")
@@ -111,6 +132,33 @@ class Orchestrator:
         await self._op_engine.stop()
         await self._portfolio.stop()
         logger.info("Orchestrator stopped.")
+        if self._alert_router:
+            alert = Alert(
+                severity=AlertSeverity.INFO,
+                title="Orchestrator Stopped",
+                message="Graceful shutdown completed",
+                source="Orchestrator",
+            )
+            await self._alert_router.send(alert)
+
+        # Cancel alert check task
+        if hasattr(self, '_alert_check_task'):
+            self._alert_check_task.cancel()
+            try:
+                await self._alert_check_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _alert_check_loop(self) -> None:
+        """Periodic check for alert conditions."""
+        while True:
+            try:
+                await asyncio.sleep(30)  # Check every 30 seconds
+                self._check_alerts()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.debug("Alert check failed: %s", exc)
 
     def get_active_markets(self) -> list[str]:
         return list(self._markets)
@@ -150,6 +198,39 @@ class Orchestrator:
         await self._cancel_all_open_orders()
 
     # ── Step 2→3: Feature vector → strategies ────────────────────────────────
+
+    def _check_alerts(self) -> None:
+        """Check for alert conditions and fire alerts."""
+        if not self._alert_router:
+            return
+
+        # Check MDP health (websocket disconnect > 30s)
+        try:
+            health = self._mdp.get_health()
+            for plat, h in health.items():
+                if not h.get("alive", False) and h.get("last_msg_age_ms", 0) > 30_000:
+                    alert = Alert(
+                        severity=AlertSeverity.WARNING,
+                        title="WebSocket Disconnected",
+                        message=f"{plat} feed disconnected for >30s",
+                        source="MarketDataProvider",
+                    )
+                    import asyncio
+                    asyncio.create_task(self._alert_router.send(alert))
+        except Exception:
+            pass
+
+        # Check ExecutionEngine consecutive errors > 3
+        for eng in [self._pm_engine, self._op_engine]:
+            if hasattr(eng, '_consecutive_errors') and eng._consecutive_errors > 3:
+                alert = Alert(
+                    severity=AlertSeverity.WARNING,
+                    title="Execution Engine Errors",
+                    message=f"{eng._client.platform.value} engine has {eng._consecutive_errors} consecutive errors",
+                    source="ExecutionEngine",
+                )
+                import asyncio
+                asyncio.create_task(self._alert_router.send(alert))
 
     def _on_kill_switch_reset(self) -> None:
         self._arb_groups.clear()
@@ -247,6 +328,7 @@ class Orchestrator:
         )
 
         if proposal.is_arb and proposal.leg_number is not None:
+            assert proposal.leg_group_id is not None
             grp = self._arb_groups.setdefault(proposal.leg_group_id, {"market_id": proposal.market_id})
             if proposal.leg_number == ArbLeg.LEG_2:
                 # Step 4: Hold leg 2 until leg 1 confirms fill
@@ -430,7 +512,3 @@ class _NullTracker:
         is_terminal = True
 
     status = _S()
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

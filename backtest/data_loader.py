@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from data.models import MarketSnapshot
-from src.types import Platform
+from src.enums import Platform
 
 
 @dataclass

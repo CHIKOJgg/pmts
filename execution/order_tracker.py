@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from execution.models import ExecutionResult, OrderSubmission
 from src.clock import Clock, LiveClock
-from src.types import OrderStatus
+from src.enums import OrderStatus
 
 FILL_COMPLETE_THRESHOLD: float = 0.999  # dust tolerance
 DUST_FLOOR_USDC: float = 0.001

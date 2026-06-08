@@ -8,7 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
@@ -64,7 +64,7 @@ class AlertRouter:
         self._last_alert_times: Dict[str, int] = {}
         self._total_sent: int = 0
         self._total_suppressed: int = 0
-        self._history: deque = deque(maxlen=500)
+        self._history: deque[Alert] = deque(maxlen=500)
 
     def get_recent(self, limit: int = 50) -> List[Alert]:
         return list(self._history)[-limit:]
@@ -121,6 +121,9 @@ class AlertRouter:
     async def _send_slack(self, alert: Alert) -> None:
         session = await self._get_session()
         color = {"info": "#36a64f", "warning": "#ff9500", "critical": "#ff0000"}[alert.severity.value]
+        webhook_url = self._config.slack_webhook_url
+        if webhook_url is None:
+            return
 
         payload = {
             "channel": self._config.slack_channel,
@@ -135,21 +138,26 @@ class AlertRouter:
             }],
         }
 
-        async with session.post(self._config.slack_webhook_url, json=payload) as resp:
+        async with session.post(webhook_url, json=payload) as resp:
             resp.raise_for_status()
 
     async def _send_email(self, alert: Alert) -> None:
         import smtplib
         from email.mime.text import MIMEText
 
+        email_username = self._config.email_username
+        email_password = self._config.email_password
+        if email_username is None or email_password is None:
+            return
+
         msg = MIMEText(f"{alert.message}\n\nSource: {alert.source}\nTime: {alert.timestamp}")
         msg["Subject"] = f"[PMTS {alert.severity.value.upper()}] {alert.title}"
-        msg["From"] = self._config.email_username
+        msg["From"] = email_username
         msg["To"] = ", ".join(self._config.email_recipients)
 
         with smtplib.SMTP(self._config.email_smtp_host, self._config.email_smtp_port) as server:
             server.starttls()
-            server.login(self._config.email_username, self._config.email_password)
+            server.login(email_username, email_password)
             server.sendmail(msg["From"], self._config.email_recipients, msg.as_string())
 
     async def _send_webhook(self, url: str, alert: Alert) -> None:

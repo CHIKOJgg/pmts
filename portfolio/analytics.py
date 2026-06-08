@@ -130,7 +130,7 @@ class PortfolioAnalytics:
     def _avg_hold_time_ms(self) -> float:
         if not self._fills:
             return 0.0
-        total = sum(f.hold_time_ms for f in self._fills if hasattr(f, "hold_time_ms") and f.hold_time_ms > 0)
+        total = sum(getattr(f, "hold_time_ms", 0) for f in self._fills if hasattr(f, "hold_time_ms") and getattr(f, "hold_time_ms", 0) > 0)
         return total / len(self._fills)
 
     def _empty_metrics(self) -> PerformanceMetrics:

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import time
 from typing import Any, List, Optional
 
 import websockets
@@ -9,7 +8,8 @@ import websockets
 from data.market_data_provider import _SnapshotCB
 from data.models import MarketSnapshot
 from infrastructure.observability import API_ERRORS_TOTAL, FEED_LAST_TS, RECONNECT_TOTAL
-from src.types import Platform
+from src.clock import Clock, LiveClock
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 ConnectionClosed = getattr(getattr(websockets, "exceptions", None), "ConnectionClosed", Exception)
@@ -29,15 +29,17 @@ class OpinionWSAdapter:
         ws_url: str = "wss://openapi.opinion.trade/openapi/ws",
         taker_fee_bps: int = 25,
         market_id_map: Optional[dict[str, str]] = None,
+        clock: Clock = LiveClock(),
     ) -> None:
         self._market_ids = market_ids
         self._ws_url = ws_url
         self._taker_fee_bps = taker_fee_bps
         self._market_id_map = market_id_map or {}
         self._callback: Optional[_SnapshotCB] = None
+        self._clock = clock
 
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: Optional[asyncio.Task[None]] = None
 
     @property
     def platform(self) -> Platform:
@@ -65,7 +67,7 @@ class OpinionWSAdapter:
 
     async def _run_loop(self) -> None:
         retry_delay = 1.0
-        subscribe_task: Optional[asyncio.Task] = None
+        subscribe_task: Optional[asyncio.Task[None]] = None
         while self._running:
             if subscribe_task and not subscribe_task.done():
                 try:
@@ -81,7 +83,7 @@ class OpinionWSAdapter:
 
                     # Subscribe to tickers: ticker@marketId
                     params = [f"ticker@{mid}" for mid in self._market_ids]
-                    sub_msg = {"method": "SUBSCRIBE", "params": params, "id": int(time.time())}
+                    sub_msg = {"method": "SUBSCRIBE", "params": params, "id": self._clock.now_ms()}
                     await ws.send(json.dumps(sub_msg))
                     logger.info("Subscribed to Opinion tickers: %s", params)
 
@@ -103,7 +105,7 @@ class OpinionWSAdapter:
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, 60.0)
 
-    async def _process_messages(self, ws) -> None:
+    async def _process_messages(self, ws: Any) -> None:
         """Process WebSocket messages in a separate task."""
         try:
             async for message in ws:
@@ -141,7 +143,8 @@ class OpinionWSAdapter:
             bid_depth = float(ticker.get("B", 0.0)) * yes_bid
             ask_depth = float(ticker.get("A", 0.0)) * yes_ask
 
-            ts = int(ticker.get("t", time.time() * 1000))
+            now_ms = self._clock.now_ms()
+            ts = int(ticker.get("t", now_ms))
 
             snapshot = MarketSnapshot(
                 market_id=market_id,
@@ -154,7 +157,7 @@ class OpinionWSAdapter:
                 ask_depth_usdc=ask_depth,
                 taker_fee_bps=self._taker_fee_bps,
                 ts=ts,
-                received_ts=int(time.time() * 1000),
+                received_ts=now_ms,
             )
 
             FEED_LAST_TS.labels(platform=self.PLATFORM.value, market_id=market_id).set(ts / 1000.0)

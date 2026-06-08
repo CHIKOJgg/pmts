@@ -42,7 +42,7 @@ import sys
 import time
 from typing import Any
 
-from src.types import OrderType
+from src.enums import OrderType
 
 
 def _now_ms() -> int:
@@ -112,7 +112,7 @@ def test_backtest_produces_positive_pnl():
     output = result.stdout + result.stderr
 
     # Extract P&L - use format from backtest output: "$+XX.XX  (+XX.XX%)"
-    pnl_match = re.search(r"P\&L:\s*([+-]\$[\d.]+)\s+\(([+-]\d+\.\d+)%%\)", output)
+    pnl_match = re.search(r"P\&L:\s*(\$[+-]?\d+\.\d+)\s+\(([+-]\d+\.\d+)%\)", output)
 
     assert pnl_match is not None, "No P&L information found in backtest output"
 
@@ -148,7 +148,7 @@ def test_backtest_determinism():
         output = result.stdout + result.stderr
 
         # Extract P&L for comparison - use regex that captures full amount
-        pnl_match = re.search(r"P\&L:\s*([+-]\$[\d.]+)", output)
+        pnl_match = re.search(r"P\&L:\s*(\$[+-]?\d+\.\d+)", output)
 
         assert pnl_match is not None, f"P&L not found in run {i + 1}"
         results.append(pnl_match.group(1))
@@ -173,6 +173,8 @@ def test_paper_mode_validation():
         env = os.environ.copy()
         env["MODE"] = "paper"
         env["ENABLE_TRADING"] = "false"  # Explicitly disable live trading
+        env["MARKETS"] = "BTC-Q4,ETH-Q1,SOL-Q2"
+        env["KILL_SWITCH_TOKEN"] = "TestToken123!@#$Secure"
 
         result = subprocess.run(
             [
@@ -225,9 +227,13 @@ def test_kill_switch_token_security():
     with pytest.raises(ValueError):
         KillSwitch("weak")  # Too short, no complexity
 
-    # Weak tokens should raise errors - no special chars but meets length
+    # Weak tokens should raise errors - only one character category (lowercase only)
     with pytest.raises(ValueError):
-        KillSwitch("alllowercase123456789")  # No special chars
+        KillSwitch("alllowercaseonly")  # Only lowercase, no digits or special
+
+    # Weak tokens should raise errors - only digits
+    with pytest.raises(ValueError):
+        KillSwitch("1234567890123456")  # Only digits
 
 
 def test_risk_engine_latency():
@@ -241,7 +247,7 @@ def test_risk_engine_latency():
     from portfolio.manager import PortfolioManager
     from risk.engine import DEFAULT_LIMITS, RiskEngine
     from risk.kill_switch import KillSwitch
-    from src.types import ArbLeg, Platform, Side, StrategyId
+    from src.enums import ArbLeg, Platform, Side, StrategyId
 
     def price_source(m, p):
         return (0.50, 0.50)
@@ -338,7 +344,7 @@ def test_backtest_metrics_extraction():
         "rejected": r"(\d+)\s+rejected",
         "full_fills": r"(\d+)\s+full",
         "partial_fills": r"(\d+)\s+partial",
-        "pnl": r"P\&L:\s*([+-]\$[\d.]+)",
+        "pnl": r"P\&L:\s*(\$[+-]?\d+\.\d+)",
     }
 
     for key, pattern in patterns.items():

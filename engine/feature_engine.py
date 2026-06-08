@@ -6,12 +6,12 @@ import collections
 import logging
 import math
 import statistics
-from typing import Callable, Coroutine, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Coroutine, Deque, Dict, List, Optional, Tuple
 
 from data.models import FeatureVector, MarketSnapshot
 from portfolio.manager import PortfolioManager
 from src.clock import Clock, LiveClock
-from src.types import Platform
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ FEES: Dict[Platform, int] = {
     Platform.OPINION: 25,
 }
 
-_FV_CB = Callable[[FeatureVector], Coroutine]
+_FV_CB = Callable[[FeatureVector], Coroutine[Any, Any, None]]
 
 
 class FeatureEngine:
@@ -116,6 +116,7 @@ class FeatureEngine:
         delta = self._portfolio.get_delta(snap.market_id)
 
         try:
+            vol_regime = self._vol_regime(vol_30s)
             fv = FeatureVector(
                 market_id=snap.market_id,
                 ts=snap.ts,
@@ -129,6 +130,7 @@ class FeatureEngine:
                 ofi_pm=max(-1.0, min(1.0, _ofi(pm))),
                 ofi_op=max(-1.0, min(1.0, _ofi(op))),
                 vol_30s=vol_30s,
+                vol_regime=vol_regime,
                 days_to_resolution=snap.days_to_resolution,
                 portfolio_delta=delta.net_delta,
                 bid_depth_pm=_safe(pm, "bid_depth_usdc", 0.0),
@@ -160,3 +162,16 @@ class FeatureEngine:
             return statistics.stdev(p for _, p in hist)
         except statistics.StatisticsError:
             return None
+
+    def _vol_regime(self, vol_30s: Optional[float]) -> Optional[str]:
+        """Classify volatility into regime based on 30s rolling volatility."""
+        if vol_30s is None:
+            return None
+        if vol_30s < 0.005:
+            return "LOW"
+        elif vol_30s < 0.015:
+            return "NORMAL"
+        elif vol_30s < 0.04:
+            return "HIGH"
+        else:
+            return "SPIKE"

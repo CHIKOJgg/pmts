@@ -5,9 +5,11 @@ from __future__ import annotations
 import hmac
 import logging
 import re
-import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
+
+from infrastructure.alerting import Alert, AlertRouter, AlertSeverity
+from src.clock import Clock, LiveClock
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,12 @@ class KillSwitch:
     Reset requires the correct confirmation token - prevents automation.
     """
 
-    def __init__(self, confirmation_token: str) -> None:
+    def __init__(
+        self,
+        confirmation_token: str,
+        clock: Clock = LiveClock(),
+        alert_router: Optional[AlertRouter] = None,
+    ) -> None:
         if not confirmation_token:
             raise ValueError("confirmation_token must be non-empty")
 
@@ -57,6 +64,8 @@ class KillSwitch:
             )
 
         self._token: str = confirmation_token
+        self._clock: Clock = clock
+        self._alert_router: Optional[AlertRouter] = alert_router
         self._active: bool = False
         self._activations: list[ActivationRecord] = []
         self._resets: list[ResetRecord] = []
@@ -86,7 +95,7 @@ class KillSwitch:
         triggering_id: Optional[str] = None,
     ) -> ActivationRecord:
         record = ActivationRecord(
-            activated_at=_now_ms(),
+            activated_at=self._clock.now_ms(),
             reason=reason,
             mtm_drawdown=mtm_drawdown,
             peak_equity=peak_equity,
@@ -102,6 +111,20 @@ class KillSwitch:
             current_equity,
             peak_equity,
         )
+        if self._alert_router:
+            alert = Alert(
+                severity=AlertSeverity.CRITICAL,
+                title="Kill Switch Activated",
+                message=f"Drawdown {mtm_drawdown:.2%} exceeded kill threshold. Reason: {reason}",
+                source="KillSwitch",
+                metadata={"drawdown": mtm_drawdown, "triggering_id": triggering_id},
+            )
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._alert_router.send(alert))
+            except RuntimeError:
+                logger.warning("No event loop - cannot send kill switch alert")
         return record
 
     def reset(self, token: str, operator_id: Optional[str] = None) -> bool:
@@ -113,7 +136,7 @@ class KillSwitch:
             return False
         self._resets.append(
             ResetRecord(
-                reset_at=_now_ms(),
+                reset_at=self._clock.now_ms(),
                 operator_id=operator_id,
                 reason="operator_manual_reset",
             )
@@ -122,7 +145,7 @@ class KillSwitch:
         logger.warning("KILL SWITCH RESET by operator=%s", operator_id or "unknown")
         return True
 
-    def audit_trail(self) -> dict:
+    def audit_trail(self) -> dict[str, Any]:
         return {
             "active": self._active,
             "activation_count": len(self._activations),
@@ -140,5 +163,4 @@ class KillSwitch:
         }
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
+

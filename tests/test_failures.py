@@ -6,7 +6,7 @@ import uuid
 import time
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from src.types import Platform, Side, OrderType, StrategyId, ArbLeg
+from src.enums import Platform, Side, OrderType, StrategyId, ArbLeg
 from execution.models import OrderSubmission, OrderProposal
 from execution.engine import ExecutionEngine, PlacedOrderResponse, OpenOrder
 from execution.order_tracker import OrderTracker, TrackerStatus

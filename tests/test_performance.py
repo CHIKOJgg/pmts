@@ -9,7 +9,7 @@ from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
 from risk.limits import RiskLimits
-from src.types import OrderType, Platform, Side, StrategyId
+from src.enums import OrderType, Platform, Side, StrategyId
 
 
 def _make_snapshot(market_id: str, platform: Platform, ts: int) -> MarketSnapshot:

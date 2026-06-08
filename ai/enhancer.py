@@ -24,7 +24,7 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from ai.heuristic import heuristic_enhance
 from ai.signal_context import (
@@ -189,7 +189,7 @@ class AISignalEnhancer:
         import ssl
         import urllib.request
 
-        def _do_request() -> dict:
+        def _do_request() -> Dict[str, Any]:
             req = urllib.request.Request(
                 _CLAUDE_API_URL,
                 data=payload,
@@ -202,7 +202,7 @@ class AISignalEnhancer:
             )
             ctx = ssl.create_default_context()
             with urllib.request.urlopen(req, context=ctx, timeout=2) as resp:
-                return json.loads(resp.read())
+                return json.loads(resp.read())  # type: ignore[no-any-return]
 
         loop = asyncio.get_event_loop()
         raw = await loop.run_in_executor(None, _do_request)
@@ -227,7 +227,7 @@ class AISignalEnhancer:
 
         model_name = self._cfg.openrouter_model
 
-        def _do_request() -> dict:
+        def _do_request() -> Dict[str, Any]:
             req = urllib.request.Request(
                 _OPENROUTER_API_URL,
                 data=payload,
@@ -239,7 +239,7 @@ class AISignalEnhancer:
             )
             ctx = ssl.create_default_context()
             with urllib.request.urlopen(req, context=ctx, timeout=2) as resp:
-                return json.loads(resp.read())
+                return json.loads(resp.read())  # type: ignore[no-any-return]
 
         loop = asyncio.get_event_loop()
         raw = await loop.run_in_executor(None, _do_request)

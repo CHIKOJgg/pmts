@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from typing import Dict, Any, Callable, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, Callable, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.protocols import MarketDataProvider, PortfolioStore
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 try:
     from aiohttp import web
 except Exception:  # pragma: no cover - import guard for backtest/offline environments
-    web = None
+    web = None  # type: ignore[assignment]
 
 try:
     from prometheus_client import Gauge, Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
@@ -22,28 +22,28 @@ except Exception:  # pragma: no cover - import guard for backtest/offline enviro
     CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
 
     class _NoOpMetric:
-        def labels(self, *args, **kwargs):
+        def labels(self, *args: Any, **kwargs: Any) -> _NoOpMetric:
             return self
 
-        def set(self, *args, **kwargs):
+        def set(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-        def inc(self, *args, **kwargs):
+        def inc(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-        def observe(self, *args, **kwargs):
+        def observe(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-    def Gauge(*args, **kwargs):  # type: ignore[misc]
+    def Gauge(*args: Any, **kwargs: Any) -> _NoOpMetric:  # type: ignore[no-redef]
         return _NoOpMetric()
 
-    def Counter(*args, **kwargs):  # type: ignore[misc]
+    def Counter(*args: Any, **kwargs: Any) -> _NoOpMetric:  # type: ignore[no-redef]
         return _NoOpMetric()
 
-    def Histogram(*args, **kwargs):  # type: ignore[misc]
+    def Histogram(*args: Any, **kwargs: Any) -> _NoOpMetric:  # type: ignore[no-redef]
         return _NoOpMetric()
 
-    def generate_latest(*args, **kwargs):  # type: ignore[misc]
+    def generate_latest(*args: Any, **kwargs: Any) -> bytes:  # type: ignore[misc]
         return b""
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ class HealthMonitor:
         self.obs_server = obs_server
         self._last_liveness_tick = time.time()
         self._liveness_timeout_s = liveness_timeout_s
-        self._connectivity_cache: Dict[str, Tuple[float, bool]] = {}
+        self._connectivity_cache: Dict[str, tuple[float, bool]] = {}
         self._connectivity_ttl_s = connectivity_ttl_s
         self.mode = mode
 
@@ -135,7 +135,7 @@ class HealthMonitor:
             if now - ts < self._connectivity_ttl_s:
                 return ok
         try:
-            ok = await engine._client.verify_connectivity()
+            ok = bool(await engine._client.verify_connectivity())
         except Exception:
             ok = False
         self._connectivity_cache[plat] = (now, ok)
@@ -143,7 +143,7 @@ class HealthMonitor:
 
     async def check_readiness(self) -> Dict[str, Any]:
         """Strict readiness verification for orchestration."""
-        details = {}
+        details: Dict[str, Any] = {}
         is_ready = True
 
         # 1. WS Feeds (at least one platform must have recent data)
@@ -232,8 +232,8 @@ class ObservabilityServer:
         self.health_monitor: Optional[HealthMonitor] = None
         self.in_error_state: bool = False
         self._kill_switch_token: Optional[str] = None
-        self._kill_switch_reset_callback: Optional[Callable] = None
-        self._kill_switch_activate_callback: Optional[Callable] = None
+        self._kill_switch_reset_callback: Optional[Callable[..., Any]] = None
+        self._kill_switch_activate_callback: Optional[Callable[..., Any]] = None
         self._reset_attempts: List[float] = []
         self._reset_rate_limit_window_s: float = 60.0
         self._max_resets_per_window: int = 5
@@ -281,8 +281,8 @@ class ObservabilityServer:
     def set_kill_switch_config(
         self,
         token: str,
-        reset_callback: Optional[Callable] = None,
-        activate_callback: Optional[Callable] = None,
+        reset_callback: Optional[Callable[..., Any]] = None,
+        activate_callback: Optional[Callable[..., Any]] = None,
     ) -> None:
         """Configure kill-switch endpoint authentication and reset callback."""
         self._kill_switch_token = token

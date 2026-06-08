@@ -4,8 +4,9 @@ import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import aiohttp
-from asyncio_throttle import Throttler
 from eth_account import Account
+
+from execution.rate_limiter import VenueRateLimiter
 
 from execution.engine import (
     ExchangeClient,
@@ -16,7 +17,7 @@ from execution.engine import (
 )
 from execution.models import OrderSubmission
 from src.errors import ExchangeRejected
-from src.types import Platform
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class OpinionClient:
             self._domain["chainId"] = 97
 
         self._session: Optional[aiohttp.ClientSession] = None
-        self._throttler = Throttler(rate_limit_per_s)
+        self._limiter = VenueRateLimiter.for_venue("opinion", rate_limit_per_s)
         self._last_status_filled_usdc: Dict[str, float] = {}
 
         logger.info(
@@ -108,10 +109,10 @@ class OpinionClient:
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
-        self._wallet_private_key = None
+        self._wallet_private_key = ""
         self._last_status_filled_usdc.clear()
 
-    async def _read_json_or_text(self, resp) -> Any:
+    async def _read_json_or_text(self, resp: aiohttp.ClientResponse) -> Any:
         try:
             return await resp.json()
         except Exception:
@@ -155,47 +156,47 @@ class OpinionClient:
         }
 
         signed = Account.sign_typed_data(self._wallet_private_key, full_message=structured_data)
-        return signed.signature.hex()
+        return str(signed.signature.hex())
 
     async def place_order(
         self, submission: OrderSubmission, effective_price: float, nonce: Optional[int] = None
     ) -> PlacedOrderResponse:
         """Submit an order to Opinion Markets."""
-        async with self._throttler:
-            # Side mapping: 0 for Buy, 1 for Sell (Typical Opinion side mapping)
-            side_val = 0 if "BUY" in submission.side.value else 1
+        await self._limiter.acquire()
+        # Side mapping: 0 for Buy, 1 for Sell (Typical Opinion side mapping)
+        side_val = 0 if "BUY" in submission.side.value else 1
 
-            # Placeholder amounts
-            tokens = int(submission.token_quantity)
-            usdc_amount = int(submission.size_usdc * 1_000_000)
+        # Placeholder amounts
+        tokens = int(submission.token_quantity)
+        usdc_amount = int(submission.size_usdc * 1_000_000)
 
-            maker_amount, taker_amount = (usdc_amount, tokens) if side_val == 0 else (tokens, usdc_amount)
+        maker_amount, taker_amount = (usdc_amount, tokens) if side_val == 0 else (tokens, usdc_amount)
 
-            # Use provided nonce for idempotency
-            final_nonce = nonce if nonce is not None else int(time.time() * 1000)
+        # Use provided nonce for idempotency
+        final_nonce = nonce if nonce is not None else int(time.time() * 1000)
 
-            venue_market_id = self._market_id_map.get(submission.market_id, submission.market_id)
-            order_msg = {
-                "salt": int(uuid.uuid4().int >> 64),
-                "maker": self._address,
-                "signer": self._address,
-                "taker": "0x0000000000000000000000000000000000000000",
-                "tokenId": self._parse_market_id(venue_market_id),
-                "makerAmount": maker_amount,
-                "takerAmount": taker_amount,
-                "expiration": int(time.time()) + 3600,
-                "nonce": final_nonce,
-                "feeRateBps": 0,
-                "side": side_val,
-                "signatureType": 1,
-            }
+        venue_market_id = self._market_id_map.get(submission.market_id, submission.market_id)
+        order_msg = {
+            "salt": int(uuid.uuid4().int >> 64),
+            "maker": self._address,
+            "signer": self._address,
+            "taker": "0x0000000000000000000000000000000000000000",
+            "tokenId": self._parse_market_id(venue_market_id),
+            "makerAmount": maker_amount,
+            "takerAmount": taker_amount,
+            "expiration": int(time.time()) + 3600,
+            "nonce": final_nonce,
+            "feeRateBps": 0,
+            "side": side_val,
+            "signatureType": 1,
+        }
 
-            signature = self._sign_order(order_msg)
+        signature = self._sign_order(order_msg)
 
-            payload = {"marketId": venue_market_id, "order": order_msg, "signature": signature}
+        payload = {"marketId": venue_market_id, "order": order_msg, "signature": signature}
 
-            session = await self._get_session()
-            async with session.post("/order", json=payload) as resp:
+        session = await self._get_session()
+        async with session.post("/order", json=payload) as resp:
                 raw = await self._read_json_or_text(resp)
                 if resp.status in _REJECTION_STATUS_CODES:
                     raise ExchangeRejected(
@@ -211,85 +212,85 @@ class OpinionClient:
 
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
         """Cancel an order on Opinion."""
-        async with self._throttler:
-            session = await self._get_session()
-            path = f"/order/{exchange_order_id}"
-            async with session.delete(path) as resp:
-                if resp.status == 404:
-                    return True
-                if resp.status in _REJECTION_STATUS_CODES:
-                    return False
-                resp.raise_for_status()
+        await self._limiter.acquire()
+        session = await self._get_session()
+        path = f"/order/{exchange_order_id}"
+        async with session.delete(path) as resp:
+            if resp.status == 404:
                 return True
+            if resp.status in _REJECTION_STATUS_CODES:
+                return False
+            resp.raise_for_status()
+            return True
 
     async def get_order_status(self, exchange_order_id: str, market_id: str) -> OrderStatusResponse:
         """Fetch status for an Opinion order."""
-        async with self._throttler:
-            session = await self._get_session()
-            path = f"/order/{exchange_order_id}"
-            async with session.get(path) as resp:
-                resp.raise_for_status()
-                raw = await self._read_json_or_text(resp)
+        await self._limiter.acquire()
+        session = await self._get_session()
+        path = f"/order/{exchange_order_id}"
+        async with session.get(path) as resp:
+            resp.raise_for_status()
+            raw = await self._read_json_or_text(resp)
 
-                status = raw.get("status", "").lower()
-                remaining = float(raw.get("remainingAmount", raw.get("remaining", 0.0)) or 0.0)
-                original = raw.get("originalAmount", raw.get("amount", raw.get("size")))
-                filled_raw = raw.get("filledAmount", raw.get("filled", raw.get("filledSize")))
-                if filled_raw is not None:
-                    cumulative_filled = float(filled_raw)
-                elif original is not None:
-                    cumulative_filled = max(0.0, float(original) - remaining)
-                else:
-                    cumulative_filled = 0.0
+            status = raw.get("status", "").lower()
+            remaining = float(raw.get("remainingAmount", raw.get("remaining", 0.0)) or 0.0)
+            original = raw.get("originalAmount", raw.get("amount", raw.get("size")))
+            filled_raw = raw.get("filledAmount", raw.get("filled", raw.get("filledSize")))
+            if filled_raw is not None:
+                cumulative_filled = float(filled_raw)
+            elif original is not None:
+                cumulative_filled = max(0.0, float(original) - remaining)
+            else:
+                cumulative_filled = 0.0
 
-                previously_seen = self._last_status_filled_usdc.get(exchange_order_id, 0.0)
-                delta = max(0.0, cumulative_filled - previously_seen)
-                new_fills = []
-                if delta > 0:
-                    price = float(raw.get("averagePrice", raw.get("price", 0.0)) or 0.0)
-                    if price > 0:
-                        new_fills.append(
-                            OrderStatusFill(
-                                fill_usdc=delta,
-                                fill_price=price,
-                                fill_tokens=delta / price,
-                                ts=int(time.time() * 1000),
-                            )
-                        )
-                    self._last_status_filled_usdc[exchange_order_id] = cumulative_filled
-                return OrderStatusResponse(
-                    exchange_order_id=exchange_order_id,
-                    is_live=status in ["open", "partial"],
-                    is_cancelled=status == "canceled",
-                    is_filled=status == "filled",
-                    remaining_usdc=remaining,
-                    new_fills=new_fills,
-                )
-
-    async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
-        """Fetch all open orders from Opinion Markets."""
-        async with self._throttler:
-            session = await self._get_session()
-            path = "/orders/open"
-            async with session.get(path) as resp:
-                resp.raise_for_status()
-                raw = await resp.json()
-
-                # Assume raw is a list of open orders
-                orders = []
-                for o in raw:
-                    orders.append(
-                        OpenOrder(
-                            exchange_order_id=o["orderId"],
-                            market_id=o["marketId"],
-                            side="BUY" if o["side"] == 0 else "SELL",
-                            size_usdc=float(o.get("originalAmount", 0.0)),
-                            filled_usdc=float(o.get("originalAmount", 0.0)) - float(o.get("remainingAmount", 0.0)),
-                            limit_price=float(o.get("price", 0.0)),
+            previously_seen = self._last_status_filled_usdc.get(exchange_order_id, 0.0)
+            delta = max(0.0, cumulative_filled - previously_seen)
+            new_fills = []
+            if delta > 0:
+                price = float(raw.get("averagePrice", raw.get("price", 0.0)) or 0.0)
+                if price > 0:
+                    new_fills.append(
+                        OrderStatusFill(
+                            fill_usdc=delta,
+                            fill_price=price,
+                            fill_tokens=delta / price,
                             ts=int(time.time() * 1000),
                         )
                     )
-                return orders
+                self._last_status_filled_usdc[exchange_order_id] = cumulative_filled
+            return OrderStatusResponse(
+                exchange_order_id=exchange_order_id,
+                is_live=status in ["open", "partial"],
+                is_cancelled=status == "canceled",
+                is_filled=status == "filled",
+                remaining_usdc=remaining,
+                new_fills=new_fills,
+            )
+
+    async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
+        """Fetch all open orders from Opinion Markets."""
+        await self._limiter.acquire()
+        session = await self._get_session()
+        path = "/orders/open"
+        async with session.get(path) as resp:
+            resp.raise_for_status()
+            raw = await resp.json()
+
+            # Assume raw is a list of open orders
+            orders = []
+            for o in raw:
+                orders.append(
+                    OpenOrder(
+                        exchange_order_id=o["orderId"],
+                        market_id=o["marketId"],
+                        side="BUY" if o["side"] == 0 else "SELL",
+                        size_usdc=float(o.get("originalAmount", 0.0)),
+                        filled_usdc=float(o.get("originalAmount", 0.0)) - float(o.get("remainingAmount", 0.0)),
+                        limit_price=float(o.get("price", 0.0)),
+                        ts=int(time.time() * 1000),
+                    )
+                )
+            return orders
 
     async def verify_connectivity(self) -> bool:
         """Verify API keys by fetching the user profile or listing orders."""
@@ -308,4 +309,4 @@ class OpinionClient:
 
 
 if TYPE_CHECKING:
-    _: ExchangeClient = OpinionClient(api_key="", wallet_private_key="0x" + "0" * 64)
+    _: ExchangeClient = OpinionClient(api_key="", wallet_private_key="0x" + "0" * 64, ctf_exchange_addr="0x" + "0" * 40)

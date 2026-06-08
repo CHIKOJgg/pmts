@@ -11,7 +11,7 @@ import pytest
 from data.adapters.polymarket_ws import PolymarketWSAdapter
 from data.adapters.opinion_ws import OpinionWSAdapter
 from data.models import MarketSnapshot
-from src.types import Platform
+from src.enums import Platform
 
 
 class TestPolymarketWSAdapter:
