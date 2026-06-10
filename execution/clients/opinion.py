@@ -7,6 +7,7 @@ import aiohttp
 from eth_account import Account
 
 from execution.rate_limiter import VenueRateLimiter
+from infrastructure.retry import async_retry
 
 from execution.engine import (
     ExchangeClient,
@@ -158,6 +159,7 @@ class OpinionClient:
         signed = Account.sign_typed_data(self._wallet_private_key, full_message=structured_data)
         return str(signed.signature.hex())
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def place_order(
         self, submission: OrderSubmission, effective_price: float, nonce: Optional[int] = None
     ) -> PlacedOrderResponse:
@@ -210,6 +212,7 @@ class OpinionClient:
 
                 return PlacedOrderResponse(exchange_order_id=raw.get("orderId", "N/A"), status="live", fills=[])
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
         """Cancel an order on Opinion."""
         await self._limiter.acquire()
@@ -223,6 +226,7 @@ class OpinionClient:
             resp.raise_for_status()
             return True
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def get_order_status(self, exchange_order_id: str, market_id: str) -> OrderStatusResponse:
         """Fetch status for an Opinion order."""
         await self._limiter.acquire()
@@ -267,6 +271,7 @@ class OpinionClient:
                 new_fills=new_fills,
             )
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
         """Fetch all open orders from Opinion Markets."""
         await self._limiter.acquire()
@@ -292,6 +297,7 @@ class OpinionClient:
                 )
             return orders
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def verify_connectivity(self) -> bool:
         """Verify API keys by fetching the user profile or listing orders."""
         try:

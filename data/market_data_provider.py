@@ -124,21 +124,22 @@ class MarketDataProvider:
             }
             self._disabled_callbacks.clear()
 
-        for cb in self._callbacks:
+        results = await asyncio.gather(
+            *(self._invoke_cb(cb, snapshot) for cb in self._callbacks),
+            return_exceptions=True,
+        )
+        for cb, result in zip(self._callbacks, results):
             cb_id = id(cb)
-            try:
-                await cb(snapshot)
-                self._callback_errors[cb_id] = 0  # Reset on success
-            except Exception as exc:
+            if result is None:
+                self._callback_errors[cb_id] = 0
+            else:
                 self._callback_errors[cb_id] = self._callback_errors.get(cb_id, 0) + 1
                 logger.error(
                     "Snapshot callback %s raised: %s",
                     cb.__name__ if hasattr(cb, "__name__") else str(cb)[:40],
-                    exc,
+                    result,
                     exc_info=True,
                 )
-
-                # Circuit breaker: disable callback after too many consecutive errors
                 if self._callback_errors[cb_id] > 10:
                     logger.critical(
                         "Callback %s has failed %d times consecutively. Disabling.",
@@ -197,6 +198,12 @@ class MarketDataProvider:
 
     def add_callback(self, cb: _SnapshotCB) -> None:
         self._callbacks.append(cb)
+
+    async def _invoke_cb(self, cb: _SnapshotCB, snapshot: MarketSnapshot) -> None:
+        try:
+            await cb(snapshot)
+        except Exception:
+            raise
 
     # ── Internal ─────────────────────────────────────────────────────────────
 

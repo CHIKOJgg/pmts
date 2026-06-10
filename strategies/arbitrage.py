@@ -1,15 +1,16 @@
-"""strategies/arbitrage.py — Cross-venue arbitrage with strict feasibility checks."""
+"""strategies/arbitrage.py — N-venue arbitrage with strict feasibility checks."""
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 from ai.signal_context import SignalContext
-from data.models import FeatureVector
+from data.models import FeatureVector, VenueSnapshot
 from execution.models import OrderProposal
 from src.clock import Clock, LiveClock
 from src.enums import ArbLeg, OrderType, Platform, Side, StrategyId
@@ -23,11 +24,13 @@ OFI_ADVERSE_MULT: float = 1.60  # impact multiplier when OFI adverse
 MIN_DEPTH_USDC: float = 10.0  # minimum depth for reliable cost estimate
 FILL_CERTAINTY: float = 0.65  # fraction of displayed depth actually fillable
 
-# Advanced signals constants
-LATENCY_ARB_STALENESS_MS: int = 500  # staleness delta for latency arb detection
-LATENCY_ARB_SIZE_BOOST: float = 1.20  # position size boost for latency arb
-
 ARB_EXPIRY_MS: int = 2_000  # 2-second deadline for both legs
+
+# Default fees by platform (via ArbConfig)
+DEFAULT_FEES: Dict[Platform, int] = {
+    Platform.POLYMARKET: 20,
+    Platform.OPINION: 25,
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -80,21 +83,22 @@ def estimate_taker_cost(
 
 @dataclass(frozen=True)
 class ArbConfig:
-    min_net_edge: float = 0.006  # 0.6% after all costs
-    max_spread_fraction: float = 0.07  # reject if spread > 7% of ask
+    min_net_edge: float = 0.006
+    max_spread_fraction: float = 0.07
     fill_certainty: float = FILL_CERTAINTY
-    min_fill_ratio: float = 0.80  # abort leg-2 if leg-1 fills < 80%
+    min_fill_ratio: float = 0.80
     max_order_usdc: float = 200.0
     min_order_usdc: float = 5.0
-    max_signal_age_ms: int = 300  # reject signals older than 300 ms
+    max_signal_age_ms: int = 300
     arb_expiry_ms: int = ARB_EXPIRY_MS
-    pm_fee_bps: int = 20  # Polymarket taker fee (configurable)
-    op_fee_bps: int = 25  # Opinion Markets taker fee (configurable)
-    min_days_to_resolution: float = 0.0  # hard reject floor; sizing is reduced below 1 day
-    ofi_adverse_threshold: float = OFI_ADVERSE_THRESHOLD  # NEW
-    ofi_adverse_mult: float = OFI_ADVERSE_MULT  # NEW
-    latency_arb_staleness_ms: int = LATENCY_ARB_STALENESS_MS  # NEW
-    latency_arb_size_boost: float = LATENCY_ARB_SIZE_BOOST  # NEW
+    fees: Dict[Platform, int] = None  # per-platform fee in bps
+    min_days_to_resolution: float = 0.0
+    ofi_adverse_threshold: float = OFI_ADVERSE_THRESHOLD
+    ofi_adverse_mult: float = OFI_ADVERSE_MULT
+
+    def __post_init__(self):
+        if self.fees is None:
+            object.__setattr__(self, "fees", dict(DEFAULT_FEES))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +115,7 @@ class ArbEvaluation:
     accepted: bool
     rejection_reason: Optional[str]
     direction: Optional[str] = None
+    pair: str = ""
     leg1_cost_frac: Optional[float] = None
     leg2_cost_frac: Optional[float] = None
     net_edge: Optional[float] = None
@@ -127,10 +132,10 @@ class ArbEvaluation:
 
 class ArbitrageStrategy:
     """
-    Stateless evaluator. Call evaluate(fv) every tick.
+    N-venue stateless evaluator. Call evaluate(fv) every tick.
 
-    Returns ArbEvaluation. If accepted=True, leg1_proposal and leg2_proposal
-    are ready to send to CRG. If accepted=False, rejection_reason explains why.
+    Enumerates all venue pairs (N×(N-1)/2), tries both directions for each,
+    and returns the best accepted opportunity.  Returns ArbEvaluation.
     """
 
     def __init__(
@@ -139,9 +144,6 @@ class ArbitrageStrategy:
         clock: Clock = LiveClock(),
     ) -> None:
         self._cfg = config
-        # Fees are read from config; defaults provided for backward compatibility
-        self._pm_fee = getattr(config, "pm_fee_bps", 20)
-        self._op_fee = getattr(config, "op_fee_bps", 25)
         self._clock: Clock = clock
 
         self.evaluated: int = 0
@@ -150,305 +152,226 @@ class ArbitrageStrategy:
         self.rejected_no_edge: int = 0
         self.rejected_spread: int = 0
         self.rejected_depth: int = 0
-        self.rejected_ofi: int = 0
 
-    # ── Advanced signal adjustments ──────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _adjust_for_ofi(self, raw_edge: float, ofi_pm: float, ofi_op: float) -> float:
-        """Apply OFI adverse-selection penalty to net edge."""
-        ofi_net = ofi_pm - ofi_op  # positive = flow toward PM, favorable for arb
+    def _fee_bps(self, platform: Platform) -> int:
+        return self._cfg.fees.get(platform, 0)
+
+    def _adjust_for_ofi(self, raw_edge: float, ofi_a: float, ofi_b: float) -> float:
+        ofi_net = ofi_a - ofi_b
         if abs(ofi_net) > self._cfg.ofi_adverse_threshold:
             penalty = 1 + (abs(ofi_net) - self._cfg.ofi_adverse_threshold) * self._cfg.ofi_adverse_mult
             return raw_edge / penalty
         return raw_edge
 
     def _dynamic_min_edge(self, vol_regime: Optional[str]) -> float:
-        """Tighten edge requirement in low-vol (thin books), relax in high-vol."""
         if vol_regime is None:
             return self._cfg.min_net_edge
         return {
-            "LOW":    self._cfg.min_net_edge * 1.5,   # tighter in calm markets
+            "LOW":    self._cfg.min_net_edge * 1.5,
             "NORMAL": self._cfg.min_net_edge,
-            "HIGH":   self._cfg.min_net_edge * 0.8,   # relax in volatile markets
-            "SPIKE":  self._cfg.min_net_edge * 0.7,   # even more relaxed in spikes
+            "HIGH":   self._cfg.min_net_edge * 0.8,
+            "SPIKE":  self._cfg.min_net_edge * 0.7,
         }.get(vol_regime, self._cfg.min_net_edge)
 
-    def _detect_latency_arb(self, fv: FeatureVector) -> bool:
-        """Detect cross-venue latency arbitrage opportunity."""
-        # Check if feed age delta between venues exceeds threshold
-        # This requires feed_age_ms to be available on FeatureVector
-        # For now, we check if spread delta suggests latency arb
-        spread_delta = abs(fv.spread_pm - fv.spread_op)
-        return spread_delta > self._cfg.latency_arb_staleness_ms / 10000.0
+    def _evaluate_pair(
+        self, fv: FeatureVector, now: int, signal_age_ms: int, ctx: Optional[SignalContext],
+        plat_a: Platform, v_a: VenueSnapshot, plat_b: Platform, v_b: VenueSnapshot,
+    ) -> ArbEvaluation:
+        """
+        Evaluate one unordered pair (A, B).  Tries both directions and returns the
+        best result — either accepted or the furthest-progressed rejection.
+        """
+        pair_label = f"{plat_a.value}<->{plat_b.value}"
+        fee_a = self._fee_bps(plat_a) / 10_000
+        fee_b = self._fee_bps(plat_b) / 10_000
 
-    # ── End advanced signal adjustments ────────────────────────────────────────
+        yes_ask_a = v_a.mid + v_a.spread / 2
+        no_ask_a  = (1.0 - v_a.mid) + v_a.spread / 2
+        yes_ask_b = v_b.mid + v_b.spread / 2
+        no_ask_b  = (1.0 - v_b.mid) + v_b.spread / 2
+
+        def _pair_reject(reason: str, **kw) -> ArbEvaluation:
+            return ArbEvaluation(
+                market_id=fv.market_id, evaluated_at=now, signal_age_ms=signal_age_ms,
+                arb_signal=fv.arb_signal, accepted=False, rejection_reason=reason,
+                pair=pair_label, **kw,
+            )
+
+        # Spread check
+        for spread, ask, name in [(v_a.spread, yes_ask_a, plat_a.value), (v_b.spread, yes_ask_b, plat_b.value)]:
+            if ask > 0 and spread / ask > self._cfg.max_spread_fraction:
+                self.rejected_spread += 1
+                return _pair_reject(f"spread_too_wide:{name}={spread / ask:.3f}")
+
+        # Two directions
+        gross_dirs: dict = {
+            f"{plat_a.value.upper()}_YES_{plat_b.value.upper()}_NO": (yes_ask_a, no_ask_b, fee_a, fee_b),
+            f"{plat_b.value.upper()}_YES_{plat_a.value.upper()}_NO": (yes_ask_b, no_ask_a, fee_b, fee_a),
+        }
+
+        best: Optional[ArbEvaluation] = None
+
+        for direction, (l1_ask, l2_ask, f1, f2) in gross_dirs.items():
+            gross = 1.0 - l1_ask - l2_ask
+            net_b4 = gross - f1 - f2
+            if net_b4 <= 0:
+                if best is None:
+                    best = _pair_reject(f"no_edge_dir:{direction}")
+                continue
+
+            is_a_first = direction.startswith(plat_a.value.upper())
+            l1_plat, l1_side, l1_bid = (plat_a, Side.BUY_YES, v_a.mid - v_a.spread / 2) if is_a_first else (plat_b, Side.BUY_YES, v_b.mid - v_b.spread / 2)
+            l2_plat, l2_side, l2_bid = (plat_b, Side.BUY_NO, (1.0 - v_b.mid) - v_b.spread / 2) if is_a_first else (plat_a, Side.BUY_NO, (1.0 - v_a.mid) - v_a.spread / 2)
+            l1_depth, l2_depth = (v_a.ask_depth, v_b.ask_depth) if is_a_first else (v_b.ask_depth, v_a.ask_depth)
+            l1_ofi, l2_ofi = (v_a.ofi, v_b.ofi) if is_a_first else (v_b.ofi, v_a.ofi)
+
+            max_order_usdc = self._cfg.max_order_usdc
+            if fv.days_to_resolution is not None and fv.days_to_resolution < 1.0:
+                max_order_usdc *= 0.5
+            fillable1 = min(max_order_usdc, l1_depth * self._cfg.fill_certainty)
+            fillable2 = min(max_order_usdc, l2_depth * self._cfg.fill_certainty)
+            raw_size = min(fillable1, fillable2)
+
+            if raw_size < self._cfg.min_order_usdc:
+                self.rejected_depth += 1
+                if best is None or not best.accepted:
+                    best = _pair_reject(
+                        f"fillable=${raw_size:.2f}<min=${self._cfg.min_order_usdc:.2f} (d1={l1_depth:.0f} d2={l2_depth:.0f})",
+                        direction=direction, raw_size_usdc=raw_size,
+                    )
+                continue
+
+            l1_fee_bps = self._fee_bps(l1_plat)
+            l2_fee_bps = self._fee_bps(l2_plat)
+            c1 = estimate_taker_cost(raw_size, l1_ask, l1_bid, l1_depth, l1_fee_bps, l1_ofi)
+            c2 = estimate_taker_cost(raw_size, l2_ask, l2_bid, l2_depth, l2_fee_bps, l2_ofi)
+            c1_frac = c1.as_fraction(raw_size)
+            c2_frac = c2.as_fraction(raw_size)
+            net_edge = gross - c1_frac - c2_frac
+            net_edge = self._adjust_for_ofi(net_edge, l1_ofi, l2_ofi)
+
+            min_net_edge = self._dynamic_min_edge(getattr(fv, "vol_regime", None))
+            if fv.vol_30s is not None and fv.vol_30s > 0.01:
+                min_net_edge *= 1.5
+            min_depth = min(v_a.bid_depth, v_a.ask_depth, v_b.bid_depth, v_b.ask_depth)
+            if min_depth < 100:
+                min_net_edge *= 2.0
+            if ctx is not None:
+                min_net_edge *= max(0.1, 1.0 + ctx.confidence_adjustment)
+
+            if net_edge < min_net_edge:
+                if best is None or (best.accepted and net_edge > best.net_edge) or (not best.accepted and (best.net_edge is None or net_edge > best.net_edge)):
+                    best = _pair_reject(
+                        f"net_edge={net_edge:.4f}<min={min_net_edge:.4f} (gross={gross:.4f} c1={c1_frac:.4f} c2={c2_frac:.4f})",
+                        direction=direction, leg1_cost_frac=c1_frac, leg2_cost_frac=c2_frac,
+                        net_edge=net_edge, raw_size_usdc=raw_size,
+                    )
+                continue
+
+            edge_buffer = net_edge - min_net_edge
+            final_size = raw_size
+            if edge_buffer < 0.008:
+                final_size = max(self._cfg.min_order_usdc, raw_size * (0.5 + (edge_buffer / 0.008) * 0.5))
+
+            group_id = str(uuid.uuid4())
+            expiry_ms = now + self._cfg.arb_expiry_ms
+            try:
+                leg1 = OrderProposal(
+                    proposal_id=str(uuid.uuid4()), market_id=fv.market_id, platform=l1_plat,
+                    side=l1_side, size_usdc=round(final_size, 2),
+                    limit_price=round(max(0.001, min(0.999, l1_ask)), 4),
+                    order_type=OrderType.LIMIT, strategy_id=StrategyId.ARB,
+                    leg_group_id=group_id, leg_number=ArbLeg.LEG_1,
+                    min_fill_ratio=self._cfg.min_fill_ratio, expiry_ms=expiry_ms, source_ts=fv.ts,
+                )
+                leg2 = OrderProposal(
+                    proposal_id=str(uuid.uuid4()), market_id=fv.market_id, platform=l2_plat,
+                    side=l2_side, size_usdc=round(final_size, 2),
+                    limit_price=round(max(0.001, min(0.999, l2_ask)), 4),
+                    order_type=OrderType.LIMIT, strategy_id=StrategyId.ARB,
+                    leg_group_id=group_id, leg_number=ArbLeg.LEG_2,
+                    min_fill_ratio=None, expiry_ms=expiry_ms, source_ts=fv.ts,
+                )
+            except Exception as exc:
+                continue
+
+            valid1, err1 = self._validate_proposal(leg1)
+            valid2, err2 = self._validate_proposal(leg2)
+            if not valid1 or not valid2:
+                continue
+
+            if best is None or not best.accepted or net_edge > best.net_edge:
+                result = ArbEvaluation(
+                    market_id=fv.market_id, evaluated_at=now, signal_age_ms=signal_age_ms,
+                    arb_signal=fv.arb_signal, accepted=True, rejection_reason=None,
+                    direction=direction, pair=pair_label,
+                    leg1_cost_frac=c1_frac, leg2_cost_frac=c2_frac, net_edge=net_edge,
+                    raw_size_usdc=raw_size, final_size_usdc=final_size,
+                    leg1_proposal=leg1, leg2_proposal=leg2,
+                )
+                best = result
+
+        return best if best is not None else _pair_reject("no_directional_edge")
 
     def evaluate(
         self, fv: FeatureVector, now_ts: Optional[int] = None, ctx: Optional[SignalContext] = None
     ) -> ArbEvaluation:
-        """
-        Evaluate arb signal for one FeatureVector.
-
-        now_ts: simulated current time in ms (for backtest).  If None,
-                wall-clock time is used (live trading).
-        ctx: AI SignalContext to modulate thresholds.
-        """
         self.evaluated += 1
         now = now_ts if now_ts is not None else self._clock.now_ms()
         signal_age_ms = now - fv.ts
 
         def _reject(reason: str) -> ArbEvaluation:
             return ArbEvaluation(
-                market_id=fv.market_id,
-                evaluated_at=now,
-                signal_age_ms=signal_age_ms,
-                arb_signal=fv.arb_signal,
-                accepted=False,
-                rejection_reason=reason,
+                market_id=fv.market_id, evaluated_at=now, signal_age_ms=signal_age_ms,
+                arb_signal=fv.arb_signal, accepted=False, rejection_reason=reason,
             )
 
-        # ── Guard 1: NaN signal ───────────────────────────────────────────────
         if math.isnan(fv.arb_signal):
             self.rejected_stale += 1
             return _reject(f"stale_data:{[p.value for p in fv.stale_markets]}")
 
-        # ── Guard 2: Signal age ───────────────────────────────────────────────
         if signal_age_ms > self._cfg.max_signal_age_ms:
             self.rejected_stale += 1
             return _reject(f"signal_age={signal_age_ms}ms > {self._cfg.max_signal_age_ms}ms")
 
-        # ── Guard 3: Pre-cost edge ────────────────────────────────────────────
         if fv.arb_signal <= 0.0:
             self.rejected_no_edge += 1
             return _reject(f"arb_signal={fv.arb_signal:.5f}<=0")
 
-        # ── Guard 4: Spread feasibility ───────────────────────────────────────
-        yes_ask_pm = fv.mid_pm + fv.spread_pm / 2
-        no_ask_pm = (1.0 - fv.mid_pm) + fv.spread_pm / 2
-        yes_ask_op = fv.mid_op + fv.spread_op / 2
-        no_ask_op = (1.0 - fv.mid_op) + fv.spread_op / 2
-
-        for spread, ask, name in [
-            (fv.spread_pm, yes_ask_pm, "PM"),
-            (fv.spread_op, yes_ask_op, "OP"),
-        ]:
-            if ask > 0 and spread / ask > self._cfg.max_spread_fraction:
-                self.rejected_spread += 1
-                return _reject(f"spread_too_wide:{name}={spread / ask:.3f}")
-
-        # ── Direction selection (both directions computed from actual ask prices)
-        fee_pm = self._pm_fee / 10_000
-        fee_op = self._op_fee / 10_000
-
-        gross_a = 1.0 - yes_ask_pm - no_ask_op  # buy YES on PM, NO on OP
-        gross_b = 1.0 - yes_ask_op - no_ask_pm  # buy YES on OP, NO on PM
-        net_a = gross_a - fee_pm - fee_op
-        net_b = gross_b - fee_pm - fee_op
-
-        if net_a <= 0 and net_b <= 0:
+        if fv.days_to_resolution is not None and fv.days_to_resolution < self._cfg.min_days_to_resolution:
             self.rejected_no_edge += 1
-            return _reject(f"no_directional_edge:A={net_a:.4f} B={net_b:.4f}")
+            return _reject(f"days_to_resolution={fv.days_to_resolution:.2f}<min={self._cfg.min_days_to_resolution}d")
 
-        # Choose better direction; tie-break by depth
-        if net_a >= net_b:
-            direction = "PM_YES_OP_NO"
-            l1_plat, l1_side, l1_ask, l1_bid = (
-                Platform.POLYMARKET,
-                Side.BUY_YES,
-                yes_ask_pm,
-                fv.mid_pm - fv.spread_pm / 2,
-            )
-            l2_plat, l2_side, l2_ask, l2_bid = (
-                Platform.OPINION,
-                Side.BUY_NO,
-                no_ask_op,
-                (1.0 - fv.mid_op) - fv.spread_op / 2,
-            )
-            l1_depth, l2_depth = fv.ask_depth_pm, fv.ask_depth_op
-            l1_ofi, l2_ofi = fv.ofi_pm, fv.ofi_op
-            gross_edge = gross_a
-        else:
-            direction = "OP_YES_PM_NO"
-            l1_plat, l1_side, l1_ask, l1_bid = (
-                Platform.OPINION,
-                Side.BUY_YES,
-                yes_ask_op,
-                fv.mid_op - fv.spread_op / 2,
-            )
-            l2_plat, l2_side, l2_ask, l2_bid = (
-                Platform.POLYMARKET,
-                Side.BUY_NO,
-                no_ask_pm,
-                (1.0 - fv.mid_pm) - fv.spread_pm / 2,
-            )
-            l1_depth, l2_depth = fv.ask_depth_op, fv.ask_depth_pm
-            l1_ofi, l2_ofi = fv.ofi_op, fv.ofi_pm
-            gross_edge = gross_b
+        if len(fv.venues) < 2:
+            return _reject("need_at_least_2_venues")
 
-        # ── Guard 4.5: Near-expiry market check ───────────────────────────────
-        min_days = getattr(self._cfg, "min_days_to_resolution", 1.0)
-        if fv.days_to_resolution is not None and fv.days_to_resolution < min_days:
-            self.rejected_no_edge += 1
-            return _reject(f"days_to_resolution={fv.days_to_resolution:.2f}<min={min_days}d")
+        platforms = list(fv.venues.keys())
+        best: Optional[ArbEvaluation] = None
 
-        # ── Guard 5: Depth / fillable size ────────────────────────────────────
-        max_order_usdc = self._cfg.max_order_usdc
-        if fv.days_to_resolution is not None and fv.days_to_resolution < 1.0:
-            max_order_usdc *= 0.5
+        for i in range(len(platforms)):
+            for j in range(i + 1, len(platforms)):
+                result = self._evaluate_pair(
+                    fv, now, signal_age_ms, ctx,
+                    platforms[i], fv.venues[platforms[i]],
+                    platforms[j], fv.venues[platforms[j]],
+                )
+                if best is None or (result.accepted and not best.accepted):
+                    best = result
+                elif result.accepted and best.accepted and result.net_edge > best.net_edge:
+                    best = result
 
-        fillable1 = min(max_order_usdc, l1_depth * self._cfg.fill_certainty)
-        fillable2 = min(max_order_usdc, l2_depth * self._cfg.fill_certainty)
-        raw_size = min(fillable1, fillable2)
+        if best is not None:
+            if best.accepted:
+                self.accepted += 1
+                logger.info(
+                    "ARB ACCEPTED market=%s pair=%s dir=%s size=$%.2f net_edge=%.4f age=%dms",
+                    fv.market_id, best.pair, best.direction, best.final_size_usdc, best.net_edge, signal_age_ms,
+                )
+            return best
 
-        if raw_size < self._cfg.min_order_usdc:
-            self.rejected_depth += 1
-            return ArbEvaluation(
-                market_id=fv.market_id,
-                evaluated_at=now,
-                signal_age_ms=signal_age_ms,
-                arb_signal=fv.arb_signal,
-                accepted=False,
-                direction=direction,
-                raw_size_usdc=raw_size,
-                rejection_reason=(
-                    f"fillable=${raw_size:.2f}<min=${self._cfg.min_order_usdc:.2f} "
-                    f"(d1={l1_depth:.0f} d2={l2_depth:.0f})"
-                ),
-            )
-
-        # ── Guard 6: Net edge after slippage ──────────────────────────────────
-        l1_fee_bps = self._pm_fee if l1_plat == Platform.POLYMARKET else self._op_fee
-        l2_fee_bps = self._op_fee if l2_plat == Platform.OPINION else self._pm_fee
-
-        c1 = estimate_taker_cost(raw_size, l1_ask, l1_bid, l1_depth, l1_fee_bps, l1_ofi)
-        c2 = estimate_taker_cost(raw_size, l2_ask, l2_bid, l2_depth, l2_fee_bps, l2_ofi)
-        c1_frac = c1.as_fraction(raw_size)
-        c2_frac = c2.as_fraction(raw_size)
-        net_edge = gross_edge - c1_frac - c2_frac
-
-        # ── Advanced signals: OFI adjustment ──────────────────────────────────
-        net_edge = self._adjust_for_ofi(net_edge, l1_ofi, l2_ofi)
-
-        # ── Advanced signals: Dynamic min_net_edge based on vol regime ─────────
-        min_net_edge = self._dynamic_min_edge(fv.vol_regime)
-
-        if fv.vol_30s is not None and fv.vol_30s > 0.01:
-            min_net_edge *= 1.5
-
-        min_depth = min(fv.bid_depth_pm, fv.ask_depth_pm, fv.bid_depth_op, fv.ask_depth_op)
-        if min_depth < 100:
-            min_net_edge *= 2.0
-
-        if ctx is not None:
-            min_net_edge *= max(0.1, 1.0 + ctx.confidence_adjustment)
-
-        # ── Advanced signals: Latency arb detection ────────────────────────────
-        latency_arb_boost = 1.0
-        if self._detect_latency_arb(fv):
-            latency_arb_boost = self._cfg.latency_arb_size_boost
-            logger.info("LATENCY ARB DETECTED market=%s boost=%.2f", fv.market_id, latency_arb_boost)
-
-        if net_edge < min_net_edge:
-            self.rejected_no_edge += 1
-            return ArbEvaluation(
-                market_id=fv.market_id,
-                evaluated_at=now,
-                signal_age_ms=signal_age_ms,
-                arb_signal=fv.arb_signal,
-                accepted=False,
-                direction=direction,
-                leg1_cost_frac=c1_frac,
-                leg2_cost_frac=c2_frac,
-                net_edge=net_edge,
-                raw_size_usdc=raw_size,
-                rejection_reason=(
-                    f"net_edge={net_edge:.4f}<min={min_net_edge:.4f} "
-                    f"(gross={gross_edge:.4f} c1={c1_frac:.4f} c2={c2_frac:.4f})"
-                ),
-            )
-
-        # ── Scale down when edge is borderline ────────────────────────────────
-        edge_buffer = net_edge - min_net_edge
-        if edge_buffer < 0.008:
-            scale = 0.5 + (edge_buffer / 0.008) * 0.5
-            final_size = max(self._cfg.min_order_usdc, raw_size * scale)
-        else:
-            final_size = raw_size
-
-        # Apply latency arb size boost if detected
-        final_size *= latency_arb_boost
-
-        # ── Build proposals ───────────────────────────────────────────────────
-        group_id = str(uuid.uuid4())
-        expiry_ms = now + self._cfg.arb_expiry_ms
-
-        try:
-            leg1 = OrderProposal(
-                proposal_id=str(uuid.uuid4()),
-                market_id=fv.market_id,
-                platform=l1_plat,
-                side=l1_side,
-                size_usdc=round(final_size, 2),
-                limit_price=round(max(0.001, min(0.999, l1_ask)), 4),
-                order_type=OrderType.LIMIT,
-                strategy_id=StrategyId.ARB,
-                leg_group_id=group_id,
-                leg_number=ArbLeg.LEG_1,
-                min_fill_ratio=self._cfg.min_fill_ratio,
-                expiry_ms=expiry_ms,
-                source_ts=fv.ts,
-            )
-            leg2 = OrderProposal(
-                proposal_id=str(uuid.uuid4()),
-                market_id=fv.market_id,
-                platform=l2_plat,
-                side=l2_side,
-                size_usdc=round(final_size, 2),
-                limit_price=round(max(0.001, min(0.999, l2_ask)), 4),
-                order_type=OrderType.LIMIT,
-                strategy_id=StrategyId.ARB,
-                leg_group_id=group_id,
-                leg_number=ArbLeg.LEG_2,
-                min_fill_ratio=None,
-                expiry_ms=expiry_ms,
-                source_ts=fv.ts,
-            )
-        except Exception as exc:
-            return _reject(f"proposal_build_failed:{exc}")
-
-        # ── Validate proposals before returning ───────────────────────────────
-        valid1, err1 = self._validate_proposal(leg1)
-        valid2, err2 = self._validate_proposal(leg2)
-        if not valid1 or not valid2:
-            return _reject(f"proposal_validation_failed: leg1={err1}, leg2={err2}")
-
-        self.accepted += 1
-        logger.info(
-            "ARB ACCEPTED market=%s dir=%s size=$%.2f net_edge=%.4f c1=%.4f c2=%.4f age=%dms",
-            fv.market_id,
-            direction,
-            final_size,
-            net_edge,
-            c1_frac,
-            c2_frac,
-            signal_age_ms,
-        )
-        return ArbEvaluation(
-            market_id=fv.market_id,
-            evaluated_at=now,
-            signal_age_ms=signal_age_ms,
-            arb_signal=fv.arb_signal,
-            accepted=True,
-            rejection_reason=None,
-            direction=direction,
-            leg1_cost_frac=c1_frac,
-            leg2_cost_frac=c2_frac,
-            net_edge=net_edge,
-            raw_size_usdc=raw_size,
-            final_size_usdc=final_size,
-            leg1_proposal=leg1,
-            leg2_proposal=leg2,
-        )
+        return _reject("no_arbitrage_in_any_pair")
 
     def _validate_proposal(self, proposal: OrderProposal) -> tuple[bool, Optional[str]]:
         """Validate order proposal before returning it.

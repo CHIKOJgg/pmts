@@ -6,7 +6,7 @@ import asyncio
 import logging
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from infrastructure.observability import (
@@ -44,6 +44,8 @@ class FillRecord:
     fill_price: float
     ts: int
     strategy_id: Optional[str] = None
+    realised_pnl: float = 0.0
+    hold_time_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,10 @@ class DeltaResult:
     no_holdings_pm: float
     yes_holdings_op: float
     no_holdings_op: float
+    avg_cost_yes_pm: Optional[float] = None
+    avg_cost_no_pm: Optional[float] = None
+    avg_cost_yes_op: Optional[float] = None
+    avg_cost_no_op: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +225,7 @@ class PortfolioManager:
         stream_writer: Optional[Callable[..., Any]] = None,
         store: Any = None,
         clock: Optional[Clock] = None,
+        fill_callback: Optional[Callable[[FillRecord], None]] = None,
     ) -> None:
         if initial_cash_usdc < 0:
             raise ValueError(f"initial_cash_usdc must be ≥ 0, got {initial_cash_usdc}")
@@ -227,6 +234,7 @@ class PortfolioManager:
         # Synchronous lock for hot-path reads (get_portfolio_mtm)
         self._sync_lock: threading.Lock = threading.Lock()
         self._positions: Dict[Tuple[str, Platform], _Position] = {}
+        self._initial_capital: float = initial_cash_usdc
         self._cash_usdc: float = initial_cash_usdc
         self._reserved_usdc: float = 0.0
         self._peak_equity: float = initial_cash_usdc
@@ -235,6 +243,7 @@ class PortfolioManager:
         self._stream_writer: Optional[Callable[..., Any]] = stream_writer
         self._store = store
         self._clock = clock or LiveClock()
+        self._fill_callback = fill_callback
 
         if self._store:
             state = self._store.load_state()
@@ -308,7 +317,10 @@ class PortfolioManager:
         async with self._lock:
             if key not in self._positions:
                 self._positions[key] = _Position(fill.market_id, fill.platform)
-            self._positions[key].apply_fill(side, tokens, fill.fill_price)
+            pos = self._positions[key]
+            old_pnl = pos.realised_pnl
+            pos.apply_fill(side, tokens, fill.fill_price)
+            pnl_delta = pos.realised_pnl - old_pnl
 
             if side.is_buy:
                 self._cash_usdc = max(0.0, self._cash_usdc - fill.filled_usdc)
@@ -329,9 +341,13 @@ class PortfolioManager:
             OPEN_EXPOSURE_USDC.labels(market_id=fill.market_id).set(exposure)
 
             if self._store:
+                fill_with_pnl = replace(fill, realised_pnl=pnl_delta)
                 self._store.save_fill_and_position(
-                    fill, self._positions[key], self._cash_usdc, self._peak_equity, self._closed_pnl
+                    fill_with_pnl, pos, self._cash_usdc, self._peak_equity, self._closed_pnl
                 )
+
+            if self._fill_callback:
+                self._fill_callback(replace(fill, realised_pnl=pnl_delta))
 
         task = asyncio.create_task(
             self._publish_snapshot(),
@@ -464,6 +480,10 @@ class PortfolioManager:
                 no_holdings_pm=pos.no_qty if plat == Platform.POLYMARKET else 0.0,
                 yes_holdings_op=pos.yes_qty if plat == Platform.OPINION else 0.0,
                 no_holdings_op=pos.no_qty if plat == Platform.OPINION else 0.0,
+                avg_cost_yes_pm=pos.avg_cost_yes if plat == Platform.POLYMARKET else None,
+                avg_cost_no_pm=pos.avg_cost_no if plat == Platform.POLYMARKET else None,
+                avg_cost_yes_op=pos.avg_cost_yes if plat == Platform.OPINION else None,
+                avg_cost_no_op=pos.avg_cost_no if plat == Platform.OPINION else None,
             )
             for (mid, plat), pos in self._positions.items()
         ]
@@ -481,6 +501,10 @@ class PortfolioManager:
     @property
     def cash_usdc(self) -> float:
         return self._cash_usdc
+
+    @property
+    def initial_capital(self) -> float:
+        return self._initial_capital
 
     @property
     def peak_equity(self) -> float:

@@ -90,6 +90,8 @@ class RejectReason(str, Enum):
     STRATEGY_CAP_EXCEEDED = "strategy_cap_exceeded"
     DELTA_LIMIT           = "delta_limit"
     STALE_MTM             = "stale_mtm"
+    SESSION_LOSS_LIMIT    = "session_loss_limit"
+    SOFT_KILL_ACTIVE      = "soft_kill_active"
 
 
 class ConnectorStatus(str, Enum):

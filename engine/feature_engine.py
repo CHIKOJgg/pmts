@@ -8,10 +8,11 @@ import math
 import statistics
 from typing import Any, Callable, Coroutine, Deque, Dict, List, Optional, Tuple
 
-from data.models import FeatureVector, MarketSnapshot
+from data.models import FeatureVector, MarketSnapshot, VenueSnapshot
 from portfolio.manager import PortfolioManager
 from src.clock import Clock, LiveClock
 from src.enums import Platform
+from strategies.correlation import CorrelationTracker
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +44,16 @@ class FeatureEngine:
         self._clock = clock or LiveClock()
         self._callbacks: List[_FV_CB] = []
         self._snaps: Dict[Tuple[str, Platform], MarketSnapshot] = {}
-        self._history: Dict[str, Deque[Tuple[int, float]]] = {}
+        self._history: Dict[Tuple[str, Platform], Deque[Tuple[int, float]]] = {}
+        self._correlation = CorrelationTracker(window_size=100)
         self.vectors_emitted: int = 0
 
     def add_callback(self, cb: _FV_CB) -> None:
         self._callbacks.append(cb)
+
+    @property
+    def correlation_tracker(self) -> CorrelationTracker:
+        return self._correlation
 
     async def on_snapshot(self, snap: MarketSnapshot) -> None:
         """Process one incoming snapshot and emit a FeatureVector if possible."""
@@ -55,10 +61,14 @@ class FeatureEngine:
         key = (snap.market_id, snap.platform)
         self._snaps[key] = snap
 
-        # Update vol history
-        hist = self._history.setdefault(snap.market_id, collections.deque())
+        # Update vol history (per-platform to avoid cross-platform contamination)
+        plat_key = (snap.market_id, snap.platform)
+        hist = self._history.setdefault(plat_key, collections.deque())
         hist.append((snap.received_ts or snap.ts, snap.yes_mid))
         self._portfolio.record_price_timestamp(snap.market_id, snap.platform, snap.received_ts or snap.ts)
+
+        # Track cross-market price correlations
+        self._correlation.update(snap.market_id, snap.yes_mid)
 
         # Get counterpart snapshot
         other_plat = Platform.OPINION if snap.platform == Platform.POLYMARKET else Platform.POLYMARKET
@@ -112,31 +122,39 @@ class FeatureEngine:
         def _safe(s: Optional[MarketSnapshot], attr: str, fallback: float) -> float:
             return getattr(s, attr) if s is not None else fallback
 
-        vol_30s = self._vol(snap.market_id, now)
+        vol_30s = self._vol(plat_key, now)
         delta = self._portfolio.get_delta(snap.market_id)
 
         try:
             vol_regime = self._vol_regime(vol_30s)
+
+            def _build_vs(s: Optional[MarketSnapshot]) -> VenueSnapshot:
+                if s is None:
+                    return VenueSnapshot(mid=0.5, spread=0.0, ofi=0.0, bid_depth=0.0, ask_depth=0.0)
+                return VenueSnapshot(
+                    mid=max(0.001, min(0.999, s.yes_mid)),
+                    spread=max(0.0, s.yes_spread),
+                    ofi=max(-1.0, min(1.0, _ofi(s))),
+                    bid_depth=s.bid_depth_usdc,
+                    ask_depth=s.ask_depth_usdc,
+                )
+
+            venues = {
+                Platform.POLYMARKET: _build_vs(pm),
+                Platform.OPINION: _build_vs(op),
+            }
             fv = FeatureVector(
                 market_id=snap.market_id,
                 ts=snap.ts,
                 computed_ts=now,
                 arb_signal=arb_signal,
                 stale_markets=stale,
-                mid_pm=max(0.001, min(0.999, _safe(pm, "yes_mid", 0.5))),
-                mid_op=max(0.001, min(0.999, _safe(op, "yes_mid", 0.5))),
-                spread_pm=max(0.0, _safe(pm, "yes_spread", 0.0)),
-                spread_op=max(0.0, _safe(op, "yes_spread", 0.0)),
-                ofi_pm=max(-1.0, min(1.0, _ofi(pm))),
-                ofi_op=max(-1.0, min(1.0, _ofi(op))),
+                venues=venues,
                 vol_30s=vol_30s,
                 vol_regime=vol_regime,
                 days_to_resolution=snap.days_to_resolution,
                 portfolio_delta=delta.net_delta,
-                bid_depth_pm=_safe(pm, "bid_depth_usdc", 0.0),
-                ask_depth_pm=_safe(pm, "ask_depth_usdc", 0.0),
-                bid_depth_op=_safe(op, "bid_depth_usdc", 0.0),
-                ask_depth_op=_safe(op, "ask_depth_usdc", 0.0),
+                correlations=self._correlation.get_all_correlations(snap.market_id),
             )
         except Exception as exc:
             logger.debug("FeatureVector build failed for %s: %s", snap.market_id, exc)
@@ -149,8 +167,8 @@ class FeatureEngine:
             except Exception as exc:
                 logger.error("FeatureVector callback raised: %s", exc, exc_info=True)
 
-    def _vol(self, market_id: str, now: int) -> Optional[float]:
-        hist = self._history.get(market_id)
+    def _vol(self, key: Tuple[str, Platform], now: int) -> Optional[float]:
+        hist = self._history.get(key)
         if not hist:
             return None
         cutoff = now - VOL_WINDOW_MS

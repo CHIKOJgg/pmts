@@ -30,7 +30,7 @@ from backtest.engine import (
     _sharpe,
     build_synthetic_tick_stream,
 )
-from data.models import FeatureVector, MarketSnapshot
+from data.models import FeatureVector, MarketSnapshot, VenueSnapshot
 from execution.models import ExecutionResult, OrderProposal, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
 from portfolio.manager import FillRecord, PortfolioManager
@@ -174,19 +174,13 @@ def make_fv(
         computed_ts=t,
         arb_signal=arb,
         stale_markets=stale,
-        mid_pm=mid_pm,
-        mid_op=mid_op,
-        spread_pm=spread_pm,
-        spread_op=spread_op,
-        ofi_pm=ofi_pm,
-        ofi_op=ofi_op,
+        venues={
+            Platform.POLYMARKET: VenueSnapshot(mid=mid_pm, spread=spread_pm, ofi=ofi_pm, bid_depth=bid_pm, ask_depth=ask_pm),
+            Platform.OPINION: VenueSnapshot(mid=mid_op, spread=spread_op, ofi=ofi_op, bid_depth=bid_op, ask_depth=ask_op),
+        },
         vol_30s=vol_30s,
         days_to_resolution=days,
         portfolio_delta=delta,
-        bid_depth_pm=bid_pm,
-        ask_depth_pm=ask_pm,
-        bid_depth_op=bid_op,
-        ask_depth_op=ask_op,
     )
 
 
@@ -259,19 +253,13 @@ class TestTypes(unittest.TestCase):
                 computed_ts=now_ms(),
                 arb_signal=float("nan"),
                 stale_markets=[],  # NaN but no stale
-                mid_pm=0.5,
-                mid_op=0.5,
-                spread_pm=0.0,
-                spread_op=0.0,
-                ofi_pm=0.0,
-                ofi_op=0.0,
+                venues={
+                    Platform.POLYMARKET: VenueSnapshot(0.5, 0.0, 0.0, 0.0, 0.0),
+                    Platform.OPINION: VenueSnapshot(0.5, 0.0, 0.0, 0.0, 0.0),
+                },
                 vol_30s=0.01,
                 days_to_resolution=10.0,
                 portfolio_delta=0.0,
-                bid_depth_pm=0.0,
-                ask_depth_pm=0.0,
-                bid_depth_op=0.0,
-                ask_depth_op=0.0,
             )
 
     def test_feature_vector_valid_with_stale(self):

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+import threading
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from execution.models import OrderProposal
@@ -139,18 +140,18 @@ class RiskEngine:
         # Synchronous reservation table вЂ” the ONLY source of truth for committed capital
         # proposal_id -> (amount, platform, strategy_id)
         self._reservations: Dict[str, Tuple[float, Platform, StrategyId]] = {}
+        self._total_reserved: float = 0.0
         self._arb_allocated: float = 0.0
         self._mm_allocated: float = 0.0
 
-        # Lock for atomic capital reservation operations (sync вЂ” all calls from event loop)
-        import threading
-
+        # Lock for atomic capital reservation operations (sync — all calls from event loop)
         self._capital_lock: threading.Lock = threading.Lock()
 
         if self._store:
             loaded_res = self._store.load_reservations()
             for pid, (amt, plat, strat) in loaded_res.items():
                 self._reservations[pid] = (amt, plat, strat)
+                self._total_reserved += amt
                 if strat == StrategyId.ARB:
                     self._arb_allocated += amt
                 else:
@@ -164,6 +165,13 @@ class RiskEngine:
                 self._kill_switch.sync_state(True)
 
         self.reconciliation_complete: bool = False
+
+        # Session P&L tracking for session loss limit
+        self._session_pnl: float = 0.0
+
+        # Soft-kill grace period state
+        self._grace_start_ms: Optional[int] = None
+        self._soft_kill_active: bool = False
 
         # LRU dedup cache
         self._dedup: collections.OrderedDict[str, int] = collections.OrderedDict()
@@ -191,7 +199,7 @@ class RiskEngine:
                 RejectReason.STALE_MTM,
                 f"MTM price {mtm_age_ms}ms old > limit {self._limits.max_mtm_age_ms}ms",
                 available=0.0,
-                committed=sum(r[0] for r in self._reservations.values()),
+                committed=self._total_reserved,
                 drawdown=0.0,
                 peak=self._portfolio.peak_equity,
                 equity=self._portfolio.peak_equity,
@@ -203,7 +211,7 @@ class RiskEngine:
         cash = self._portfolio.cash_usdc
 
         # Available capital = cash minus ALL outstanding reservations (sync dict read)
-        committed = sum(r[0] for r in self._reservations.values())
+        committed = self._total_reserved
         available = max(0.0, cash - committed)
         drawdown = _drawdown(peak, equity)
 
@@ -248,6 +256,30 @@ class RiskEngine:
         # в”Ђв”Ђ 4. Drawdown warn в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if drawdown >= self._limits.drawdown_warn_pct:
             logger.warning("DRAWDOWN WARNING: %.2f%%", drawdown * 100)
+
+        # 4a. Soft-kill grace period
+        if self._limits.soft_kill_on_drawdown and drawdown >= (self._limits.drawdown_kill_pct * 0.9):
+            if self._grace_start_ms is None:
+                self._grace_start_ms = now
+                logger.warning("SOFT KILL GRACE: drawdown %.2f%% reached, grace period %.0fs",
+                               drawdown * 100, self._limits.kill_switch_grace_s)
+            elapsed_s = (now - self._grace_start_ms) / 1000.0
+            if elapsed_s >= self._limits.kill_switch_grace_s:
+                self._soft_kill_active = True
+                return reject(
+                    RejectReason.SOFT_KILL_ACTIVE,
+                    f"Drawdown {drawdown:.2%} sustained for {elapsed_s:.0f}s >= grace {self._limits.kill_switch_grace_s:.0f}s",
+                )
+        else:
+            self._grace_start_ms = None
+            self._soft_kill_active = False
+
+        # 4b. Session loss limit
+        if self._session_pnl <= -self._limits.session_loss_limit_usdc:
+            return reject(
+                RejectReason.SESSION_LOSS_LIMIT,
+                f"Session PnL ${self._session_pnl:.2f} <= -${self._limits.session_loss_limit_usdc:.2f} limit",
+            )
 
         # в”Ђв”Ђ 5. Duplicate в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         if self._is_duplicate(proposal.proposal_id, now):
@@ -323,6 +355,7 @@ class RiskEngine:
         # в”Ђв”Ђ APPROVED вЂ” reserve capital atomically under lock в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
         with self._capital_lock:
             self._reservations[proposal.proposal_id] = (proposal.size_usdc, proposal.platform, proposal.strategy_id)
+            self._total_reserved += proposal.size_usdc
             if proposal.strategy_id == StrategyId.ARB:
                 self._arb_allocated += proposal.size_usdc
             else:
@@ -363,13 +396,15 @@ class RiskEngine:
             self._store.remove_reservation(proposal_id)
 
         reserved_amount, _, strategy_id = info
+        self._total_reserved = max(0.0, self._total_reserved - reserved_amount)
         if strategy_id == StrategyId.ARB:
             self._arb_allocated = max(0.0, self._arb_allocated - reserved_amount)
         else:
             self._mm_allocated = max(0.0, self._mm_allocated - reserved_amount)
         await self._portfolio.release_capital(reserved_amount)
 
-    def reconcile_reservations(self) -> None:
+    def notify_fill(self, realised_pnl: float) -> None:
+        self._session_pnl += realised_pnl
         """
         Sync SQLite reservations with memory and purge orphaned ones.
         Called after ExecutionEngine reconciliation.
@@ -384,6 +419,7 @@ class RiskEngine:
         for pid, (amt, plat, strat) in db_res.items():
             if pid not in self._reservations:
                 self._reservations[pid] = (amt, plat, strat)
+                self._total_reserved += amt
                 if strat == StrategyId.ARB:
                     self._arb_allocated += amt
                 else:
@@ -414,6 +450,7 @@ class RiskEngine:
                 if self._store:
                     self._store.remove_reservation(proposal_id)
             self._reservations.clear()
+            self._total_reserved = 0.0
             self._arb_allocated = 0.0
             self._mm_allocated = 0.0
             KILL_SWITCH_ACTIVE.set(0.0)
@@ -431,7 +468,7 @@ class RiskEngine:
 
     @property
     def reserved_capital(self) -> float:
-        return sum(r[0] for r in self._reservations.values())
+        return self._total_reserved
 
     @property
     def kill_switch_active(self) -> bool:
@@ -444,9 +481,10 @@ class RiskEngine:
         peak = self._portfolio.peak_equity
         return _drawdown(peak, mtm.total_equity_usdc)
 
-    def reload_limits(self, new_limits: RiskLimits) -> None:
-        self._limits = new_limits
-        logger.info("RiskEngine limits reloaded")
+    def reload_limits(self, new_limits: Optional[RiskLimits] = None) -> None:
+        if new_limits is not None:
+            self._limits = new_limits
+            logger.info("RiskEngine limits reloaded")
 
     # в”Ђв”Ђ Internal helpers в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 

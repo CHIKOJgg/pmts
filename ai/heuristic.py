@@ -20,6 +20,7 @@ from ai.signal_context import (
     VolRegime,
 )
 from data.models import FeatureVector
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,8 @@ def heuristic_enhance(fv: FeatureVector) -> SignalContext:
     O(1), no I/O, no side effects.
     """
     vol = fv.vol_30s if fv.vol_30s is not None else 0.0
+    pm_v = fv.venues.get(Platform.POLYMARKET)
+    op_v = fv.venues.get(Platform.OPINION)
 
     # ── Vol regime ────────────────────────────────────────────────────────────
     if vol >= _VOL_SPIKE:
@@ -50,10 +53,19 @@ def heuristic_enhance(fv: FeatureVector) -> SignalContext:
         vol_regime = VolRegime.NORMAL
 
     # ── Market regime ─────────────────────────────────────────────────────────
-    ofi_mag = (abs(fv.ofi_pm) + abs(fv.ofi_op)) / 2.0
-    safe_pm = max(0.001, fv.mid_pm + fv.spread_pm / 2)
-    safe_op = max(0.001, fv.mid_op + fv.spread_op / 2)
-    spr_frac = max(fv.spread_pm / safe_pm, fv.spread_op / safe_op)
+    ofi_pm = pm_v.ofi if pm_v else 0.0
+    ofi_op = op_v.ofi if op_v else 0.0
+    spread_pm = pm_v.spread if pm_v else 0.0
+    spread_op = op_v.spread if op_v else 0.0
+    mid_pm = pm_v.mid if pm_v else 0.5
+    mid_op = op_v.mid if op_v else 0.5
+    ask_depth_pm = pm_v.ask_depth if pm_v else 0.0
+    ask_depth_op = op_v.ask_depth if op_v else 0.0
+
+    ofi_mag = (abs(ofi_pm) + abs(ofi_op)) / 2.0
+    safe_pm = max(0.001, mid_pm + spread_pm / 2)
+    safe_op = max(0.001, mid_op + spread_op / 2)
+    spr_frac = max(spread_pm / safe_pm, spread_op / safe_op)
 
     if spr_frac > _SPREAD_THIN:
         regime = MarketRegime.THIN
@@ -71,10 +83,10 @@ def heuristic_enhance(fv: FeatureVector) -> SignalContext:
         arb_quality = 0.0
     else:
         base = min(1.0, fv.arb_signal / 0.03)
-        spr_penalty = max(0.0, 1.0 - (fv.spread_pm + fv.spread_op) / 2.0 / 0.04)
-        min_depth = min(fv.ask_depth_pm, fv.ask_depth_op)
+        spr_penalty = max(0.0, 1.0 - (spread_pm + spread_op) / 2.0 / 0.04)
+        min_depth = min(ask_depth_pm, ask_depth_op)
         depth_score = min(1.0, math.log1p(min_depth) / math.log1p(1000.0))
-        ofi_adv = max(0.0, -(fv.ofi_pm + fv.ofi_op) / 2.0)
+        ofi_adv = max(0.0, -(ofi_pm + ofi_op) / 2.0)
         ofi_score = 1.0 - ofi_adv * 0.5
         regime_f = {
             MarketRegime.STABLE: 1.0,
@@ -102,7 +114,7 @@ def heuristic_enhance(fv: FeatureVector) -> SignalContext:
         VolRegime.SPIKE: 0.30,
     }.get(vol_regime, 1.0)
     # Penalise conflicting OFI across venues
-    if (fv.ofi_pm > 0.2 and fv.ofi_op < -0.2) or (fv.ofi_pm < -0.2 and fv.ofi_op > 0.2):
+    if (ofi_pm > 0.2 and ofi_op < -0.2) or (ofi_pm < -0.2 and ofi_op > 0.2):
         conf *= 0.80
     # Penalise near-expiry markets
     days = fv.days_to_resolution

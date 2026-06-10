@@ -142,8 +142,8 @@ class AlertRouter:
             resp.raise_for_status()
 
     async def _send_email(self, alert: Alert) -> None:
-        import smtplib
         from email.mime.text import MIMEText
+        import aiosmtplib
 
         email_username = self._config.email_username
         email_password = self._config.email_password
@@ -155,10 +155,15 @@ class AlertRouter:
         msg["From"] = email_username
         msg["To"] = ", ".join(self._config.email_recipients)
 
-        with smtplib.SMTP(self._config.email_smtp_host, self._config.email_smtp_port) as server:
-            server.starttls()
-            server.login(email_username, email_password)
-            server.sendmail(msg["From"], self._config.email_recipients, msg.as_string())
+        await aiosmtplib.send(
+            msg,
+            hostname=self._config.email_smtp_host,
+            port=self._config.email_smtp_port,
+            username=email_username,
+            password=email_password,
+            use_tls=False,
+            start_tls=True,
+        )
 
     async def _send_webhook(self, url: str, alert: Alert) -> None:
         session = await self._get_session()

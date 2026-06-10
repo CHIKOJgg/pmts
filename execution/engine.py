@@ -185,6 +185,7 @@ class ExecutionEngine:
         # Per-order trackers
         self._trackers: dict[str, OrderTracker] = {}
         self._exch_to_proposal: dict[str, str] = {}
+        self._open_ids: set[str] = set()  # proposal_ids with is_open status (avoids O(N) scan)
 
         # Priority submission queue
         self._queue: asyncio.PriorityQueue[_QueueEntry] = asyncio.PriorityQueue()
@@ -329,6 +330,8 @@ class ExecutionEngine:
                     self._trackers[proposal_id] = tracker
                     self._exch_to_proposal[exch_id] = proposal_id
 
+                    if tracker.status.is_open:
+                        self._open_ids.add(proposal_id)
                     if tracker.status.is_terminal:
                         self._finalise(tracker)
                 else:
@@ -516,11 +519,9 @@ class ExecutionEngine:
                         )
                         asyncio.create_task(self._alert_router.send(alert))
                     return
-        else:
-            return
-
         # Register ACK
         submit_result = tracker.record_submission(placed.exchange_order_id)
+        self._open_ids.add(submission.proposal_id)
         self._exch_to_proposal[placed.exchange_order_id] = submission.proposal_id
 
         if self._store:
@@ -561,7 +562,27 @@ class ExecutionEngine:
     async def _poll_worker(self) -> None:
         while not self._stopped:
             now = self._clock.now_ms()
-            live = [t for t in self._trackers.values() if t.status.is_open]
+
+            if not self._open_ids:
+                try:
+                    await asyncio.sleep(self.poll_normal_s)
+                except asyncio.CancelledError:
+                    return
+                continue
+
+            live = []
+            any_urgent = False
+            for pid in list(self._open_ids):
+                tracker = self._trackers.get(pid)
+                if tracker is None:
+                    self._open_ids.discard(pid)
+                    continue
+                if not tracker.status.is_open:
+                    self._open_ids.discard(pid)
+                    continue
+                live.append(tracker)
+                if tracker.needs_fast_poll(now):
+                    any_urgent = True
 
             if not live:
                 try:
@@ -570,7 +591,6 @@ class ExecutionEngine:
                     return
                 continue
 
-            any_urgent = any(t.needs_fast_poll(now) for t in live)
             interval = self.poll_fast_s if any_urgent else self.poll_normal_s
 
             try:
@@ -690,8 +710,12 @@ class ExecutionEngine:
 
             # Find next expiry to check
             earliest_expiry = None
-            for tracker in self._trackers.values():
-                if tracker.status.is_open and tracker.submission.expiry_ms > now:
+            for pid in list(self._open_ids):
+                tracker = self._trackers.get(pid)
+                if tracker is None or not tracker.status.is_open:
+                    self._open_ids.discard(pid)
+                    continue
+                if tracker.submission.expiry_ms > now:
                     if earliest_expiry is None or tracker.submission.expiry_ms < earliest_expiry:
                         earliest_expiry = tracker.submission.expiry_ms
 
@@ -767,10 +791,10 @@ class ExecutionEngine:
             return max(aggressive, submission.limit_price)
 
     def _finalise(self, tracker: OrderTracker) -> None:
+        self._open_ids.discard(tracker.proposal_id)
         if tracker.exchange_order_id:
             self._exch_to_proposal.pop(tracker.exchange_order_id, None)
         if self._store:
-            # Step 6: Remove from active orders in DB
             self._store.remove_order(tracker.proposal_id)
         self._update_active_order_metric()
 

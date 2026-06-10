@@ -19,6 +19,9 @@ class RiskLimits:
     dedup_window_s:           int   = 60
     dedup_cache_size:         int   = 10_000
     max_mtm_age_ms:           int   = 10_000
+    session_loss_limit_usdc:  float = 500.0
+    kill_switch_grace_s:      float = 5.0
+    soft_kill_on_drawdown:    bool  = True
 
     def __post_init__(self) -> None:
         errs = []

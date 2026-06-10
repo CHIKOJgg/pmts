@@ -10,6 +10,60 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
+REQUIRED_REGISTRY_KEYS: set[str] = {"polymarket", "opinion", "question"}
+OPTIONAL_REGISTRY_KEYS: set[str] = {"pair_score", "polymarket_question", "opinion_question"}
+ALL_REGISTRY_KEYS: set[str] = REQUIRED_REGISTRY_KEYS | OPTIONAL_REGISTRY_KEYS
+
+
+def validate_market_registry(registry: Dict[str, dict]) -> list[str]:
+    """Validate market registry structure and return list of errors."""
+    errors: list[str] = []
+    seen_polymarket: set[str] = set()
+    seen_opinion: set[str] = set()
+
+    for market_id, mapping in registry.items():
+        if not isinstance(market_id, str) or not market_id.strip():
+            errors.append(f"Market ID must be a non-empty string, got {type(market_id).__name__}")
+            continue
+        if not isinstance(mapping, dict):
+            errors.append(f"Mapping for {market_id} must be a dict, got {type(mapping).__name__}")
+            continue
+
+        unknown = set(mapping.keys()) - ALL_REGISTRY_KEYS
+        if unknown:
+            errors.append(f"{market_id}: unknown keys: {', '.join(sorted(unknown))}")
+
+        missing = REQUIRED_REGISTRY_KEYS - set(mapping.keys())
+        if missing:
+            errors.append(f"{market_id}: missing required keys: {', '.join(sorted(missing))}")
+            continue
+
+        pm_id = mapping.get("polymarket", "")
+        if not isinstance(pm_id, str) or not pm_id.strip():
+            errors.append(f"{market_id}.polymarket must be a non-empty string")
+        elif pm_id in seen_polymarket:
+            errors.append(f"Duplicate polymarket venue ID '{pm_id}' in {market_id}")
+        else:
+            seen_polymarket.add(pm_id)
+
+        op_id = mapping.get("opinion", "")
+        if not isinstance(op_id, str) or not op_id.strip():
+            errors.append(f"{market_id}.opinion must be a non-empty string")
+        elif op_id in seen_opinion:
+            errors.append(f"Duplicate opinion venue ID '{op_id}' in {market_id}")
+        else:
+            seen_opinion.add(op_id)
+
+        score = mapping.get("pair_score")
+        if score is not None:
+            try:
+                float(score)
+            except (ValueError, TypeError):
+                errors.append(f"{market_id}.pair_score must be numeric, got '{score}'")
+
+    return errors
+
+
 def _e(k: str, d: str = "") -> str:
     return os.environ.get(k, d)
 
@@ -40,6 +94,13 @@ def _ef(k: str, d: float) -> float:
         return result
     except (ValueError, TypeError) as e:
         raise ValueError(f"Invalid value for {k}: '{val}'. Expected a number. Error: {e}")
+
+
+def _es(k: str) -> Optional[str]:
+    val = os.environ.get(k)
+    if val is None or val.strip() == "":
+        return None
+    return val.strip()
 
 
 def _secret(k: str, file_k: str, d: str = "") -> str:
@@ -110,6 +171,28 @@ class TradingConfig:
     max_market_exposure_pct: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_PCT", 0.05))
     max_market_exposure_usdc: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_USDC", 500.0))
     max_net_delta: float = field(default_factory=lambda: _ef("MAX_NET_DELTA", 50.0))
+    database_url: Optional[str] = field(default_factory=lambda: _es("DATABASE_URL"))
+    redis_url: Optional[str] = field(default_factory=lambda: _es("REDIS_URL"))
+    redis_enabled: bool = field(default_factory=lambda: _eb("REDIS_ENABLED", False))
+
+    # Strategy tuning parameters (previously hardcoded in main.py)
+    min_net_edge: float = field(default_factory=lambda: _ef("MIN_NET_EDGE", 0.006))
+    hedge_threshold: float = field(default_factory=lambda: _ef("HEDGE_THRESHOLD", 10.0))
+    mm_quote_size_usdc: float = field(default_factory=lambda: _ef("MM_QUOTE_SIZE_USDC", 25.0))
+
+    # Session loss limit
+    session_loss_limit_usdc: float = field(default_factory=lambda: _ef("SESSION_LOSS_LIMIT_USDC", 500.0))
+
+    # Kill switch grace period (seconds before auto-activation on drawdown breach)
+    kill_switch_grace_s: float = field(default_factory=lambda: _ef("KILL_SWITCH_GRACE_S", 5.0))
+
+    # Execution tuning
+    max_concurrent_orders: int = field(default_factory=lambda: _ei("MAX_CONCURRENT_ORDERS", 5))
+    submit_retry_count: int = field(default_factory=lambda: _ei("SUBMIT_RETRY_COUNT", 3))
+    submit_base_delay_s: float = field(default_factory=lambda: _ef("SUBMIT_BASE_DELAY_S", 0.2))
+    poll_normal_s: float = field(default_factory=lambda: _ef("POLL_NORMAL_S", 2.0))
+    poll_fast_s: float = field(default_factory=lambda: _ef("POLL_FAST_S", 0.5))
+    stale_threshold_ms: int = field(default_factory=lambda: _ei("STALE_THRESHOLD_MS", 2000))
 
 
 @dataclass
@@ -162,15 +245,12 @@ class Settings:
         if mode in ("paper", "live") and not self.trading.markets:
             errors.append("MARKETS list cannot be empty. Set via MARKETS env var (comma-separated).")
         if self.trading.market_registry:
+            reg_errors = validate_market_registry(self.trading.market_registry)
+            errors.extend(reg_errors)
             for market_id in self.trading.markets:
                 mapping = self.trading.market_registry.get(market_id)
                 if not mapping:
                     errors.append(f"MARKET_REGISTRY_JSON missing mapping for logical market {market_id}")
-                    continue
-                if not mapping.get("polymarket"):
-                    errors.append(f"MARKET_REGISTRY_JSON[{market_id}].polymarket is required")
-                if not mapping.get("opinion"):
-                    errors.append(f"MARKET_REGISTRY_JSON[{market_id}].opinion is required")
 
         if self.trading.initial_cash_usdc <= 0:
             errors.append(f"INITIAL_CASH_USDC must be > 0 (current: {self.trading.initial_cash_usdc})")

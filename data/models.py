@@ -7,8 +7,8 @@ Provides model_copy() and model_dump() for API compatibility.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, asdict
-from typing import Any, List, Optional
+from dataclasses import dataclass, asdict, field
+from typing import Any, Dict, List, Optional
 
 from src.enums import Platform
 from src.errors import CrossedBookError
@@ -96,6 +96,20 @@ class MarketSnapshot:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# VenueSnapshot — per-venue derived data inside FeatureVector
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class VenueSnapshot:
+    """Derived per-venue snapshot inside FeatureVector.venues."""
+    mid:        float
+    spread:     float
+    ofi:        float
+    bid_depth:  float
+    ask_depth:  float
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FeatureVector
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -110,15 +124,8 @@ class FeatureVector:
     arb_signal:      float
     stale_markets:   List[Platform]  # populated when arb_signal is NaN
 
-    # Per-venue mid & spread
-    mid_pm:    float
-    mid_op:    float
-    spread_pm: float
-    spread_op: float
-
-    # Order-flow imbalance [-1, 1]
-    ofi_pm:    float
-    ofi_op:    float
+    # Per-venue derived snapshots (keyed by Platform)
+    venues:          Dict[Platform, VenueSnapshot]
 
     # Volatility (None during warm-up)
     vol_30s:   Optional[float]
@@ -129,14 +136,11 @@ class FeatureVector:
     # Portfolio context
     portfolio_delta: float
 
-    # Book depth
-    bid_depth_pm: float
-    ask_depth_pm: float
-    bid_depth_op: float
-    ask_depth_op: float
-
     # Volatility regime (None during warm-up)
     vol_regime: Optional[str] = None
+
+    # Cross-market correlation (market_id → correlation, empty dict when unavailable)
+    correlations: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if math.isnan(self.arb_signal) and not self.stale_markets:
@@ -157,4 +161,5 @@ class FeatureVector:
     def model_dump(self) -> dict[str, Any]:
         d = asdict(self)
         d["stale_markets"] = [p.value for p in self.stale_markets]
+        d["venues"] = {p.value: dict(v) for p, v in d["venues"].items()}
         return d

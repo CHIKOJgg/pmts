@@ -55,6 +55,29 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def _mkfv(
+    market="BTC-Q4", arb_signal=0.20, stale=None,
+    mid_pm=0.5, mid_op=0.5, spread=0.02, ofi=0.0,
+    depth=1000.0, vol_30s=0.01, days=30.0, delta=0.0,
+) -> "FeatureVector":
+    from data.models import FeatureVector, VenueSnapshot
+    from src.enums import Platform
+    return FeatureVector(
+        market_id=market,
+        ts=now_ms() - 50,
+        computed_ts=now_ms() - 49,
+        arb_signal=arb_signal if stale is None else float("nan"),
+        stale_markets=stale or [],
+        venues={
+            Platform.POLYMARKET: VenueSnapshot(mid=mid_pm, spread=spread, ofi=ofi, bid_depth=depth, ask_depth=depth),
+            Platform.OPINION: VenueSnapshot(mid=mid_op, spread=spread, ofi=ofi, bid_depth=depth, ask_depth=depth),
+        },
+        vol_30s=vol_30s,
+        days_to_resolution=days,
+        portfolio_delta=delta,
+    )
+
+
 # I. MDP в†’ FeatureEngine integration
 # в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
@@ -343,27 +366,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         strategy.add_proposal_callback(collect)
         risk.set_kill_switch_reset_callback(strategy.flush_market_state)
 
-        ts = now_ms() - 50
-        fv = FeatureVector(
-            market_id="BTC-Q4",
-            ts=ts,
-            computed_ts=ts + 1,
-            arb_signal=0.20,
-            stale_markets=[],
-            mid_pm=0.35,
-            mid_op=0.62,
-            spread_pm=0.02,
-            spread_op=0.02,
-            ofi_pm=0.0,
-            ofi_op=0.0,
-            vol_30s=0.01,
-            days_to_resolution=30.0,
-            portfolio_delta=0.0,
-            bid_depth_pm=1000.0,
-            ask_depth_pm=1000.0,
-            bid_depth_op=1000.0,
-            ask_depth_op=1000.0,
-        )
+        fv = _mkfv(mid_pm=0.35, mid_op=0.62)
 
         run(strategy.on_feature_vector(fv))
         self.assertEqual(len(emitted), 2)
@@ -528,27 +531,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
             emitted.append(proposal)
 
         strategy.add_proposal_callback(collect)
-        ts = now_ms()
-        fv = FeatureVector(
-            market_id="BTC-Q4",
-            ts=ts,
-            computed_ts=ts + 1,
-            arb_signal=0.20,
-            stale_markets=[],
-            mid_pm=0.41,
-            mid_op=0.50,
-            spread_pm=0.02,
-            spread_op=0.02,
-            ofi_pm=0.0,
-            ofi_op=0.0,
-            vol_30s=0.01,
-            days_to_resolution=30.0,
-            portfolio_delta=0.0,
-            bid_depth_pm=1000.0,
-            ask_depth_pm=1000.0,
-            bid_depth_op=1000.0,
-            ask_depth_op=1000.0,
-        )
+        fv = _mkfv(mid_pm=0.41, mid_op=0.50)
 
         run(strategy.on_feature_vector(fv))
         self.assertEqual(ai.calls, 1)
@@ -583,27 +566,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
                     is_fallback=True,
                 )
 
-        ts = now_ms()
-        fv = FeatureVector(
-            market_id="BTC-Q4",
-            ts=ts,
-            computed_ts=ts + 1,
-            arb_signal=0.0,
-            stale_markets=[],
-            mid_pm=0.50,
-            mid_op=0.51,
-            spread_pm=0.02,
-            spread_op=0.02,
-            ofi_pm=0.0,
-            ofi_op=0.0,
-            vol_30s=0.01,
-            days_to_resolution=30.0,
-            portfolio_delta=0.0,
-            bid_depth_pm=1000.0,
-            ask_depth_pm=1000.0,
-            bid_depth_op=1000.0,
-            ask_depth_op=1000.0,
-        )
+        fv = _mkfv(arb_signal=0.0, mid_pm=0.50, mid_op=0.51)
 
         baseline = StrategyEngine(
             config=StrategyConfig(
@@ -697,46 +660,10 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         from strategies.delta_neutral import DeltaNeutralStrategy
         from src.enums import Platform
 
-        ts = now_ms()
-        fresh = FeatureVector(
-            market_id="BTC-Q4",
-            ts=ts,
-            computed_ts=ts + 1,
-            arb_signal=0.0,
-            stale_markets=[],
-            mid_pm=0.50,
-            mid_op=0.51,
-            spread_pm=0.02,
-            spread_op=0.02,
-            ofi_pm=0.0,
-            ofi_op=0.0,
-            vol_30s=0.01,
-            days_to_resolution=30.0,
-            portfolio_delta=0.0,
-            bid_depth_pm=1000.0,
-            ask_depth_pm=1000.0,
-            bid_depth_op=1000.0,
-            ask_depth_op=1000.0,
-        )
-        stale_counterpart = FeatureVector(
-            market_id="BTC-Q4",
-            ts=ts,
-            computed_ts=ts + 1,
-            arb_signal=math.nan,
-            stale_markets=[Platform.OPINION],
-            mid_pm=0.50,
-            mid_op=0.51,
-            spread_pm=0.02,
-            spread_op=0.02,
-            ofi_pm=0.0,
-            ofi_op=0.0,
-            vol_30s=0.01,
-            days_to_resolution=30.0,
-            portfolio_delta=0.0,
-            bid_depth_pm=1000.0,
-            ask_depth_pm=1000.0,
-            bid_depth_op=1000.0,
-            ask_depth_op=1000.0,
+        fresh = _mkfv(arb_signal=0.0, mid_pm=0.50, mid_op=0.51)
+        stale_counterpart = _mkfv(
+            arb_signal=math.nan, mid_pm=0.50, mid_op=0.51,
+            stale=[Platform.OPINION],
         )
 
         strat = DeltaNeutralStrategy()
@@ -749,27 +676,7 @@ class TestStrategyRiskIntegration(unittest.TestCase):
         from strategies.delta_neutral import DeltaNeutralStrategy
         from src.enums import Platform
 
-        ts = now_ms()
-        fv = FeatureVector(
-            market_id="BTC-Q4",
-            ts=ts,
-            computed_ts=ts + 1,
-            arb_signal=0.0,
-            stale_markets=[],
-            mid_pm=0.50,
-            mid_op=0.51,
-            spread_pm=0.02,
-            spread_op=0.02,
-            ofi_pm=0.0,
-            ofi_op=0.0,
-            vol_30s=0.01,
-            days_to_resolution=0.5,
-            portfolio_delta=0.0,
-            bid_depth_pm=1000.0,
-            ask_depth_pm=1000.0,
-            bid_depth_op=1000.0,
-            ask_depth_op=1000.0,
-        )
+        fv = _mkfv(arb_signal=0.0, mid_pm=0.50, mid_op=0.51, days=0.5)
 
         strat = DeltaNeutralStrategy()
         result = strat.evaluate_mm(fv, Platform.POLYMARKET)
@@ -954,7 +861,7 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
 
     def _fv(self, arb_signal=0.08, age_ms=50, spread=0.02,
             depth=500.0, ofi=0.0, mid_pm=0.45, mid_op=0.52):
-        from data.models import FeatureVector
+        from data.models import FeatureVector, VenueSnapshot
         from src.enums import Platform
         ts = now_ms() - age_ms
         return FeatureVector(
@@ -963,14 +870,13 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
             computed_ts=ts + 1,
             arb_signal=arb_signal,
             stale_markets=[],
-            mid_pm=mid_pm, mid_op=mid_op,
-            spread_pm=spread, spread_op=spread,
-            ofi_pm=ofi, ofi_op=ofi,
+            venues={
+                Platform.POLYMARKET: VenueSnapshot(mid=mid_pm, spread=spread, ofi=ofi, bid_depth=depth, ask_depth=depth),
+                Platform.OPINION: VenueSnapshot(mid=mid_op, spread=spread, ofi=ofi, bid_depth=depth, ask_depth=depth),
+            },
             vol_30s=0.01,
             days_to_resolution=30.0,
             portfolio_delta=0.0,
-            bid_depth_pm=depth, ask_depth_pm=depth,
-            bid_depth_op=depth, ask_depth_op=depth,
         )
 
     def test_good_arb_accepted(self):
@@ -991,17 +897,11 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
 
     def test_nan_signal_rejected(self):
         from strategies.arbitrage import ArbitrageStrategy
-        from data.models import FeatureVector
         from src.enums import Platform
-        ts = now_ms()
-        fv = FeatureVector(
-            market_id="X", ts=ts, computed_ts=ts+1,
-            arb_signal=math.nan, stale_markets=[Platform.POLYMARKET],
-            mid_pm=0.50, mid_op=0.50, spread_pm=0.02, spread_op=0.02,
-            ofi_pm=0.0, ofi_op=0.0, vol_30s=0.01, days_to_resolution=30.0,
-            portfolio_delta=0.0,
-            bid_depth_pm=500, ask_depth_pm=500,
-            bid_depth_op=500, ask_depth_op=500,
+        from data.models import FeatureVector
+        fv = _mkfv(
+            market="X", arb_signal=math.nan, stale=[Platform.POLYMARKET],
+            mid_pm=0.50, mid_op=0.50, depth=500,
         )
         arb = ArbitrageStrategy()
         result = arb.evaluate(fv)
@@ -1065,25 +965,9 @@ class TestArbitrageStrategyIntegration(unittest.TestCase):
             arb_signal=0.20, age_ms=50, depth=1000.0,
             spread=0.02, mid_pm=0.35, mid_op=0.62,
         )
-        near_expiry = FeatureVector(
-            market_id=long_dated.market_id,
-            ts=long_dated.ts,
-            computed_ts=long_dated.computed_ts,
-            arb_signal=long_dated.arb_signal,
-            stale_markets=list(long_dated.stale_markets),
-            mid_pm=long_dated.mid_pm,
-            mid_op=long_dated.mid_op,
-            spread_pm=long_dated.spread_pm,
-            spread_op=long_dated.spread_op,
-            ofi_pm=long_dated.ofi_pm,
-            ofi_op=long_dated.ofi_op,
-            vol_30s=long_dated.vol_30s,
-            days_to_resolution=0.5,
-            portfolio_delta=long_dated.portfolio_delta,
-            bid_depth_pm=long_dated.bid_depth_pm,
-            ask_depth_pm=long_dated.ask_depth_pm,
-            bid_depth_op=long_dated.bid_depth_op,
-            ask_depth_op=long_dated.ask_depth_op,
+        near_expiry = _mkfv(
+            arb_signal=0.20, mid_pm=0.35, mid_op=0.62, depth=1000.0,
+            days=0.5,
         )
 
         result_long = arb.evaluate(long_dated)
@@ -1233,24 +1117,22 @@ class TestRegressions(unittest.TestCase):
     def test_simulated_time_prevents_stale_signal_rejection(self):
         """BUG: Signal age was computed against wall-clock, rejecting all backtest signals."""
         from strategies.arbitrage import ArbitrageStrategy, ArbConfig
-        from data.models import FeatureVector
+        from data.models import FeatureVector, VenueSnapshot
         from src.enums import Platform
         arb = ArbitrageStrategy(ArbConfig(max_signal_age_ms=300))
-        # Simulate a tick from 10 seconds ago
-        old_ts = now_ms() - 10_000
+        old_ts = now_ms() - 10_000  # 10 seconds ago → stale vs wall-clock
         fv = FeatureVector(
-            market_id="X", ts=old_ts, computed_ts=old_ts+1,
+            market_id="X", ts=old_ts, computed_ts=old_ts + 1,
             arb_signal=0.08, stale_markets=[],
-            mid_pm=0.44, mid_op=0.54,
-            spread_pm=0.02, spread_op=0.02,
-            ofi_pm=0.0, ofi_op=0.0, vol_30s=0.01, days_to_resolution=30.0,
-            portfolio_delta=0.0,
-            bid_depth_pm=500, ask_depth_pm=500,
-            bid_depth_op=500, ask_depth_op=500,
+            venues={
+                Platform.POLYMARKET: VenueSnapshot(mid=0.44, spread=0.02, ofi=0.0, bid_depth=500, ask_depth=500),
+                Platform.OPINION: VenueSnapshot(mid=0.54, spread=0.02, ofi=0.0, bid_depth=500, ask_depth=500),
+            },
+            vol_30s=0.01, days_to_resolution=30.0, portfolio_delta=0.0,
         )
-        # Wall-clock evaluation в†’ stale
+        # Wall-clock evaluation → stale (signal is 10s old, max is 300ms)
         result_wall = arb.evaluate(fv)
-        # Simulated-time evaluation в†’ fresh (now_ts == fv.ts в†’ age == 0)
+        # Simulated-time evaluation → fresh (now_ts == fv.ts + 50ms → age == 50ms)
         result_sim  = arb.evaluate(fv, now_ts=old_ts + 50)
         self.assertFalse(result_wall.accepted)
         self.assertTrue(result_sim.accepted,
@@ -1782,6 +1664,7 @@ class TestProductionFixes(unittest.TestCase):
             "BTC-Q4": {
                 "polymarket": "pm-token-id",
                 "opinion": "op-market-id",
+                "question": "BTC Q4 performance",
             }
         }
         s.validate(mode="paper")

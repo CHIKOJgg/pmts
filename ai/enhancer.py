@@ -36,6 +36,7 @@ from ai.signal_context import (
 )
 from data.models import FeatureVector
 from src.clock import Clock, LiveClock
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +300,12 @@ def _build_prompt(fv: FeatureVector) -> str:
     arb = f"{fv.arb_signal:.4f}" if not math.isnan(fv.arb_signal) else "N/A"
     vol = f"{fv.vol_30s:.4f}" if fv.vol_30s is not None else "N/A"
     days = f"{fv.days_to_resolution:.1f}" if fv.days_to_resolution else "unknown"
+    pm_v = fv.venues.get(Platform.POLYMARKET)
+    op_v = fv.venues.get(Platform.OPINION)
+    pm_line = f"PM YES mid={pm_v.mid:.4f} spread={pm_v.spread:.4f} OFI={pm_v.ofi:.3f}\n" if pm_v else ""
+    op_line = f"OP YES mid={op_v.mid:.4f} spread={op_v.spread:.4f} OFI={op_v.ofi:.3f}\n" if op_v else ""
+    pm_depth = f"${pm_v.ask_depth:.0f}" if pm_v else "N/A"
+    op_depth = f"${op_v.ask_depth:.0f}" if op_v else "N/A"
     return (
         "You are a signal classifier for a prediction market trading system.\n"
         "Your ONLY role is classification. You cannot recommend trades.\n\n"
@@ -311,10 +318,9 @@ def _build_prompt(fv: FeatureVector) -> str:
         ' "suppress_mm":<bool>,\n'
         ' "reasoning":"<1 sentence>"}\n\n'
         f"Market: {fv.market_id}\n"
-        f"PM YES mid={fv.mid_pm:.4f} spread={fv.spread_pm:.4f} OFI={fv.ofi_pm:.3f}\n"
-        f"OP YES mid={fv.mid_op:.4f} spread={fv.spread_op:.4f} OFI={fv.ofi_op:.3f}\n"
+        f"{pm_line}{op_line}"
         f"Arb signal={arb}  Vol-30s={vol}  Days-to-resolution={days}\n"
-        f"PM ask depth=${fv.ask_depth_pm:.0f}  OP ask depth=${fv.ask_depth_op:.0f}\n"
+        f"PM ask depth={pm_depth}  OP ask depth={op_depth}\n"
         f"Portfolio delta={fv.portfolio_delta:.2f}\n\n"
         "Return ONLY the JSON object, no other text."
     )

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from ai.signal_context import SignalContext
-from data.models import FeatureVector
+from data.models import FeatureVector, VenueSnapshot
 from execution.models import OrderProposal
 from portfolio.manager import FillRecord
 from src.clock import Clock, LiveClock
@@ -131,13 +131,15 @@ class DeltaNeutralStrategy:
             return _skip(f"|delta|={abs(delta):.2f}<=threshold={hedge_threshold:.2f}")
 
         # Cross-venue correlation warning
-        if abs(fv.mid_pm - fv.mid_op) < 0.01:
+        pm_v = fv.venues.get(Platform.POLYMARKET)
+        op_v = fv.venues.get(Platform.OPINION)
+        if pm_v is not None and op_v is not None and abs(pm_v.mid - op_v.mid) < 0.01:
             logger.warning(
                 "Cross-venue prices nearly identical for %s (pm=%.4f op=%.4f) — "
                 "hedge may not reduce aggregate risk if venues are correlated",
                 fv.market_id,
-                fv.mid_pm,
-                fv.mid_op,
+                pm_v.mid,
+                op_v.mid,
             )
 
         if delta > 0:
@@ -277,7 +279,7 @@ class DeltaNeutralStrategy:
         if platform in fv.stale_markets or counterpart in fv.stale_markets:
             return None
 
-        mid = fv.mid_pm if platform == Platform.POLYMARKET else fv.mid_op
+        mid = fv.venues[platform].mid
         if mid < 0.05 or mid > 0.95:
             return _suppress(f"near_boundary:mid={mid:.3f}")
 
@@ -384,17 +386,19 @@ class DeltaNeutralStrategy:
 
     def _select_hedge_venue(self, fv: FeatureVector, direction: str) -> tuple[Platform, float]:
         tol = self._cfg.venue_tolerance
+        pm_v = fv.venues.get(Platform.POLYMARKET, VenueSnapshot(0, 0, 0, 0, 0))
+        op_v = fv.venues.get(Platform.OPINION, VenueSnapshot(0, 0, 0, 0, 0))
 
         # Calculate cross-venue correlation for better hedging decisions
-        price_diff = abs(fv.mid_pm - fv.mid_op)
+        price_diff = abs(pm_v.mid - op_v.mid)
         correlation = 1.0 - min(price_diff / 0.1, 1.0)  # 0 diff → corr=1, >10% diff → corr=0
 
         if direction == "buy_no":
             # Buying NO: want lowest NO ask = highest (1 - YES_bid)
-            no_ask_pm = (1.0 - fv.mid_pm) + fv.spread_pm / 2
-            no_ask_op = (1.0 - fv.mid_op) + fv.spread_op / 2
-            depth_pm = fv.bid_depth_pm
-            depth_op = fv.bid_depth_op
+            no_ask_pm = (1.0 - pm_v.mid) + pm_v.spread / 2
+            no_ask_op = (1.0 - op_v.mid) + op_v.spread / 2
+            depth_pm = pm_v.bid_depth
+            depth_op = op_v.bid_depth
 
             # Prefer venue with better effective price considering correlation
             if correlation > 0.8:
@@ -406,10 +410,10 @@ class DeltaNeutralStrategy:
                 return (Platform.POLYMARKET, no_ask_pm) if depth_pm >= depth_op else (Platform.OPINION, no_ask_op)
             return (Platform.POLYMARKET, no_ask_pm) if no_ask_pm < no_ask_op else (Platform.OPINION, no_ask_op)
         else:  # buy_yes
-            yes_ask_pm = fv.mid_pm + fv.spread_pm / 2
-            yes_ask_op = fv.mid_op + fv.spread_op / 2
-            depth_pm = fv.ask_depth_pm
-            depth_op = fv.ask_depth_op
+            yes_ask_pm = pm_v.mid + pm_v.spread / 2
+            yes_ask_op = op_v.mid + op_v.spread / 2
+            depth_pm = pm_v.ask_depth
+            depth_op = op_v.ask_depth
 
             if correlation > 0.8:
                 return (Platform.POLYMARKET, yes_ask_pm) if depth_pm >= depth_op else (Platform.OPINION, yes_ask_op)

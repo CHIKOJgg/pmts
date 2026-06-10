@@ -9,6 +9,7 @@ import aiohttp
 from eth_account import Account
 
 from execution.rate_limiter import VenueRateLimiter
+from infrastructure.retry import async_retry
 
 from execution.engine import (
     ExchangeClient,
@@ -168,6 +169,7 @@ class PolymarketClient:
         signed = Account.sign_typed_data(self._wallet_private_key, full_message=structured_data)
         return str(signed.signature.hex())
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def place_order(
         self, submission: OrderSubmission, effective_price: float, nonce: Optional[int] = None
     ) -> PlacedOrderResponse:
@@ -219,6 +221,7 @@ class PolymarketClient:
 
             return PlacedOrderResponse(exchange_order_id=raw.get("orderID", "N/A"), status="live", fills=[])
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
         """Cancel an order on Polymarket."""
         await self._limiter.acquire()
@@ -237,6 +240,7 @@ class PolymarketClient:
                 resp.raise_for_status()
                 return True
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def get_order_status(self, exchange_order_id: str, market_id: str) -> OrderStatusResponse:
         """Fetch status and fills for a Polymarket order."""
         await self._limiter.acquire()
@@ -287,6 +291,7 @@ class PolymarketClient:
                     new_fills=new_fills,
                 )
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def get_open_orders(self, market_ids: Optional[List[str]] = None) -> List[OpenOrder]:
         """Fetch all open orders from Polymarket CLOB."""
         await self._limiter.acquire()
@@ -319,6 +324,7 @@ class PolymarketClient:
                     )
                 return orders
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def get_market(self, condition_id: str) -> Optional[Dict[str, Any]]:
         """Best-effort market lookup used by the resolution monitor."""
         await self._limiter.acquire()
@@ -334,6 +340,7 @@ class PolymarketClient:
                 return None
             return raw
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def redeem_market(self, condition_id: str) -> bool:
         """Best-effort redemption call for a resolved market."""
         await self._limiter.acquire()
@@ -346,6 +353,7 @@ class PolymarketClient:
             resp.raise_for_status()
             return True
 
+    @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def verify_connectivity(self) -> bool:
         """Verify API keys by fetching the account profile."""
         try:

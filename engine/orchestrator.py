@@ -15,9 +15,12 @@ from engine.strategy_engine import StrategyEngine
 from execution.engine import ExecutionEngine
 from execution.models import ExecutionResult, OrderProposal, OrderSubmission
 from infrastructure.alerting import Alert, AlertRouter, AlertSeverity
+from infrastructure.latency import LatencyTracker, Timer
 from infrastructure.observability import PROPOSALS_TOTAL
 from portfolio.manager import FillRecord, PortfolioManager
+from portfolio.journal import TradeJournal
 from risk.engine import RiskEngine
+from risk.trading_schedule import TradingSchedule
 from src.clock import Clock, LiveClock
 from src.enums import ArbLeg, Platform, StrategyId
 
@@ -62,6 +65,15 @@ class Orchestrator:
         self._trading = enable_trading
         self._clock = clock or LiveClock()
         self._alert_router = alert_router
+
+        # Trade journal records all fills for CSV export
+        self._trade_journal = TradeJournal()
+
+        # Latency tracker for proposal-to-fill timing
+        self._latency = LatencyTracker()
+
+        # Trading schedule gates proposals by time window
+        self._trading_schedule = TradingSchedule()
 
         # Feature engine sits between MDP and StrategyEngine
         self._fe = FeatureEngine(portfolio=portfolio, clock=self._clock)
@@ -215,7 +227,6 @@ class Orchestrator:
                         message=f"{plat} feed disconnected for >30s",
                         source="MarketDataProvider",
                     )
-                    import asyncio
                     asyncio.create_task(self._alert_router.send(alert))
         except Exception:
             pass
@@ -229,7 +240,6 @@ class Orchestrator:
                     message=f"{eng._client.platform.value} engine has {eng._consecutive_errors} consecutive errors",
                     source="ExecutionEngine",
                 )
-                import asyncio
                 asyncio.create_task(self._alert_router.send(alert))
 
     def _on_kill_switch_reset(self) -> None:
@@ -254,7 +264,14 @@ class Orchestrator:
     async def _on_proposal(self, proposal: OrderProposal) -> None:
         self.proposals_evaluated += 1
 
-        decision = self._risk.evaluate(proposal)  # synchronous, < 5ms
+        # Check trading schedule
+        if not self._trading_schedule.can_trade_market(proposal.market_id):
+            self.proposals_rejected += 1
+            logger.debug("Proposal %s rejected: outside trading window", proposal.proposal_id[:8])
+            return
+
+        with Timer(self._latency, "risk.evaluate"):
+            decision = self._risk.evaluate(proposal)  # synchronous, < 5ms
         verdict = "approved" if decision.approved else "rejected"
         PROPOSALS_TOTAL.labels(strategy=proposal.strategy_id.value, verdict=verdict).inc()
 
@@ -284,7 +301,8 @@ class Orchestrator:
 
         self.proposals_approved += 1
         try:
-            await self._route_to_engine(proposal)
+            with Timer(self._latency, "route_to_engine"):
+                await self._route_to_engine(proposal)
         except Exception:
             await self._risk.notify_terminal(proposal.proposal_id, proposal.platform, proposal.size_usdc)
             self.proposals_approved -= 1
@@ -337,7 +355,8 @@ class Orchestrator:
             else:
                 grp[proposal.leg_number.value] = proposal.proposal_id
 
-        await engine.submit(submission)
+        with Timer(self._latency, f"engine.submit.{proposal.platform.value}"):
+            await engine.submit(submission)
 
     # ── Step 5: ExecutionResult → portfolio update ────────────────────────────
 
@@ -362,6 +381,8 @@ class Orchestrator:
                         strategy_id=tracker.submission.strategy_id.value,
                     )
                     await self._portfolio.record_fill(fill)
+                    self._trade_journal.record_fill(fill)
+                    self._risk.notify_fill(fill.realised_pnl)
 
         # Release resources on terminal state
         if result.is_terminal:
@@ -386,111 +407,112 @@ class Orchestrator:
             await self._handle_arb_terminal(result, leg_group_id)
 
     async def _handle_arb_terminal(self, result: ExecutionResult, leg_group_id: str) -> None:
-        grp = self._arb_groups.get(leg_group_id)
-        if grp is None:
-            return
+        async with self._execution_lock:
+            grp = self._arb_groups.get(leg_group_id)
+            if grp is None:
+                return
 
-        # Use stored market_id (set when arb group was created)
-        market_id = grp.get("market_id")
+            # Use stored market_id (set when arb group was created)
+            market_id = grp.get("market_id")
 
-        # Find our tracker for leg info
-        tracker = None
-        for eng in [self._pm_engine, self._op_engine]:
-            t = eng.get_tracker(result.proposal_id)
-            if t is not None:
-                tracker = t
-                break
+            # Find our tracker for leg info
+            tracker = None
+            for eng in [self._pm_engine, self._op_engine]:
+                t = eng.get_tracker(result.proposal_id)
+                if t is not None:
+                    tracker = t
+                    break
 
-        if tracker is None or tracker.submission.leg_number is None:
-            return
+            if tracker is None or tracker.submission.leg_number is None:
+                return
 
-        # If leg1 is terminal, decide whether to submit leg2
-        if tracker.submission.leg_number == ArbLeg.LEG_1:
-            leg2_proposal = grp.get("leg2_proposal")
-            if leg2_proposal:
-                min_ratio = tracker.submission.min_fill_ratio or 0.80
-                actual_ratio = tracker.fill_ratio
-                should_abort = actual_ratio < min_ratio
+            # If leg1 is terminal, decide whether to submit leg2
+            if tracker.submission.leg_number == ArbLeg.LEG_1:
+                leg2_proposal = grp.get("leg2_proposal")
+                if leg2_proposal:
+                    min_ratio = tracker.submission.min_fill_ratio or 0.80
+                    actual_ratio = tracker.fill_ratio
+                    should_abort = actual_ratio < min_ratio
 
-                if should_abort:
-                    logger.warning(
-                        "ARB leg1 fill_ratio=%.2f < min=%.2f — aborting leg2 %s",
-                        actual_ratio,
-                        min_ratio,
-                        leg2_proposal.proposal_id[:8],
-                    )
-                    await self._risk.notify_terminal(
-                        leg2_proposal.proposal_id, leg2_proposal.platform, leg2_proposal.size_usdc
-                    )
-                    self._strategy.notify_arb_terminal(leg2_proposal.size_usdc)
-                    self._in_flight.pop(leg2_proposal.proposal_id, None)
-                    grp.pop("leg2_proposal", None)
-                else:
-                    new_size_usdc = leg2_proposal.size_usdc * actual_ratio
-                    token_qty = round(new_size_usdc / leg2_proposal.limit_price, 6)
-                    if token_qty > 0:
-                        submission = OrderSubmission(
-                            order_id=str(uuid.uuid4()),
-                            proposal_id=leg2_proposal.proposal_id,
-                            market_id=leg2_proposal.market_id,
-                            platform=leg2_proposal.platform,
-                            side=leg2_proposal.side,
-                            size_usdc=new_size_usdc,
-                            limit_price=leg2_proposal.limit_price,
-                            order_type=leg2_proposal.order_type,
-                            strategy_id=leg2_proposal.strategy_id,
-                            expiry_ms=leg2_proposal.expiry_ms,
-                            token_quantity=token_qty,
-                            submitted_at=self._clock.now_ms(),
-                            leg_group_id=leg2_proposal.leg_group_id,
-                            leg_number=leg2_proposal.leg_number,
-                            min_fill_ratio=leg2_proposal.min_fill_ratio,
+                    if should_abort:
+                        logger.warning(
+                            "ARB leg1 fill_ratio=%.2f < min=%.2f — aborting leg2 %s",
+                            actual_ratio,
+                            min_ratio,
+                            leg2_proposal.proposal_id[:8],
                         )
-                        engine = self._pm_engine if leg2_proposal.platform == Platform.POLYMARKET else self._op_engine
-                        grp[ArbLeg.LEG_2.value] = leg2_proposal.proposal_id
-                        grp.pop("leg2_proposal", None)
-                        await engine.submit(submission)
-                    else:
                         await self._risk.notify_terminal(
                             leg2_proposal.proposal_id, leg2_proposal.platform, leg2_proposal.size_usdc
                         )
                         self._strategy.notify_arb_terminal(leg2_proposal.size_usdc)
                         self._in_flight.pop(leg2_proposal.proposal_id, None)
                         grp.pop("leg2_proposal", None)
+                    else:
+                        new_size_usdc = leg2_proposal.size_usdc * actual_ratio
+                        token_qty = round(new_size_usdc / leg2_proposal.limit_price, 6)
+                        if token_qty > 0:
+                            submission = OrderSubmission(
+                                order_id=str(uuid.uuid4()),
+                                proposal_id=leg2_proposal.proposal_id,
+                                market_id=leg2_proposal.market_id,
+                                platform=leg2_proposal.platform,
+                                side=leg2_proposal.side,
+                                size_usdc=new_size_usdc,
+                                limit_price=leg2_proposal.limit_price,
+                                order_type=leg2_proposal.order_type,
+                                strategy_id=leg2_proposal.strategy_id,
+                                expiry_ms=leg2_proposal.expiry_ms,
+                                token_quantity=token_qty,
+                                submitted_at=self._clock.now_ms(),
+                                leg_group_id=leg2_proposal.leg_group_id,
+                                leg_number=leg2_proposal.leg_number,
+                                min_fill_ratio=leg2_proposal.min_fill_ratio,
+                            )
+                            engine = self._pm_engine if leg2_proposal.platform == Platform.POLYMARKET else self._op_engine
+                            grp[ArbLeg.LEG_2.value] = leg2_proposal.proposal_id
+                            grp.pop("leg2_proposal", None)
+                            await engine.submit(submission)
+                        else:
+                            await self._risk.notify_terminal(
+                                leg2_proposal.proposal_id, leg2_proposal.platform, leg2_proposal.size_usdc
+                            )
+                            self._strategy.notify_arb_terminal(leg2_proposal.size_usdc)
+                            self._in_flight.pop(leg2_proposal.proposal_id, None)
+                            grp.pop("leg2_proposal", None)
 
-        # Check if all submitted legs are terminal → clear arb_in_flight
-        submitted_pids = [pid for k, pid in grp.items() if isinstance(k, int)]
+            # Check if all submitted legs are terminal → clear arb_in_flight
+            submitted_pids = [pid for k, pid in grp.items() if isinstance(k, int)]
 
-        # Also check if leg2_proposal exists and is terminal (was never submitted due to abort)
-        pending_leg2 = grp.get("leg2_proposal")
-        all_terminal = False
+            # Also check if leg2_proposal exists and is terminal (was never submitted due to abort)
+            pending_leg2 = grp.get("leg2_proposal")
+            all_terminal = False
 
-        if not submitted_pids:
-            # No legs were submitted at all
-            all_terminal = True
-        elif pending_leg2 is not None:
-            # Leg1 was submitted, leg2 never was (aborted)
-            # Check if leg1 is terminal
-            all_terminal = (
-                len(submitted_pids) == 1
-                and (
-                    self._pm_engine.get_tracker(submitted_pids[0])
-                    or self._op_engine.get_tracker(submitted_pids[0])
-                    or _NullTracker()
-                ).status.is_terminal
-            )
-        else:
-            # Both legs were submitted, check both are terminal
-            all_terminal = len(submitted_pids) == 2 and all(
-                (
-                    self._pm_engine.get_tracker(pid) or self._op_engine.get_tracker(pid) or _NullTracker()
-                ).status.is_terminal
-                for pid in submitted_pids
-            )
+            if not submitted_pids:
+                # No legs were submitted at all
+                all_terminal = True
+            elif pending_leg2 is not None:
+                # Leg1 was submitted, leg2 never was (aborted)
+                # Check if leg1 is terminal
+                all_terminal = (
+                    len(submitted_pids) == 1
+                    and (
+                        self._pm_engine.get_tracker(submitted_pids[0])
+                        or self._op_engine.get_tracker(submitted_pids[0])
+                        or _NullTracker()
+                    ).status.is_terminal
+                )
+            else:
+                # Both legs were submitted, check both are terminal
+                all_terminal = len(submitted_pids) == 2 and all(
+                    (
+                        self._pm_engine.get_tracker(pid) or self._op_engine.get_tracker(pid) or _NullTracker()
+                    ).status.is_terminal
+                    for pid in submitted_pids
+                )
 
-        if all_terminal and market_id:
-            self._strategy.notify_arb_cleared(market_id, leg_group_id)
-            self._arb_groups.pop(leg_group_id, None)
+            if all_terminal and market_id:
+                self._strategy.notify_arb_cleared(market_id, leg_group_id)
+                self._arb_groups.pop(leg_group_id, None)
 
     async def _kill_switch_response(self) -> None:
         logger.critical("Kill switch response: cancelling all open orders")
@@ -503,6 +525,27 @@ class Orchestrator:
                 await engine.cancel(pid)
             except Exception as exc:
                 logger.error("Cancel failed for %s: %s", pid[:8], exc)
+
+    # ── Property access to sub-components ───────────────────────────────────
+
+    @property
+    def feature_engine(self) -> FeatureEngine:
+        return self._fe
+
+    @property
+    def trade_journal(self) -> TradeJournal:
+        return self._trade_journal
+
+    @property
+    def trading_schedule(self) -> TradingSchedule:
+        return self._trading_schedule
+
+    @property
+    def latency_tracker(self) -> LatencyTracker:
+        return self._latency
+
+    def export_trade_journal(self, filename: Optional[str] = None) -> str:
+        return self._trade_journal.export_csv(filename)
 
 
 class _NullTracker:

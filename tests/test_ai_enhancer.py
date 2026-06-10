@@ -20,30 +20,25 @@ def _make_feature_vector(
     arb_signal: float = 0.01,
     mid_pm: float = 0.50,
     mid_op: float = 0.52,
-    spread_pm: float = 0.02,
-    spread_op: float = 0.02,
+    spread: float = 0.02,
     vol_30s: float = 0.001,
     days_to_resolution: float = 30.0,
 ) -> FeatureVector:
+    from data.models import VenueSnapshot
+    ts = int(time.time() * 1000)
     return FeatureVector(
         market_id=market_id,
+        ts=ts,
+        computed_ts=ts,
         arb_signal=arb_signal,
-        mid_pm=mid_pm,
-        mid_op=mid_op,
-        spread_pm=spread_pm,
-        spread_op=spread_op,
-        ofi_pm=0.0,
-        ofi_op=0.0,
+        stale_markets=set(),
+        venues={
+            Platform.POLYMARKET: VenueSnapshot(mid=mid_pm, spread=spread, ofi=0.0, bid_depth=1000.0, ask_depth=1000.0),
+            Platform.OPINION: VenueSnapshot(mid=mid_op, spread=spread, ofi=0.0, bid_depth=1000.0, ask_depth=1000.0),
+        },
         vol_30s=vol_30s,
         days_to_resolution=days_to_resolution,
-        ask_depth_pm=1000.0,
-        ask_depth_op=1000.0,
-        bid_depth_pm=1000.0,
-        bid_depth_op=1000.0,
         portfolio_delta=0.0,
-        stale_markets=set(),
-        ts=int(time.time() * 1000),
-        computed_ts=int(time.time() * 1000),
     )
 
 

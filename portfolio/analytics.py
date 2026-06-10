@@ -120,7 +120,7 @@ class PortfolioAnalytics:
         wins: List[float] = []
         losses: List[float] = []
         for fill in self._fills:
-            pnl = fill.filled_usdc
+            pnl = fill.realised_pnl
             if pnl > 0:
                 wins.append(pnl)
             elif pnl < 0:

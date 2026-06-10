@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 _ProposalCB = Callable[[OrderProposal], Coroutine[Any, Any, None]]
 
+STATE_TTL_MS: int = 300_000  # evict market state if untouched for 5 minutes
+
 
 @dataclass
 class StrategyConfig:
@@ -271,6 +273,14 @@ class StrategyEngine:
 
     def _get_state(self, market_id: str) -> _MarketState:
         if market_id not in self._market:
+            now = self._clock.now_ms()
+            cutoff = now - STATE_TTL_MS
+            stale = [mid for mid, st in self._market.items()
+                     if max(st.last_arb_ts, st.last_mm_ts, st.last_hedge_ts) < cutoff and not st.arb_in_flight]
+            for mid in stale:
+                del self._market[mid]
+            if stale:
+                logger.debug("Evicted %d stale market states", len(stale))
             self._market[market_id] = _MarketState()
         return self._market[market_id]
 

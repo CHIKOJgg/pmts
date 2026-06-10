@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -64,14 +65,16 @@ class PostgresPortfolioStore:
             """)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS fills (
-                    proposal_id TEXT PRIMARY KEY,
+                    fill_id TEXT PRIMARY KEY,
+                    proposal_id TEXT,
                     order_id TEXT,
                     market_id TEXT,
                     platform TEXT,
                     side TEXT,
                     filled_usdc REAL,
                     fill_price REAL,
-                    ts BIGINT
+                    ts BIGINT,
+                    realised_pnl REAL DEFAULT 0.0
                 )
             """)
             await conn.execute("""
@@ -119,16 +122,18 @@ class PostgresPortfolioStore:
             """, position.market_id, position.platform.value, position.yes_qty, position.no_qty,
                 position.avg_cost_yes, position.avg_cost_no, position.realised_pnl)
 
+            fill_id = self._fill_id(fill)
             await conn.execute("""
-                INSERT INTO fills (proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                ON CONFLICT (proposal_id) DO UPDATE SET
+                INSERT INTO fills (fill_id, proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts, realised_pnl)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (fill_id) DO UPDATE SET
                     order_id = EXCLUDED.order_id,
                     filled_usdc = EXCLUDED.filled_usdc,
                     fill_price = EXCLUDED.fill_price,
-                    ts = EXCLUDED.ts
-            """, fill.proposal_id, fill.order_id, fill.market_id, fill.platform.value,
-                fill.side, fill.filled_usdc, fill.fill_price, fill.ts)
+                    ts = EXCLUDED.ts,
+                    realised_pnl = EXCLUDED.realised_pnl
+            """, fill_id, fill.proposal_id, fill.order_id, fill.market_id, fill.platform.value,
+                fill.side, fill.filled_usdc, fill.fill_price, fill.ts, fill.realised_pnl)
 
             await conn.execute("""
                 INSERT INTO state (key, value) VALUES ($1, $2), ($3, $4), ($5, $6)
@@ -211,6 +216,10 @@ class PostgresPortfolioStore:
                 row = await conn.fetchrow("SELECT value FROM state WHERE key = $1", "kill_switch_active")
                 return bool(row["value"]) if row else False
         return _run_async(_load())  # type: ignore[no-any-return]
+
+    def _fill_id(self, fill: FillRecord) -> str:
+        raw = f"{fill.proposal_id}|{fill.order_id}|{fill.ts}|{fill.filled_usdc:.8f}|{fill.fill_price:.8f}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def is_healthy(self) -> bool:
         try:
