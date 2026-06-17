@@ -1,9 +1,50 @@
-import asyncio
+from __future__ import annotations
+
+import inspect
 import logging
 import time
-from typing import Dict, Any, Callable, List, Optional
-from aiohttp import web
-from prometheus_client import Gauge, Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
+from typing import Dict, Any, Callable, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.protocols import MarketDataProvider, PortfolioStore
+    from execution.engine import ExecutionEngine
+    from risk.engine import RiskEngine
+    from risk.kill_switch import KillSwitch
+
+try:
+    from aiohttp import web
+except Exception:  # pragma: no cover - import guard for backtest/offline environments
+    web = None  # type: ignore[assignment]
+
+try:
+    from prometheus_client import Gauge, Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
+except Exception:  # pragma: no cover - import guard for backtest/offline environments
+    CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
+
+    class _NoOpMetric:
+        def labels(self, *args: Any, **kwargs: Any) -> _NoOpMetric:
+            return self
+
+        def set(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def inc(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def observe(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+    def Gauge(*args: Any, **kwargs: Any) -> _NoOpMetric:  # type: ignore[no-redef]
+        return _NoOpMetric()
+
+    def Counter(*args: Any, **kwargs: Any) -> _NoOpMetric:  # type: ignore[no-redef]
+        return _NoOpMetric()
+
+    def Histogram(*args: Any, **kwargs: Any) -> _NoOpMetric:  # type: ignore[no-redef]
+        return _NoOpMetric()
+
+    def generate_latest(*args: Any, **kwargs: Any) -> bytes:  # type: ignore[misc]
+        return b""
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +58,28 @@ PROPOSALS_TOTAL = Counter("pmts_proposals_total", "Total order proposals", ["str
 # Counters for fills and volume
 FILLS_TOTAL = Counter("pmts_fills_total", "Total fills", ["platform", "strategy"])
 FILL_USDC_TOTAL = Counter("pmts_fill_usdc_total", "Total filled USDC", ["platform"])
+STRATEGY_FILL_USDC_TOTAL = Counter(
+    "pmts_strategy_fill_usdc_total",
+    "Total filled USDC attributed to strategy flow",
+    ["strategy"],
+)
 
 # Gauge for exposure per market
 OPEN_EXPOSURE_USDC = Gauge("pmts_open_exposure_usdc", "Current open exposure in USDC", ["market_id"])
+PORTFOLIO_MTM_USDC = Gauge("pmts_portfolio_mtm_usdc", "Current portfolio MTM in USDC")
+PORTFOLIO_REALISED_PNL_USDC = Gauge(
+    "pmts_total_realised_pnl_usdc",
+    "Total realised PnL in USDC",
+)
+CAPITAL_UTILIZATION = Gauge(
+    "pmts_capital_utilization",
+    "Capital utilization ratio (reserved / equity)",
+)
+ACTIVE_ORDERS_COUNT = Gauge(
+    "pmts_active_orders_count",
+    "Active open orders count",
+    ["platform"],
+)
 
 # Risk metrics
 DRAWDOWN_PCT = Gauge("pmts_drawdown_pct", "Current portfolio drawdown percentage")
@@ -35,16 +95,19 @@ RECONNECT_TOTAL = Counter("pmts_reconnect_total", "Total feed reconnections", ["
 class HealthMonitor:
     """
     Central health state tracker for Readiness and Liveness checks (Step 7).
+    Exchange connectivity is cached with a short TTL to avoid expensive calls per probe.
     """
     def __init__(
         self, 
-        mdp: Any, 
-        engines: List[Any], 
-        risk: Any, 
-        store: Any, 
-        kill_switch: Any,
-        obs_server: Optional[Any] = None,
-        liveness_timeout_s: float = 30.0
+        mdp: MarketDataProvider, 
+        engines: List[ExecutionEngine], 
+        risk: RiskEngine, 
+        store: PortfolioStore, 
+        kill_switch: KillSwitch,
+        obs_server: Optional[ObservabilityServer] = None,
+        liveness_timeout_s: float = 30.0,
+        connectivity_ttl_s: float = 10.0,
+        mode: str = "live",
     ):
         self.mdp = mdp
         self.engines = engines
@@ -54,14 +117,36 @@ class HealthMonitor:
         self.obs_server = obs_server
         self._last_liveness_tick = time.time()
         self._liveness_timeout_s = liveness_timeout_s
+        self._connectivity_cache: Dict[str, tuple[float, bool]] = {}
+        self._connectivity_ttl_s = connectivity_ttl_s
+        self.mode = mode
 
     def tick_liveness(self) -> None:
         """Update the liveness timestamp to indicate the event loop is running."""
         self._last_liveness_tick = time.time()
 
+    async def _check_engine_connectivity(self, engine: ExecutionEngine) -> bool:
+        """Check exchange connectivity with TTL cache to avoid rate-limit issues."""
+        client = getattr(engine, "_client", None)
+        if client is None:
+            return False
+        plat = client.platform.value
+        now = time.time()
+        cached = self._connectivity_cache.get(plat)
+        if cached is not None:
+            ts, ok = cached
+            if now - ts < self._connectivity_ttl_s:
+                return ok
+        try:
+            ok = bool(await client.verify_connectivity())
+        except Exception:
+            ok = False
+        self._connectivity_cache[plat] = (now, ok)
+        return ok
+
     async def check_readiness(self) -> Dict[str, Any]:
         """Strict readiness verification for orchestration."""
-        details = {}
+        details: Dict[str, Any] = {}
         is_ready = True
 
         # 1. WS Feeds (at least one platform must have recent data)
@@ -73,15 +158,14 @@ class HealthMonitor:
         # 2. Exchange API & Reconciliation
         details["engines"] = {}
         for engine in self.engines:
-            plat = engine._client.platform.value
+            client = getattr(engine, "_client", None)
+            if client is None:
+                continue
+            plat = client.platform.value
             recon = getattr(engine, "reconciliation_complete", False)
             
-            # Perform a fresh connectivity check
-            api_ok = False
-            try:
-                api_ok = await engine._client.verify_connectivity()
-            except Exception:
-                pass
+            # Use cached connectivity check to avoid expensive calls per probe
+            api_ok = await self._check_engine_connectivity(engine)
             
             details["engines"][plat] = {
                 "reconciliation_complete": recon,
@@ -114,7 +198,9 @@ class HealthMonitor:
             if obs_err:
                 is_ready = False
 
-        return {"status": "READY" if is_ready else "NOT_READY", "details": details}
+        details["mode"] = self.mode
+        status = "READY" if is_ready else ("DEGRADED" if self.mode in ("paper", "dry-run") else "NOT_READY")
+        return {"status": status, "details": details}
 
     def check_liveness(self) -> Dict[str, Any]:
         """Liveness check based on event loop tick frequency."""
@@ -131,20 +217,32 @@ class ObservabilityServer:
     Observability + Health Monitoring
     Provides a /health endpoint for orchestration checks,
     a /metrics endpoint for Prometheus export,
-    and a /metrics/json endpoint for JSON export.
+    a /metrics/json endpoint for JSON export,
+    and /kill-switch/activate and /kill-switch/reset endpoints.
     """
-    def __init__(self, port: int = 8080):
+    def __init__(self, port: int = 8080, bind_host: str = "127.0.0.1"):
+        if web is None:
+            raise RuntimeError("aiohttp.web is required to start ObservabilityServer")
         self.port = port
+        self.bind_host = bind_host
         self.app = web.Application()
         self.app.router.add_get('/health', self.handle_liveness)
         self.app.router.add_get('/ready', self.handle_readiness)
         self.app.router.add_get('/metrics', self.handle_metrics_prometheus)
         self.app.router.add_get('/metrics/json', self.handle_metrics_json)
+        self.app.router.add_post('/kill-switch/activate', self.handle_kill_switch_activate)
+        self.app.router.add_post('/kill-switch/reset', self.handle_kill_switch_reset)
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         self.metrics_providers: List[Callable[[], Dict[str, Any]]] = []
         self.health_monitor: Optional[HealthMonitor] = None
         self.in_error_state: bool = False
+        self._kill_switch_token: Optional[str] = None
+        self._kill_switch_reset_callback: Optional[Callable[..., Any]] = None
+        self._kill_switch_activate_callback: Optional[Callable[..., Any]] = None
+        self._reset_attempts: List[float] = []
+        self._reset_rate_limit_window_s: float = 60.0
+        self._max_resets_per_window: int = 5
 
     def register_provider(self, provider: Callable[[], Dict[str, Any]]) -> None:
         """Register a callback that returns a dictionary of metrics for JSON export."""
@@ -168,7 +266,7 @@ class ObservabilityServer:
             return web.json_response({"status": "error", "message": "HealthMonitor not set"}, status=500)
         
         ready = await self.health_monitor.check_readiness()
-        status = 200 if ready["status"] == "READY" else 503
+        status = 200 if ready["status"] in ("READY", "DEGRADED") else 503
         return web.json_response(ready, status=status)
 
     async def handle_metrics_prometheus(self, request: web.Request) -> web.Response:
@@ -186,11 +284,104 @@ class ObservabilityServer:
                 logger.error("Error gathering JSON metrics: %s", e)
         return web.json_response(metrics)
 
+    def set_kill_switch_config(
+        self,
+        token: str,
+        reset_callback: Optional[Callable[..., Any]] = None,
+        activate_callback: Optional[Callable[..., Any]] = None,
+    ) -> None:
+        """Configure kill-switch endpoint authentication and reset callback."""
+        self._kill_switch_token = token
+        self._kill_switch_reset_callback = reset_callback
+        self._kill_switch_activate_callback = activate_callback
+
+    async def handle_kill_switch_activate(self, request: web.Request) -> web.Response:
+        """POST /kill-switch/activate — activate the kill switch (requires token)."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        token = body.get("token", "")
+        reason = body.get("reason", "operator_http")
+        operator_id = body.get("operator_id", "unknown")
+
+        if not self._kill_switch_token or token != self._kill_switch_token:
+            logger.warning("Kill switch activate rejected — bad token (operator=%s)", operator_id)
+            return web.json_response({"error": "invalid token"}, status=403)
+
+        if not self.health_monitor:
+            return web.json_response({"error": "health monitor not available"}, status=503)
+
+        source_ip = request.remote or "unknown"
+        if self._kill_switch_activate_callback:
+            result = self._kill_switch_activate_callback(reason)
+            if inspect.isawaitable(result):
+                await result
+        else:
+            self.health_monitor.risk.manual_activate(reason)
+        logger.critical(
+            "KILL SWITCH ACTIVATED via HTTP by operator=%s source=%s reason=%s",
+            operator_id,
+            source_ip,
+            reason,
+        )
+        return web.json_response({"status": "activated", "reason": reason})
+
+    async def handle_kill_switch_reset(self, request: web.Request) -> web.Response:
+        """POST /kill-switch/reset — reset the kill switch (requires token + rate limit)."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        token = body.get("token", "")
+        operator_id = body.get("operator_id", "unknown")
+
+        if not self._kill_switch_token or token != self._kill_switch_token:
+            logger.warning("Kill switch reset rejected — bad token (operator=%s)", operator_id)
+            return web.json_response({"error": "invalid token"}, status=403)
+
+        now = time.time()
+        self._reset_attempts = [
+            t for t in self._reset_attempts if now - t < self._reset_rate_limit_window_s
+        ]
+        if len(self._reset_attempts) >= self._max_resets_per_window:
+            logger.warning(
+                "Kill switch reset rate-limited — %d attempts in %ds (operator=%s)",
+                len(self._reset_attempts),
+                self._reset_rate_limit_window_s,
+                operator_id,
+            )
+            return web.json_response({"error": "rate limited"}, status=429)
+
+        self._reset_attempts.append(now)
+
+        if not self.health_monitor:
+            return web.json_response({"error": "health monitor not available"}, status=503)
+
+        source_ip = request.remote or "unknown"
+        success = self.health_monitor.risk.reset_kill_switch(token, operator_id)
+        if success:
+            logger.warning(
+                "KILL SWITCH RESET via HTTP by operator=%s source=%s",
+                operator_id,
+                source_ip,
+            )
+            if self._kill_switch_reset_callback:
+                try:
+                    self._kill_switch_reset_callback()
+                except Exception as exc:
+                    logger.error("Kill switch reset callback failed: %s", exc)
+            return web.json_response({"status": "reset"})
+        else:
+            return web.json_response({"error": "reset failed"}, status=400)
+
     async def start(self) -> None:
         try:
             self.runner = web.AppRunner(self.app)
             await self.runner.setup()
-            self.site = web.TCPSite(self.runner, '0.0.0.0', self.port)
+            self.site = web.TCPSite(self.runner, self.bind_host, self.port)
             await self.site.start()
             self.in_error_state = False
             logger.info("Observability server listening on port %d", self.port)

@@ -1,0 +1,6 @@
+{
+  "orderId": "op-order-123",
+  "status": "live",
+  "fills": [],
+  "txHash": "0xdef456"
+}

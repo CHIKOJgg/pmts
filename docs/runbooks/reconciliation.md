@@ -1,32 +1,21 @@
-# Reconciliation Mismatch Handling
+# Reconciliation Runbook
 
-Procedures for when local state deviates from exchange reality.
+Owner: Trading Engineer
 
-## 1. Symptoms
-- [ ] Log message: `Reconciliation mismatch for order <ID>`
-- [ ] `RiskEngine` reports insufficient capital despite no active orders.
-- [ ] SQLite `active_orders` table contains entries that don't exist on the exchange.
+Use this runbook when local state and exchange state diverge after a restart or outage.
 
-## 2. Immediate Action
-- [ ] Stop the bot process.
-- [ ] Do **NOT** delete the SQLite database immediately.
-
-## 3. Auditing
-- [ ] Compare `active_orders` in SQLite with the Exchange's "Open Orders" UI.
-  ```bash
-  sqlite3 pmts.db "SELECT * FROM active_orders;"
-  ```
-- [ ] Check for "Zombie" orders: Orders the bot thinks are open but are actually filled or cancelled.
-
-## 4. Manual Correction
-- [ ] If an order was filled but not recorded:
-    1. Manually insert the fill into `fills` table if necessary.
-    2. Remove from `active_orders`.
-- [ ] If an order was cancelled but still in `active_orders`:
-  ```bash
-  sqlite3 pmts.db "DELETE FROM active_orders WHERE proposal_id = 'MISSING-ID';"
-  ```
-
-## 5. Resume
-- [ ] Restart the bot.
-- [ ] Verify the startup reconciliation log shows `Successfully recovered 0 orders` (or the correct expected count).
+1. Inspect the mismatch.
+   - Compare SQLite `active_orders` against exchange open orders.
+   - Check the startup reconciliation logs.
+2. Do not delete state blindly.
+   - Keep reservations and fills until the mismatch is understood.
+3. Let the engine reconcile first.
+   - Restart the process.
+   - Allow `ExecutionEngine.reconcile()` to rebuild trackers.
+   - Allow `RiskEngine.reconcile_reservations()` to reload committed capital.
+4. Correct only the stale records.
+   - Remove terminal orders from SQLite only after the exchange confirms they are done.
+   - Update any broken submission JSON instead of replacing the whole database.
+5. Verify closure.
+   - Reconciliation should end with no unexpected open orders.
+   - The next startup should not resurrect deleted orders.

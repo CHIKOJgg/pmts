@@ -1,24 +1,27 @@
 """data/market_data_provider.py — In-process market data bus."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from typing import Callable, Coroutine, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Protocol, Set, runtime_checkable
 
 from data.models import MarketSnapshot
-from src.types import Platform
+from src.clock import Clock, LiveClock
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
-STALE_THRESHOLD_MS: int   = 2_000
+STALE_THRESHOLD_MS: int = 2_000
 SIDE_WRITE_TIMEOUT_S: float = 0.050
 
-_SnapshotCB = Callable[[MarketSnapshot], Coroutine]
+_SnapshotCB = Callable[[MarketSnapshot], Coroutine[Any, Any, None]]
+
 
 @runtime_checkable
 class ExchangeAdapter(Protocol):
     """Protocol for exchange data adapters (REST or WebSocket)."""
+
     @property
     def platform(self) -> Platform: ...
 
@@ -36,21 +39,31 @@ class MarketDataProvider:
     """
 
     def __init__(
-        self, 
+        self,
         adapters: Optional[List[ExchangeAdapter]] = None,
-        stream_writer: Optional[Callable] = None
+        stream_writer: Optional[Callable[..., Any]] = None,
+        alert_router: Any = None,
+        clock: Optional[Clock] = None,
     ) -> None:
-        self._index:        dict[tuple[str, Platform], MarketSnapshot] = {}
-        self._callbacks:    list[_SnapshotCB] = []
+        self._index: dict[tuple[str, Platform], MarketSnapshot] = {}
+        self._callbacks: list[_SnapshotCB] = []
         self._stream_writer = stream_writer
-        self._adapters:     List[ExchangeAdapter] = adapters or []
+        self._adapters: List[ExchangeAdapter] = adapters or []
+        self._background_tasks: set[asyncio.Task[None]] = set()
+        self._alert_router = alert_router
+        self._clock = clock or LiveClock()
 
         for adapter in self._adapters:
             adapter.set_snapshot_callback(self.ingest)
 
-        self.snapshots_received:  int = 0
-        self.stale_emitted:       int = 0
-        self.dedup_suppressed:    int = 0
+        self.snapshots_received: int = 0
+        self.stale_emitted: int = 0
+        self.dedup_suppressed: int = 0
+
+        # Circuit breaker for callbacks — disable after consecutive failures
+        # Track by callback identity (id) so index shifts don't corrupt state
+        self._callback_errors: Dict[int, int] = {}  # id(cb) -> consecutive error count
+        self._disabled_callbacks: Set[int] = set()  # id(cb) of disabled callbacks
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -73,45 +86,82 @@ class MarketDataProvider:
 
     async def ingest(self, snapshot: MarketSnapshot) -> None:
         """Accept a snapshot from an exchange adapter."""
-        now       = _now_ms()
+        now = self._clock.now_ms()
         staleness = now - snapshot.ts
 
         if staleness > STALE_THRESHOLD_MS and not snapshot.is_stale:
             snapshot = snapshot.model_copy(update={"is_stale": True})
             self.stale_emitted += 1
 
-        key  = (snapshot.market_id, snapshot.platform)
+        if staleness > STALE_THRESHOLD_MS * 5 and self._alert_router:
+            from infrastructure.alerting import Alert, AlertSeverity
+
+            alert = Alert(
+                severity=AlertSeverity.WARNING,
+                title="Stale Market Data",
+                message=f"Data for {snapshot.market_id} is {staleness}ms old",
+                source="MarketDataProvider",
+            )
+            asyncio.create_task(self._alert_router.send(alert))
+
+        key = (snapshot.market_id, snapshot.platform)
         prev = self._index.get(key)
 
         if prev is not None and _is_duplicate(prev, snapshot):
             self.dedup_suppressed += 1
+            self._index[key] = snapshot  # still update timestamps to prevent false staleness
             return
 
         self._index[key] = snapshot
         self.snapshots_received += 1
 
-        for cb in self._callbacks:
-            try:
-                await cb(snapshot)
-            except Exception as exc:
-                logger.error("Snapshot callback raised: %s", exc, exc_info=True)
+        # Remove any callbacks that were previously disabled
+        if self._disabled_callbacks:
+            self._callbacks = [cb for cb in self._callbacks if id(cb) not in self._disabled_callbacks]
+            # Only clear error counts for the disabled callbacks, keep others intact
+            self._callback_errors = {
+                k: v for k, v in self._callback_errors.items() if k not in self._disabled_callbacks
+            }
+            self._disabled_callbacks.clear()
+
+        results = await asyncio.gather(
+            *(self._invoke_cb(cb, snapshot) for cb in self._callbacks),
+            return_exceptions=True,
+        )
+        for cb, result in zip(self._callbacks, results):
+            cb_id = id(cb)
+            if result is None:
+                self._callback_errors[cb_id] = 0
+            else:
+                self._callback_errors[cb_id] = self._callback_errors.get(cb_id, 0) + 1
+                logger.error(
+                    "Snapshot callback %s raised: %s",
+                    cb.__name__ if hasattr(cb, "__name__") else str(cb)[:40],
+                    result,
+                    exc_info=True,
+                )
+                if self._callback_errors[cb_id] > 10:
+                    logger.critical(
+                        "Callback %s has failed %d times consecutively. Disabling.",
+                        cb.__name__ if hasattr(cb, "__name__") else str(cb)[:40],
+                        self._callback_errors[cb_id],
+                    )
+                    self._disabled_callbacks.add(cb_id)
 
         if self._stream_writer:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._side_write(snapshot),
                 name=f"mdb-write-{snapshot.market_id[:8]}",
             )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     # ── Reads (hot path) ──────────────────────────────────────────────────────
 
-    def get_snapshot(
-        self, market_id: str, platform: Platform
-    ) -> Optional[MarketSnapshot]:
+    def get_snapshot(self, market_id: str, platform: Platform) -> Optional[MarketSnapshot]:
         return self._index.get((market_id, platform))
 
-    def get_mid_prices(
-        self, market_id: str, platform: Platform
-    ) -> Optional[tuple[float, float]]:
+    def get_mid_prices(self, market_id: str, platform: Platform) -> Optional[tuple[float, float]]:
         snap = self.get_snapshot(market_id, platform)
         if snap is None:
             return None
@@ -120,22 +170,28 @@ class MarketDataProvider:
     def get_all_markets(self) -> set[str]:
         return {mid for (mid, _) in self._index}
 
-    def get_health(self) -> dict:
+    def get_market_counts_by_platform(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for _, platform in self._index:
+            counts[platform.value] = counts.get(platform.value, 0) + 1
+        return counts
+
+    def get_total_markets_seen(self) -> int:
+        return len(self._index)
+
+    def get_health(self) -> Dict[str, Any]:
         """Check if adapters have received recent data."""
-        now = _now_ms()
-        health = {}
+        now = self._clock.now_ms()
+        health: Dict[str, Any] = {}
         for plat in Platform:
             # Check if we have ANY snapshot for this platform within threshold
             last_ts = 0
             for snap in self._index.values():
                 if snap.platform == plat:
                     last_ts = max(last_ts, snap.ts)
-            
+
             is_alive = (last_ts > 0) and (now - last_ts < STALE_THRESHOLD_MS * 5)
-            health[plat.value] = {
-                "alive": is_alive,
-                "last_msg_age_ms": now - last_ts if last_ts > 0 else -1
-            }
+            health[plat.value] = {"alive": is_alive, "last_msg_age_ms": now - last_ts if last_ts > 0 else -1}
         return health
 
     # ── Subscription ─────────────────────────────────────────────────────────
@@ -143,26 +199,65 @@ class MarketDataProvider:
     def add_callback(self, cb: _SnapshotCB) -> None:
         self._callbacks.append(cb)
 
+    async def _invoke_cb(self, cb: _SnapshotCB, snapshot: MarketSnapshot) -> None:
+        try:
+            await cb(snapshot)
+        except Exception:
+            raise
+
     # ── Internal ─────────────────────────────────────────────────────────────
 
     async def _side_write(self, snapshot: MarketSnapshot) -> None:
+        writer = self._stream_writer
+        if writer is None:
+            return
         try:
             await asyncio.wait_for(
-                self._stream_writer("market_snapshots", snapshot.model_dump()),
+                writer("market_snapshots", snapshot.model_dump()),
                 timeout=SIDE_WRITE_TIMEOUT_S,
             )
         except Exception as exc:
             logger.debug("Redis side-write failed: %s", exc)
 
 
+def _is_significant_change(
+    prev: Optional[MarketSnapshot], curr: MarketSnapshot, min_price_change: float = 0.001
+) -> bool:
+    """Check if there's a meaningful price or depth change."""
+    if prev is None:
+        return True
+
+    # Check if any price changed by more than minimum threshold
+    thresholds = {
+        "yes_bid": min_price_change,
+        "yes_ask": min_price_change,
+        "no_bid": min_price_change,
+        "no_ask": min_price_change,
+    }
+
+    for attr, thresh in thresholds.items():
+        prev_val = getattr(prev, attr)
+        curr_val = getattr(curr, attr)
+        if abs(prev_val - curr_val) >= thresh:
+            return True
+
+    # Also check if depth changed significantly (more than $10)
+    if abs(prev.bid_depth_usdc - curr.bid_depth_usdc) > 10.0 or abs(prev.ask_depth_usdc - curr.ask_depth_usdc) > 10.0:
+        return True
+
+    # Timestamp changed significantly (more than 500ms)
+    if abs(curr.ts - prev.ts) > 500:
+        return True
+
+    return False
+
+
 def _is_duplicate(prev: MarketSnapshot, curr: MarketSnapshot) -> bool:
+    """Check if snapshot is effectively duplicate within tolerance."""
+    # Use more lenient threshold for deduplication
     return (
-        prev.yes_bid == curr.yes_bid and
-        prev.yes_ask == curr.yes_ask and
-        prev.no_bid  == curr.no_bid  and
-        prev.no_ask  == curr.no_ask
+        abs(prev.yes_bid - curr.yes_bid) < 1e-6
+        and abs(prev.yes_ask - curr.yes_ask) < 1e-6
+        and abs(prev.no_bid - curr.no_bid) < 1e-6
+        and abs(prev.no_ask - curr.no_ask) < 1e-6
     )
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

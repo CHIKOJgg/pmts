@@ -21,8 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install ruff mypy pytest
+        pip install -r requirements-dev.txt
         
     - name: Lint with ruff
       run: ruff check .
@@ -30,5 +29,38 @@ jobs:
     - name: Type check with mypy
       run: mypy . --ignore-missing-imports
       
-    - name: Run tests
-      run: pytest
+    - name: Run tests with coverage
+      run: pytest --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=70
+
+  backtest-smoke:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Backtest smoke test
+      run: python -m main --mode backtest --ticks 200 --capital 10000
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker image
+      run: docker build -t pmts:ci .
+
+    - name: Verify Docker image runs
+      run: |
+        docker run --rm pmts:ci python -c "from config.settings import get_settings; print('Docker OK')"

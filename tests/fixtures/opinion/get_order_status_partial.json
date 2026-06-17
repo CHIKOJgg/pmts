@@ -1,0 +1,14 @@
+{
+  "orderId": "op-order-456",
+  "status": "partial",
+  "remainingAmount": 50,
+  "filledAmount": 50,
+  "filledPrice": 0.58,
+  "fills": [
+    {
+      "amount": 50,
+      "price": 0.58,
+      "timestamp": 1700000000000
+    }
+  ]
+}

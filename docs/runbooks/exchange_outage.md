@@ -1,22 +1,19 @@
-# Exchange Outage Response
+# Exchange Outage Runbook
 
-Procedures for handling API downtime or WebSocket connectivity issues.
+Owner: Ops On-Call
 
-## 1. Detection
-- [ ] Metric `pmts_api_errors_total` shows a sustained increase.
-- [ ] Metric `pmts_reconnect_total` is incrementing rapidly.
-- [ ] Logs show `5xx` or `Connection refused` errors.
+Use this runbook when one exchange is unhealthy, stale, or disconnecting repeatedly.
 
-## 2. Immediate Action
-- [ ] **Activate Kill Switch** if the bot is attempting to place orders against stale data.
-- [ ] Check exchange status pages:
-    - Polymarket: [status.polymarket.com](https://status.polymarket.com)
-    - Opinion: [status.opinion.markets](https://status.opinion.markets)
-
-## 3. Order Management
-- [ ] If the WebSocket is down but REST API is up, the bot will attempt to cancel orders.
-- [ ] If all APIs are down, log into the Exchange UI manually to verify/cancel open positions.
-
-## 4. Recovery
-- [ ] Once connectivity is stable, monitor `pmts_feed_last_ts_seconds` to ensure data is flowing.
-- [ ] Perform a Graceful Restart to ensure the `ExecutionEngine` reconciles any fills that happened during the outage.
+1. Confirm the outage.
+   - Watch `pmts_api_errors_total`.
+   - Watch `pmts_reconnect_total`.
+   - Confirm the feed timestamp gauge stops advancing.
+2. Freeze risky trading if needed.
+   - Trip the kill switch if the bot is trading against stale data.
+3. Let the system self-heal first.
+   - WebSocket adapters reconnect automatically.
+   - REST polling should continue to report errors rather than fabricating data.
+4. Verify recovery.
+   - Confirm feed timestamps resume.
+   - Confirm stale snapshots are suppressed before new proposals are evaluated.
+5. Escalate if recovery does not occur within the incident window.

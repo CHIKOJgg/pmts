@@ -1,25 +1,19 @@
-# Incident Escalation Path
+# Escalation Runbook
 
-On-call rotation and escalation contacts.
+Owner: Lead Developer
 
-## 1. Severity Levels
-- **SEV 1**: System down, massive financial risk, or exchange outage.
-- **SEV 2**: Partial functionality loss (one exchange down, metrics failing).
-- **SEV 3**: Minor bugs, logging issues, non-critical data lag.
+Use this runbook when an issue exceeds operator-only resolution.
 
-## 2. Escalation Steps
-1. **On-Call Engineer**: Primary responder. Must acknowledge within 5 minutes for SEV 1.
-2. **Lead Developer**: Escalate if SEV 1 is not resolved within 30 minutes.
-3. **Risk Officer**: Notify immediately for any loss > 10% of `initial_cash_usdc`.
-
-## 3. Contact Info
-- **Tech Lead**: [redacted]
-- **Risk Desk**: [redacted]
-- **Exchange Support**:
-    - Polymarket: [support@polymarket.com](mailto:support@polymarket.com)
-    - Opinion: [support@opinion.markets](mailto:support@opinion.markets)
-
-## 4. Communication
-- [ ] Create an incident channel/thread.
-- [ ] Document all manual actions taken in SQLite or Exchange UIs.
-- [ ] Post a summary after resolution.
+1. Classify severity.
+   - SEV 1: trading unsafe, capital at risk, or exchange unavailable.
+   - SEV 2: one venue degraded or observability impaired.
+   - SEV 3: minor bug, log noise, or delayed cleanup.
+2. Notify the next owner.
+   - Ops Primary handles the first response.
+   - Risk Officer handles kill-switch and capital-risk questions.
+   - Lead Developer handles code-path triage and remediation.
+3. Preserve evidence.
+   - Keep logs, dashboard screenshots, and SQLite state intact.
+4. Communicate the next action.
+   - State whether the system is paused, paper-only, or ready for restart.
+5. Close the incident only after the runbook is complete and the dashboard is green again.

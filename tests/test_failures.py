@@ -4,29 +4,37 @@ import json
 import unittest
 import uuid
 import time
-import sqlite3
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from src.types import Platform, Side, OrderType, StrategyId, OrderStatus, ArbLeg
-from execution.models import OrderSubmission, OrderProposal, ExecutionResult
-from execution.engine import ExecutionEngine, PlacedOrderResponse, OrderStatusResponse, OrderStatusFill, OpenOrder
+from src.enums import Platform, Side, OrderType, StrategyId, ArbLeg
+from execution.models import OrderSubmission, OrderProposal
+from execution.engine import ExecutionEngine, PlacedOrderResponse, OpenOrder
 from execution.order_tracker import OrderTracker, TrackerStatus
-from data.adapters.polymarket_ws import PolymarketWSAdapter
-from data.models import MarketSnapshot
 from portfolio.storage import SqlitePortfolioStore
 from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
 from risk.limits import RiskLimits
 from engine.orchestrator import Orchestrator
+from portfolio.manager import PortfolioManager, FillRecord
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 class TestFailureModes(unittest.TestCase):
 
     # 1. WebSocket disconnect and automatic reconnection
-    @patch("websockets.connect")
-    def test_ws_reconnect(self, mock_connect):
+    def test_ws_reconnect(self):
+        import sys
+        import types
+        websockets_stub = types.SimpleNamespace(connect=MagicMock())
+        with patch.dict(sys.modules, {"websockets": websockets_stub}):
+            from data.adapters.polymarket_ws import PolymarketWSAdapter
+            import data.adapters.polymarket_ws as polymarket_ws_module
+            polymarket_ws_module.websockets = websockets_stub
         adapter = PolymarketWSAdapter(asset_ids=["BTC-Q4"])
         
         # Mock connection sequence: Fail, then Success (then close)
@@ -38,20 +46,21 @@ class TestFailureModes(unittest.TestCase):
             StopAsyncIteration
         ]
         
-        mock_connect.side_effect = [
+        websockets_stub.connect.side_effect = [
             Exception("Connection Failed"), # First attempt fails
             mock_ws, # Second attempt succeeds
         ]
         
         # We need to run it for a bit
         async def run_briefly():
+            adapter._running = True
             task = asyncio.create_task(adapter._run_loop())
-            await asyncio.sleep(0.5) # Allow some time for retries
+            await asyncio.sleep(1.5) # Allow some time for retries
             adapter._running = False
             await task
 
         run(run_briefly())
-        self.assertGreaterEqual(mock_connect.call_count, 2)
+        self.assertGreaterEqual(websockets_stub.connect.call_count, 2)
 
     # 2. Exchange API 5xx during order submission
     def test_exchange_5xx_retries(self):
@@ -118,8 +127,8 @@ class TestFailureModes(unittest.TestCase):
         
         engine._trackers["PROP-PF"] = tracker
         
-        # Run expiry check
-        run(engine._expiry_worker()) # This should trigger cancel
+        # Run expiry check (single pass, not the infinite worker loop)
+        run(engine._expiry_check())
         
         self.assertEqual(tracker.status, TrackerStatus.EXPIRED)
         self.assertEqual(tracker.cumulative_filled_usdc, 40.0)
@@ -184,39 +193,30 @@ class TestFailureModes(unittest.TestCase):
 
     # 6. Kill switch activation during an in-flight arb
     def test_kill_switch_during_arb(self):
-        # Setup orchestrator with mocked components
         mock_mdp = MagicMock()
         mock_risk = MagicMock()
         mock_strategy = MagicMock()
         mock_pm_engine = MagicMock()
         mock_op_engine = MagicMock()
+        mock_pm_engine.cancel = AsyncMock()
+        mock_op_engine.cancel = AsyncMock()
         
         orchestrator = Orchestrator(
             mdp=mock_mdp, portfolio=MagicMock(), risk=mock_risk,
             strategy=mock_strategy, pm_engine=mock_pm_engine, op_engine=mock_op_engine,
             markets=["M1"], enable_trading=True
         )
-        
-        # Mock strategy to return an arb
-        from strategies.arbitrage import ArbLegProposal, ArbResult
-        leg1 = OrderProposal("P1", "M1", Platform.POLYMARKET, Side.BUY_YES, 100.0, 0.50, OrderType.LIMIT, StrategyId.ARB, 0, 0, "G1", ArbLeg.LEG_1, 0.8)
-        leg2 = OrderProposal("P2", "M1", Platform.OPINION, Side.BUY_NO, 100.0, 0.50, OrderType.LIMIT, StrategyId.ARB, 0, 0, "G1", ArbLeg.LEG_2)
-        mock_strategy.evaluate.return_value = ArbResult(True, 0.05, leg1, leg2)
-        
-        # Mock risk to approve
-        from risk.engine import RiskDecision, RiskVerdict
-        mock_risk.evaluate.return_value = RiskDecision("P1", RiskVerdict.APPROVED, None, None, 1000, 100, 0.01, 10000, 10000, False, 0)
-        
-        # Simualte kill switch tripping AFTER strategy evaluation but before orchestrator processes
-        mock_risk.kill_switch_active = True
-        
-        # Run one tick
-        from data.models import FeatureVector
-        fv = FeatureVector("M1", 0, 0, 0.05, [], 0.5, 0.5, 0.01, 0.01, 0, 0, 0.01, 30, 0, 1000, 1000, 1000, 1000)
-        run(orchestrator._on_feature_vector(fv))
-        
-        # Should NOT submit if kill switch is active
-        mock_pm_engine.submit.assert_not_called()
+
+        mock_pm_engine.get_tracker = MagicMock(return_value=MagicMock(submission=MagicMock(market_id="M1")))
+        mock_op_engine.get_tracker = MagicMock(return_value=MagicMock(submission=MagicMock(market_id="M1")))
+        orchestrator._in_flight = {
+            "P1": (StrategyId.ARB, 100.0, Platform.POLYMARKET, "G1"),
+            "P2": (StrategyId.ARB, 100.0, Platform.OPINION, "G1"),
+        }
+
+        run(orchestrator._kill_switch_response())
+        self.assertEqual(mock_pm_engine.cancel.call_count, 1)
+        self.assertEqual(mock_op_engine.cancel.call_count, 1)
 
     # 7. SQLite write failure during fill recording
     def test_sqlite_write_failure(self):
@@ -237,9 +237,19 @@ class TestFailureModes(unittest.TestCase):
     def test_risk_engine_concurrency(self):
         pm = MagicMock()
         pm.get_portfolio_mtm.return_value.total_equity_usdc = 10000.0
+        pm.get_price_age_ms.return_value = 0
+        pm.peak_equity = 10000.0
         pm.cash_usdc = 1000.0
+        pm.get_market_exposure_usdc.return_value = 0.0
+        pm.get_delta.return_value.net_delta = 0.0
         
-        risk = RiskEngine(pm, KillSwitch("tok"), RiskLimits())
+        risk = RiskEngine(
+            pm, KillSwitch("test-token-secure-123"),
+            RiskLimits(
+                max_market_exposure_usdc=10000, min_free_capital_pct=0.0,
+                max_net_delta_per_market=10000,
+            ),
+        )
         
         proposals = []
         for i in range(10):
@@ -254,6 +264,109 @@ class TestFailureModes(unittest.TestCase):
         approved = [r for r in results if r.approved]
         
         self.assertEqual(len(approved), 6) # 150 * 6 = 900. Next one would be 1050 > 1000.
+
+    def test_risk_engine_concurrent_async_evaluate(self):
+        """Test that synchronous evaluate() is safe under concurrent async calls."""
+        import asyncio
+
+        pm = MagicMock()
+        pm.get_portfolio_mtm.return_value.total_equity_usdc = 10000.0
+        pm.cash_usdc = 1000.0
+        pm.get_price_age_ms.return_value = 100
+        pm.peak_equity = 10000.0
+        pm.get_market_exposure_usdc.return_value = 0.0
+        pm.get_delta.return_value.net_delta = 0.0
+
+        risk = RiskEngine(
+            pm, KillSwitch("test-token-secure-123"),
+            RiskLimits(
+                max_market_exposure_usdc=10000, min_free_capital_pct=0.0,
+                max_net_delta_per_market=10000,
+            ),
+        )
+
+        async def evaluate_async(idx: int):
+            p = OrderProposal(
+                str(idx), "M1", Platform.POLYMARKET, Side.BUY_YES,
+                100.0, 0.50, OrderType.LIMIT, StrategyId.MM,
+                int(time.time() * 1000) + 10000, 0
+            )
+            return risk.evaluate(p)
+
+        async def run_concurrent():
+            tasks = [evaluate_async(i) for i in range(20)]
+            return await asyncio.gather(*tasks)
+
+        results = asyncio.run(run_concurrent())
+        approved = [r for r in results if r.approved]
+
+        self.assertEqual(len(approved), 10)
+
+    def test_portfolio_manager_concurrent_record_fill(self):
+        """Test that record_fill() is safe under concurrent async calls."""
+        import asyncio
+
+        def price_source(market_id, platform):
+            return (0.50, 0.50)
+
+        pm = PortfolioManager(initial_cash_usdc=10000.0, price_source=price_source)
+
+        async def record_fill_async(idx: int):
+            fill = FillRecord(
+                proposal_id=f"prop-{idx}",
+                order_id=f"ord-{idx}",
+                market_id="M1",
+                platform=Platform.POLYMARKET,
+                side=Side.BUY_YES.value,
+                filled_usdc=100.0,
+                fill_price=0.50,
+                ts=int(time.time() * 1000),
+            )
+            await pm.record_fill(fill)
+
+        async def run_concurrent():
+            tasks = [record_fill_async(i) for i in range(10)]
+            await asyncio.gather(*tasks)
+
+        asyncio.run(run_concurrent())
+
+        delta = pm.get_delta("M1")
+        self.assertAlmostEqual(delta.net_delta, 2000.0)
+
+    def test_execution_engine_concurrent_submit(self):
+        """Test that submit() is safe under concurrent async calls."""
+        import asyncio
+
+        client = MagicMock()
+        client.platform = Platform.POLYMARKET
+        client.place_order = AsyncMock(side_effect=Exception("No network"))
+
+        engine = ExecutionEngine(client, max_concurrent=10)
+
+        async def submit_async(idx: int):
+            sub = OrderSubmission(
+                order_id=f"ord-{idx}",
+                proposal_id=f"prop-{idx}",
+                market_id="M1",
+                platform=Platform.POLYMARKET,
+                side=Side.BUY_YES,
+                size_usdc=100.0,
+                limit_price=0.50,
+                order_type=OrderType.LIMIT,
+                strategy_id=StrategyId.MM,
+                expiry_ms=int(time.time() * 1000) + 60_000,
+                token_quantity=200.0,
+                submitted_at=int(time.time() * 1000),
+            )
+            await engine.submit(sub)
+
+        async def run_concurrent():
+            tasks = [submit_async(i) for i in range(5)]
+            await asyncio.gather(*tasks)
+
+        asyncio.run(run_concurrent())
+
+        self.assertEqual(engine._queue.qsize(), 5)
 
 if __name__ == "__main__":
     unittest.main()

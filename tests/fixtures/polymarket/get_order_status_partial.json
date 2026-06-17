@@ -1,0 +1,15 @@
+{
+  "orderID": "pm-order-456",
+  "status": "partial",
+  "remainingSize": 50,
+  "filledSize": 50,
+  "filledAmount": 50,
+  "averagePrice": 0.48,
+  "fills": [
+    {
+      "size": 50,
+      "price": 0.48,
+      "timestamp": 1700000000000
+    }
+  ]
+}

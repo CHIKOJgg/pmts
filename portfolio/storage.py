@@ -1,10 +1,11 @@
 import sqlite3
 import logging
-from typing import Dict, Tuple, Optional, List
-import json
+import hashlib
+from typing import Any, Dict, Tuple, Optional, List
+
 
 from portfolio.manager import _Position, FillRecord
-from src.types import Platform, StrategyId
+from src.enums import Platform, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -12,18 +13,37 @@ class SqlitePortfolioStore:
     """
     SQLite persistence for PortfolioManager (Step 5).
     Uses WAL mode for high concurrency and fast writes.
+    Supports context manager protocol for safe resource cleanup.
     """
 
     def __init__(self, db_path: str = "portfolio.db"):
         self.db_path = db_path
-        # check_same_thread=False since asyncio can run on different threads in some executors,
-        # but all writes are serialized via asyncio.Lock in PortfolioManager.
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._closed = False
         self._init_db()
+
+    def __enter__(self) -> "SqlitePortfolioStore":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+        return None
+
+    def close(self) -> None:
+        """Close the SQLite connection safely."""
+        if not self._closed and self._conn:
+            try:
+                self._conn.close()
+            except Exception as exc:
+                logger.error("Failed to close SQLite connection: %s", exc)
+            finally:
+                self._closed = True
 
     def is_healthy(self) -> bool:
         """Check if SQLite is reachable."""
+        if self._closed:
+            return False
         try:
             self._conn.execute("SELECT 1")
             return True
@@ -48,7 +68,8 @@ class SqlitePortfolioStore:
             ''')
             self._conn.execute('''
                 CREATE TABLE IF NOT EXISTS fills (
-                    proposal_id TEXT PRIMARY KEY,
+                    fill_id TEXT PRIMARY KEY,
+                    proposal_id TEXT,
                     order_id TEXT,
                     market_id TEXT,
                     platform TEXT,
@@ -58,6 +79,7 @@ class SqlitePortfolioStore:
                     ts INTEGER
                 )
             ''')
+            self._migrate_fills_schema()
             self._conn.execute('''
                 CREATE TABLE IF NOT EXISTS state (
                     key TEXT PRIMARY KEY,
@@ -90,12 +112,14 @@ class SqlitePortfolioStore:
     ) -> None:
         """Atomic write of a fill and resulting position/state updates."""
         try:
+            fill_id = self._fill_id(fill)
             with self._conn:
                 self._conn.execute('''
                     INSERT OR IGNORE INTO fills
-                    (proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (fill_id, proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
+                    fill_id,
                     fill.proposal_id, fill.order_id, fill.market_id, fill.platform.value,
                     fill.side, fill.filled_usdc, fill.fill_price, fill.ts
                 ))
@@ -155,11 +179,11 @@ class SqlitePortfolioStore:
         except Exception as exc:
             logger.error("Failed to save redemption to SQLite: %s", exc)
 
-    def load_state(self) -> dict:
+    def load_state(self) -> Dict[str, Any]:
         """Load the entire portfolio state on startup."""
         cur = self._conn.cursor()
         
-        state = {"cash_usdc": None, "peak_equity": None, "closed_pnl": 0.0}
+        state: Dict[str, Any] = {"cash_usdc": None, "peak_equity": None, "closed_pnl": 0.0}
         for row in cur.execute("SELECT key, value FROM state"):
             state[row["key"]] = row["value"]
 
@@ -265,3 +289,64 @@ class SqlitePortfolioStore:
         for row in cur.execute("SELECT proposal_id, exchange_order_id, submission_json FROM active_orders"):
             orders.append((row["proposal_id"], row["exchange_order_id"], row["submission_json"]))
         return orders
+
+    def _migrate_fills_schema(self) -> None:
+        """Upgrade old fills table where proposal_id was the primary key."""
+        cur = self._conn.cursor()
+        cols = [row["name"] for row in cur.execute("PRAGMA table_info(fills)")]
+        if "fill_id" in cols:
+            return
+
+        with self._conn:
+            self._conn.execute("ALTER TABLE fills RENAME TO fills_old")
+            self._conn.execute('''
+                CREATE TABLE fills (
+                    fill_id TEXT PRIMARY KEY,
+                    proposal_id TEXT,
+                    order_id TEXT,
+                    market_id TEXT,
+                    platform TEXT,
+                    side TEXT,
+                    filled_usdc REAL,
+                    fill_price REAL,
+                    ts INTEGER
+                )
+            ''')
+            for row in self._conn.execute("SELECT * FROM fills_old"):
+                fill_id = self._fill_id_from_parts(
+                    row["proposal_id"],
+                    row["order_id"],
+                    row["ts"],
+                    row["filled_usdc"],
+                    row["fill_price"],
+                )
+                self._conn.execute('''
+                    INSERT OR IGNORE INTO fills
+                    (fill_id, proposal_id, order_id, market_id, platform, side, filled_usdc, fill_price, ts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    fill_id,
+                    row["proposal_id"],
+                    row["order_id"],
+                    row["market_id"],
+                    row["platform"],
+                    row["side"],
+                    row["filled_usdc"],
+                    row["fill_price"],
+                    row["ts"],
+                ))
+            self._conn.execute("DROP TABLE fills_old")
+
+    def _fill_id(self, fill: FillRecord) -> str:
+        return self._fill_id_from_parts(
+            fill.proposal_id,
+            fill.order_id,
+            fill.ts,
+            fill.filled_usdc,
+            fill.fill_price,
+        )
+
+    @staticmethod
+    def _fill_id_from_parts(proposal_id: str, order_id: str, ts: int, filled_usdc: float, fill_price: float) -> str:
+        raw = f"{proposal_id}|{order_id}|{ts}|{filled_usdc:.8f}|{fill_price:.8f}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()

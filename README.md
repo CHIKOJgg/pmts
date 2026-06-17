@@ -1704,6 +1704,4 @@ pmts_prod/
 ## License
 
 MIT. Use at your own risk.
-
-This is not financial advice. Prediction market trading involves substantial risk of capital loss. Automated systems can lose money faster than you can manually intervene. Never deploy capital you cannot afford to lose entirely. The performance figures in this documentation are based on backtests with synthetic data — they do not guarantee any future results.#   p m t s  
- 
+This is not financial advice. Prediction market trading involves substantial risk of capital loss. Automated systems can lose money faster than you can manually intervene. Never deploy capital you cannot afford to lose entirely. The performance figures in this documentation are based on backtests with synthetic data — they do not guarantee any future results.

@@ -45,6 +45,7 @@ class OrderStatus(str, Enum):
     PARTIAL   = "partial"
     FILLED    = "filled"
     CANCELLED = "cancelled"
+    EXPIRED   = "expired"
     REJECTED  = "rejected"
     TIMEOUT   = "timeout"
 
@@ -88,6 +89,9 @@ class RejectReason(str, Enum):
     MARKET_EXPOSURE_LIMIT = "market_exposure_limit"
     STRATEGY_CAP_EXCEEDED = "strategy_cap_exceeded"
     DELTA_LIMIT           = "delta_limit"
+    STALE_MTM             = "stale_mtm"
+    SESSION_LOSS_LIMIT    = "session_loss_limit"
+    SOFT_KILL_ACTIVE      = "soft_kill_active"
 
 
 class ConnectorStatus(str, Enum):

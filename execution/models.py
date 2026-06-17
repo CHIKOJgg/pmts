@@ -1,22 +1,16 @@
 """execution/models.py — Order lifecycle data models."""
 from __future__ import annotations
 
-import time
-import uuid as _uuid_mod
-from dataclasses import dataclass, field, asdict
-from typing import Optional
+from dataclasses import dataclass, asdict
+from typing import Any, Optional
 
-from src.types import (
-    ArbLeg, EpochMs, FillRatio, OrderStatus, OrderType,
+from src.enums import (
+    ArbLeg, OrderStatus, OrderType,
     Platform, Side, StrategyId,
 )
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
-def _model_dump(obj) -> dict:
+def _model_dump(obj: Any) -> dict[str, Any]:
     d = asdict(obj)
     # Convert enums to their values
     for k, v in d.items():
@@ -28,6 +22,7 @@ def _model_dump(obj) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # OrderProposal — intent from StrategyEngine, not yet risk-checked
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class OrderProposal:
@@ -45,7 +40,7 @@ class OrderProposal:
     leg_number:     Optional[ArbLeg]   = None
     min_fill_ratio: Optional[float]    = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.size_usdc <= 0:
             raise ValueError(f"size_usdc must be > 0, got {self.size_usdc}")
         if not (0.001 <= self.limit_price <= 0.999):
@@ -68,19 +63,24 @@ class OrderProposal:
     def is_mm(self) -> bool:
         return self.strategy_id in (StrategyId.MM, StrategyId.HEDGE)
 
-    def model_copy(self, update: dict = None) -> "OrderProposal":
+    def model_copy(self, update: Optional[dict[str, Any]] = None) -> "OrderProposal":
         d = asdict(self)
         if update:
             d.update(update)
-        return OrderProposal(**d)
+        return self.__class__(**d)
 
-    def model_dump(self) -> dict:
-        return _model_dump(self)
+    def model_dump(self) -> dict[str, Any]:
+        d = asdict(self)
+        for k, v in d.items():
+            if hasattr(v, 'value'):
+                d[k] = v.value
+        return d
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OrderSubmission — what OM sends to ExecutionEngine
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class OrderSubmission:
@@ -100,9 +100,11 @@ class OrderSubmission:
     leg_number:     Optional[ArbLeg] = None
     min_fill_ratio: Optional[float]  = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.token_quantity <= 0:
             raise ValueError(f"token_quantity must be > 0, got {self.token_quantity}")
+        if self.limit_price <= 0:
+            raise ValueError(f"limit_price must be > 0, got {self.limit_price}")
         # Validate consistency (allow 0.2% tolerance for rounding)
         expected = self.size_usdc / self.limit_price
         if abs(self.token_quantity - expected) / expected > 0.002:
@@ -111,13 +113,24 @@ class OrderSubmission:
                 f"size_usdc/limit_price = {expected:.6f}"
             )
 
-    def model_dump(self) -> dict:
-        return _model_dump(self)
+    def model_dump(self) -> dict[str, Any]:
+        d = asdict(self)
+        for k, v in d.items():
+            if hasattr(v, 'value'):
+                d[k] = v.value
+        return d
+
+    def model_copy(self, update: Optional[dict[str, Any]] = None) -> "OrderSubmission":
+        d = asdict(self)
+        if update:
+            d.update(update)
+        return self.__class__(**d)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ExecutionResult — emitted for every order state change
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ExecutionResult:
@@ -133,7 +146,7 @@ class ExecutionResult:
     tx_hash:           Optional[str]   = None
     exchange_error:    Optional[str]   = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.status in (OrderStatus.PARTIAL, OrderStatus.FILLED):
             if self.fill_price is None:
                 raise ValueError(f"fill_price required when status={self.status.value}")
@@ -142,5 +155,15 @@ class ExecutionResult:
     def is_terminal(self) -> bool:
         return self.status.is_terminal
 
-    def model_dump(self) -> dict:
-        return _model_dump(self)
+    def model_dump(self) -> dict[str, Any]:
+        d = asdict(self)
+        for k, v in d.items():
+            if hasattr(v, 'value'):
+                d[k] = v.value
+        return d
+
+    def model_copy(self, update: Optional[dict[str, Any]] = None) -> "ExecutionResult":
+        d = asdict(self)
+        if update:
+            d.update(update)
+        return self.__class__(**d)

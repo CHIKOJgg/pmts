@@ -1,87 +1,101 @@
 """execution/engine.py — Order submission, fill tracking, and expiry enforcement."""
+
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import time
-from dataclasses import dataclass, field as dc_field
-from typing import Callable, Coroutine, List, Optional, Protocol, runtime_checkable
+from dataclasses import dataclass
+from dataclasses import field as dc_field
+from typing import Any, Callable, Coroutine, List, Optional, Protocol, runtime_checkable
 
 from execution.models import ExecutionResult, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
+from infrastructure.alerting import AlertRouter
+from infrastructure.observability import (
+    ACTIVE_ORDERS_COUNT,
+    API_ERRORS_TOTAL,
+    FILL_USDC_TOTAL,
+    FILLS_TOTAL,
+    ORDER_LATENCY,
+)
+from risk.engine import RiskEngine
+from src.clock import Clock, LiveClock
 from src.errors import ExchangeRejected
-from src.types import OrderStatus, Platform, Side, StrategyId, OrderType, ArbLeg
-from infrastructure.observability import FILLS_TOTAL, FILL_USDC_TOTAL, ORDER_LATENCY, API_ERRORS_TOTAL
-import json
+from src.protocols import MarketDataProvider, PortfolioStore
+from src.enums import ArbLeg, OrderStatus, OrderType, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
 
-_ResultCB = Callable[[ExecutionResult], Coroutine]
+_ResultCB = Callable[[ExecutionResult], Coroutine[Any, Any, None]]
 
 # Retry policy
-MAX_SUBMIT_ATTEMPTS: int   = 3
+MAX_SUBMIT_ATTEMPTS: int = 3
 SUBMIT_BASE_DELAY_S: float = 0.200
-TICK_SIZE:           float = 0.001   # 1 probability tick
+TICK_SIZE: float = 0.001  # 1 probability tick
 
 # Poll / expiry intervals — overridable per-instance in tests
-DEFAULT_POLL_NORMAL_S:  float = 2.0
-DEFAULT_POLL_FAST_S:    float = 0.5
+DEFAULT_POLL_NORMAL_S: float = 2.0
+DEFAULT_POLL_FAST_S: float = 0.5
 DEFAULT_EXPIRY_CHECK_S: float = 0.25
+TRACKER_RETENTION_MS: int = 10 * 60 * 1000
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Exchange response dataclasses (defined BEFORE ExchangeClient protocol)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class PlacedFill:
-    fill_usdc:   float
-    fill_price:  float
+    fill_usdc: float
+    fill_price: float
     fill_tokens: float
-    ts:          int
+    ts: int
 
 
 @dataclass
 class PlacedOrderResponse:
     exchange_order_id: str
-    status:            str            # "live" | "matched" | "cancelled"
-    fills:             List[PlacedFill] = dc_field(default_factory=list)
-    tx_hash:           Optional[str]    = None
+    status: str  # "live" | "matched" | "cancelled"
+    fills: List[PlacedFill] = dc_field(default_factory=list)
+    tx_hash: Optional[str] = None
 
 
 @dataclass
 class OrderStatusFill:
-    fill_usdc:   float
-    fill_price:  float
+    fill_usdc: float
+    fill_price: float
     fill_tokens: float
-    ts:          int
+    ts: int
 
 
 @dataclass
 class OrderStatusResponse:
     exchange_order_id: str
-    is_live:           bool
-    is_cancelled:      bool
-    is_filled:         bool
-    remaining_usdc:    float
-    new_fills:         List[OrderStatusFill] = dc_field(default_factory=list)
-    tx_hash:           Optional[str]         = None
+    is_live: bool
+    is_cancelled: bool
+    is_filled: bool
+    remaining_usdc: float
+    new_fills: List[OrderStatusFill] = dc_field(default_factory=list)
+    tx_hash: Optional[str] = None
 
 
 @dataclass
 class OpenOrder:
     exchange_order_id: str
-    market_id:         str
-    side:              str
-    size_usdc:         float
-    filled_usdc:       float
-    limit_price:       float
-    ts:                int
+    market_id: str
+    side: str
+    size_usdc: float
+    filled_usdc: float
+    limit_price: float
+    ts: int
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ExchangeClient Protocol
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @runtime_checkable
 class ExchangeClient(Protocol):
@@ -96,9 +110,7 @@ class ExchangeClient(Protocol):
 
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool: ...
 
-    async def get_order_status(
-        self, exchange_order_id: str, market_id: str
-    ) -> OrderStatusResponse: ...
+    async def get_order_status(self, exchange_order_id: str, market_id: str) -> OrderStatusResponse: ...
 
     async def verify_connectivity(self) -> bool:
         """
@@ -119,12 +131,13 @@ class ExchangeClient(Protocol):
 # Priority queue entry
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class _QueueEntry:
     __slots__ = ("priority", "seq", "submission")
 
     def __init__(self, priority: int, seq: int, submission: OrderSubmission) -> None:
-        self.priority   = priority
-        self.seq        = seq
+        self.priority = priority
+        self.seq = seq
         self.submission = submission
 
     def __lt__(self, other: "_QueueEntry") -> bool:
@@ -137,6 +150,7 @@ class _QueueEntry:
 # ─────────────────────────────────────────────────────────────────────────────
 # ExecutionEngine
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class ExecutionEngine:
     """
@@ -152,47 +166,55 @@ class ExecutionEngine:
 
     def __init__(
         self,
-        client:         ExchangeClient,
-        risk:           Optional[Any] = None, # RiskEngine
-        store:          Optional[Any] = None, # SqlitePortfolioStore
-        mdb:            Optional[Any] = None, # MarketDataProvider
+        client: ExchangeClient,
+        risk: Optional[RiskEngine] = None,
+        store: Optional[PortfolioStore] = None,
+        mdb: Optional[MarketDataProvider] = None,
         max_concurrent: int = 5,
+        tracker_retention_ms: int = TRACKER_RETENTION_MS,
+        alert_router: Optional[AlertRouter] = None,
+        clock: Optional[Clock] = None,
     ) -> None:
-        self._client    = client
-        self._risk      = risk
-        self._store     = store
-        self._mdb       = mdb
+        self._client = client
+        self._risk = risk
+        self._store = store
+        self._mdb = mdb
+        self._alert_router = alert_router
+        self._clock = clock or LiveClock()
 
         # Per-order trackers
-        self._trackers:         dict[str, OrderTracker] = {}
-        self._exch_to_proposal: dict[str, str]          = {}
+        self._trackers: dict[str, OrderTracker] = {}
+        self._exch_to_proposal: dict[str, str] = {}
+        self._open_ids: set[str] = set()  # proposal_ids with is_open status (avoids O(N) scan)
 
         # Priority submission queue
-        self._queue:     asyncio.PriorityQueue = asyncio.PriorityQueue()
-        self._seq:       int                   = 0
-        self._semaphore: asyncio.Semaphore     = asyncio.Semaphore(max_concurrent)
+        self._queue: asyncio.PriorityQueue[_QueueEntry] = asyncio.PriorityQueue()
+        self._seq: int = 0
+        self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent)
+        self._tracker_retention_ms = tracker_retention_ms
 
         # Timing — overridable in tests
-        self.poll_normal_s    = DEFAULT_POLL_NORMAL_S
-        self.poll_fast_s      = DEFAULT_POLL_FAST_S
-        self.expiry_check_s   = DEFAULT_EXPIRY_CHECK_S
+        self.poll_normal_s = DEFAULT_POLL_NORMAL_S
+        self.poll_fast_s = DEFAULT_POLL_FAST_S
+        self.expiry_check_s = DEFAULT_EXPIRY_CHECK_S
         self.submit_base_delay_s = SUBMIT_BASE_DELAY_S
 
         self._callbacks: list[_ResultCB] = []
-        self._tasks:     list[asyncio.Task] = []
-        self._stopped:   bool = False
+        self._tasks: list[asyncio.Task[None]] = []
+        self._stopped: bool = False
 
         # Metrics
-        self.orders_submitted:  int   = 0
-        self.orders_filled:     int   = 0
-        self.orders_partial:    int   = 0
-        self.orders_cancelled:  int   = 0
-        self.orders_expired:    int   = 0
-        self.orders_rejected:   int   = 0
-        self.orders_timed_out:  int   = 0
+        self.orders_submitted: int = 0
+        self.orders_filled: int = 0
+        self.orders_partial: int = 0
+        self.orders_cancelled: int = 0
+        self.orders_expired: int = 0
+        self.orders_rejected: int = 0
+        self.orders_timed_out: int = 0
         self.total_filled_usdc: float = 0.0
-        self.submit_retries:    int   = 0
+        self.submit_retries: int = 0
         self.reconciliation_complete: bool = False
+        self._consecutive_errors: int = 0
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -202,28 +224,41 @@ class ExecutionEngine:
         self._stopped = False
         n = max(1, self._semaphore._value)
         for i in range(n):
-            self._tasks.append(asyncio.create_task(
-                self._submit_worker(i),
-                name=f"exec-submit-{self._client.platform.value}-{i}",
-            ))
-        self._tasks.append(asyncio.create_task(
-            self._poll_worker(),
-            name=f"exec-poll-{self._client.platform.value}",
-        ))
-        self._tasks.append(asyncio.create_task(
-            self._expiry_worker(),
-            name=f"exec-expiry-{self._client.platform.value}",
-        ))
+            self._tasks.append(
+                asyncio.create_task(
+                    self._submit_worker(i),
+                    name=f"exec-submit-{self._client.platform.value}-{i}",
+                )
+            )
+        self._tasks.append(
+            asyncio.create_task(
+                self._poll_worker(),
+                name=f"exec-poll-{self._client.platform.value}",
+            )
+        )
+        self._tasks.append(
+            asyncio.create_task(
+                self._expiry_worker(),
+                name=f"exec-expiry-{self._client.platform.value}",
+            )
+        )
+        self._tasks.append(
+            asyncio.create_task(
+                self._prune_worker(),
+                name=f"exec-prune-{self._client.platform.value}",
+            )
+        )
         logger.info("ExecutionEngine started (%s)", self._client.platform.value)
 
     async def stop(self) -> None:
-        self._stopped = True
         logger.info("ExecutionEngine stopping (%s). Draining queue...", self._client.platform.value)
-        
-        # Step 5: Wait for queue to drain before cancelling workers (Issue #5)
+
+        # Drain queue first, THEN stop workers (Bug #2: deadlock fix)
         while not self._queue.empty():
             await asyncio.sleep(0.1)
-            
+
+        self._stopped = True
+
         for t in self._tasks:
             t.cancel()
         if self._tasks:
@@ -241,11 +276,11 @@ class ExecutionEngine:
             return
 
         logger.info("Starting reconciliation for %s...", self._client.platform.value)
-        
+
         # 1. Load active orders from DB
         db_orders = self._store.load_active_orders()
         db_map = {proposal_id: (exch_id, sub_json) for proposal_id, exch_id, sub_json in db_orders}
-        
+
         # 2. Query exchange for open orders
         try:
             exch_orders = await self._client.get_open_orders()
@@ -260,40 +295,53 @@ class ExecutionEngine:
                 # Deserialize submission
                 sub_dict = json.loads(sub_json)
                 # Helper to reconstruct Enums
-                sub_dict['platform'] = Platform(sub_dict['platform'])
-                sub_dict['side'] = Side(sub_dict['side'])
-                sub_dict['order_type'] = OrderType(sub_dict['order_type'])
-                sub_dict['strategy_id'] = StrategyId(sub_dict['strategy_id'])
-                if sub_dict.get('leg_number'): sub_dict['leg_number'] = ArbLeg(sub_dict['leg_number'])
-                
+                sub_dict["platform"] = Platform(sub_dict["platform"])
+                sub_dict["side"] = Side(sub_dict["side"])
+                sub_dict["order_type"] = OrderType(sub_dict["order_type"])
+                sub_dict["strategy_id"] = StrategyId(sub_dict["strategy_id"])
+                if sub_dict.get("leg_number"):
+                    sub_dict["leg_number"] = ArbLeg(sub_dict["leg_number"])
+
                 submission = OrderSubmission(**sub_dict)
-                tracker = OrderTracker(submission)
-                
+                tracker = OrderTracker(submission, clock=self._clock)
+
                 if exch_id and exch_id in exch_map:
                     # Order is still live on exchange
                     o = exch_map[exch_id]
-                    logger.info("Re-found live order %s (proposal %s), filled=%.2f/%.2f", 
-                                exch_id, proposal_id[:8], o.filled_usdc, o.size_usdc)
-                    
+                    logger.info(
+                        "Re-found live order %s (proposal %s), filled=%.2f/%.2f",
+                        exch_id,
+                        proposal_id[:8],
+                        o.filled_usdc,
+                        o.size_usdc,
+                    )
+
                     tracker.exchange_order_id = exch_id
                     tracker.status = TrackerStatus.SUBMITTED
-                    
+
                     if o.filled_usdc > 0:
                         # Record a synthetic fill to account for what happened while we were down
                         tracker.record_fill(
-                            o.filled_usdc, o.limit_price, 
+                            o.filled_usdc,
+                            o.limit_price,
                             o.filled_usdc / o.limit_price if o.limit_price > 0 else 0,
-                            o.ts
+                            o.ts,
                         )
-                    
+
                     self._trackers[proposal_id] = tracker
                     self._exch_to_proposal[exch_id] = proposal_id
 
+                    if tracker.status.is_open:
+                        self._open_ids.add(proposal_id)
                     if tracker.status.is_terminal:
                         self._finalise(tracker)
                 else:
                     # Order not on exchange, maybe terminal while we were down
-                    logger.info("Order %s (proposal %s) not on exchange, checking final status...", exch_id or "N/A", proposal_id[:8])
+                    logger.info(
+                        "Order %s (proposal %s) not on exchange, checking final status...",
+                        exch_id or "N/A",
+                        proposal_id[:8],
+                    )
                     if exch_id:
                         tracker.exchange_order_id = exch_id
                         tracker.status = TrackerStatus.SUBMITTED
@@ -314,14 +362,12 @@ class ExecutionEngine:
     async def submit(self, submission: OrderSubmission) -> None:
         priority = 0 if submission.strategy_id == StrategyId.ARB else 1
         self._seq += 1
-        self._trackers[submission.proposal_id] = OrderTracker(submission)
-        
+        self._trackers[submission.proposal_id] = OrderTracker(submission, clock=self._clock)
+        self._update_active_order_metric()
+
         if self._store:
             # Step 6: Persist submission before trying to send it
-            self._store.save_order(
-                submission.proposal_id, 
-                json.dumps(submission.model_dump())
-            )
+            self._store.save_order(submission.proposal_id, json.dumps(submission.model_dump()), exchange_order_id=None)
 
         await self._queue.put(_QueueEntry(priority, self._seq, submission))
 
@@ -336,6 +382,7 @@ class ExecutionEngine:
             self.orders_cancelled += 1
             self._finalise(tracker)
             await self._dispatch(result)
+            self._update_active_order_metric()
             return
 
         if tracker.exchange_order_id is None:
@@ -343,24 +390,46 @@ class ExecutionEngine:
             self.orders_cancelled += 1
             self._finalise(tracker)
             await self._dispatch(result)
+            self._update_active_order_metric()
             return
 
-        try:
-            confirmed = await self._client.cancel_order(
-                tracker.exchange_order_id,
-                tracker.submission.market_id,
-            )
-        except Exception as exc:
-            logger.warning("Cancel failed for %s: %s", proposal_id[:8], exc)
-            return
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                confirmed = await self._client.cancel_order(
+                    tracker.exchange_order_id,
+                    tracker.submission.market_id,
+                )
 
-        if confirmed:
-            result = tracker.record_cancellation()
-            self.orders_cancelled += 1
-            self._finalise(tracker)
-            await self._dispatch(result)
-        else:
-            await self._poll_one(tracker)
+                if confirmed:
+                    result = tracker.record_cancellation()
+                    self.orders_cancelled += 1
+                    self._finalise(tracker)
+                    await self._dispatch(result)
+                    self._update_active_order_metric()
+                    return
+
+            except Exception as exc:
+                logger.warning("Cancel attempt %d failed for %s: %s", attempt + 1, proposal_id[:8], exc)
+
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                else:
+                    # All retries exhausted — mark as cancelled to prevent orphaned tracking
+                    logger.warning("All cancellation attempts failed for %s, marking as cancelled", proposal_id[:8])
+                    result = tracker.record_cancellation()
+                    self.orders_cancelled += 1
+                    self._finalise(tracker)
+                    await self._dispatch(result)
+                    self._update_active_order_metric()
+                    return
+
+        # Fallback: if loop completes without returning, mark cancelled
+        result = tracker.record_cancellation()
+        self.orders_cancelled += 1
+        self._finalise(tracker)
+        await self._dispatch(result)
+        self._update_active_order_metric()
 
     def add_result_callback(self, cb: _ResultCB) -> None:
         self._callbacks.append(cb)
@@ -377,9 +446,7 @@ class ExecutionEngine:
     async def _submit_worker(self, worker_id: int) -> None:
         while not self._stopped:
             try:
-                entry: _QueueEntry = await asyncio.wait_for(
-                    self._queue.get(), timeout=1.0
-                )
+                entry: _QueueEntry = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -391,16 +458,30 @@ class ExecutionEngine:
                 continue
 
             async with self._semaphore:
-                await self._execute_submission(tracker)
+                try:
+                    await self._execute_submission(tracker)
+                except Exception as exc:
+                    logger.error(
+                        "Submit worker failed for %s: %s",
+                        entry.submission.proposal_id[:8], exc, exc_info=True,
+                    )
+                    tracker = self._trackers.get(entry.submission.proposal_id)
+                    if tracker is not None and not tracker.status.is_terminal:
+                        result = tracker.record_timeout()
+                        self.orders_timed_out += 1
+                        self._finalise(tracker)
+                        await self._dispatch(result)
+                        self._update_active_order_metric()
             self._queue.task_done()
 
     async def _execute_submission(self, tracker: OrderTracker) -> None:
         submission = tracker.submission
-        now        = _now_ms()
+        now = self._clock.now_ms()
 
         if tracker.is_expired(now):
             result = tracker.record_expiry()
             self.orders_expired += 1
+            self._finalise(tracker)
             await self._dispatch(result)
             return
 
@@ -422,13 +503,17 @@ class ExecutionEngine:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self._consecutive_errors += 1
                 if attempt < MAX_SUBMIT_ATTEMPTS - 1:
                     self.submit_retries += 1
-                    delay = self.submit_base_delay_s * (2 ** attempt)
+                    delay = self.submit_base_delay_s * (2**attempt)
                     logger.warning(
                         "Submit attempt %d/%d failed for %s: %s — retry in %.1fs",
-                        attempt + 1, MAX_SUBMIT_ATTEMPTS,
-                        submission.proposal_id[:8], exc, delay,
+                        attempt + 1,
+                        MAX_SUBMIT_ATTEMPTS,
+                        submission.proposal_id[:8],
+                        exc,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                 else:
@@ -437,19 +522,29 @@ class ExecutionEngine:
                     self.orders_timed_out += 1
                     self._finalise(tracker)
                     await self._dispatch(result)
-                    return
-        else:
-            return
+                    if self._alert_router:
+                        from infrastructure.alerting import Alert, AlertSeverity
 
+                        alert = Alert(
+                            severity=AlertSeverity.WARNING,
+                            title="Order Submission Failed",
+                            message=f"Failed to submit order after {MAX_SUBMIT_ATTEMPTS} attempts",
+                            source="ExecutionEngine",
+                            metadata={"proposal_id": submission.proposal_id},
+                        )
+                        asyncio.create_task(self._alert_router.send(alert))
+                    return
         # Register ACK
         submit_result = tracker.record_submission(placed.exchange_order_id)
+        self._open_ids.add(submission.proposal_id)
         self._exch_to_proposal[placed.exchange_order_id] = submission.proposal_id
-        
+
         if self._store:
             # Step 6: Update with exchange_order_id
             self._store.update_order_exchange_id(submission.proposal_id, placed.exchange_order_id)
 
         self.orders_submitted += 1
+        self._consecutive_errors = 0  # Reset on success
         await self._dispatch(submit_result)
 
         if placed.tx_hash:
@@ -459,13 +554,13 @@ class ExecutionEngine:
         for fill in placed.fills:
             if tracker.status.is_terminal:
                 break
-            result = tracker.record_fill(
-                fill.fill_usdc, fill.fill_price, fill.fill_tokens, fill.ts
-            )
-            FILLS_TOTAL.labels(platform=self._client.platform.value, strategy=tracker.submission.strategy_id.value).inc()
+            result = tracker.record_fill(fill.fill_usdc, fill.fill_price, fill.fill_tokens, fill.ts)
+            FILLS_TOTAL.labels(
+                platform=self._client.platform.value, strategy=tracker.submission.strategy_id.value
+            ).inc()
             FILL_USDC_TOTAL.labels(platform=self._client.platform.value).inc(fill.fill_usdc)
             ORDER_LATENCY.labels(platform=self._client.platform.value).observe(result.latency_ms / 1000.0)
-            
+
             self.total_filled_usdc += fill.fill_usdc
             if result.status == OrderStatus.FILLED:
                 self.orders_filled += 1
@@ -475,14 +570,35 @@ class ExecutionEngine:
 
         if tracker.status == TrackerStatus.FILLED:
             self._finalise(tracker)
+        self._update_active_order_metric()
 
     # ── Poll worker ───────────────────────────────────────────────────────────
 
     async def _poll_worker(self) -> None:
         while not self._stopped:
-            now  = _now_ms()
-            live = [t for t in self._trackers.values() if t.status.is_open]
-            
+            now = self._clock.now_ms()
+
+            if not self._open_ids:
+                try:
+                    await asyncio.sleep(self.poll_normal_s)
+                except asyncio.CancelledError:
+                    return
+                continue
+
+            live = []
+            any_urgent = False
+            for pid in list(self._open_ids):
+                tracker = self._trackers.get(pid)
+                if tracker is None:
+                    self._open_ids.discard(pid)
+                    continue
+                if not tracker.status.is_open:
+                    self._open_ids.discard(pid)
+                    continue
+                live.append(tracker)
+                if tracker.needs_fast_poll(now):
+                    any_urgent = True
+
             if not live:
                 try:
                     await asyncio.sleep(self.poll_normal_s)
@@ -490,9 +606,8 @@ class ExecutionEngine:
                     return
                 continue
 
-            any_urgent = any(t.needs_fast_poll(now) for t in live)
             interval = self.poll_fast_s if any_urgent else self.poll_normal_s
-            
+
             try:
                 await asyncio.sleep(interval)
             except asyncio.CancelledError:
@@ -506,13 +621,13 @@ class ExecutionEngine:
                     continue
                 had_fill = await self._poll_one(tracker)
                 if had_fill and not tracker.status.is_terminal:
-                    await asyncio.sleep(0.1)    # burst: re-poll quickly
+                    await asyncio.sleep(0.1)  # burst: re-poll quickly
                     await self._poll_one(tracker)
 
     async def _poll_one(self, tracker: OrderTracker) -> bool:
         if tracker.exchange_order_id is None:
             return False
-        tracker.last_poll_at = _now_ms()
+        tracker.last_poll_at = self._clock.now_ms()
 
         try:
             resp = await self._client.get_order_status(
@@ -522,8 +637,11 @@ class ExecutionEngine:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.debug("Poll error for %s: %s", tracker.proposal_id[:8], exc)
+            self._consecutive_errors += 1
+            logger.warning("Poll error for %s: %s", tracker.proposal_id[:8], exc)
             return False
+
+        self._consecutive_errors = 0  # Reset on success
 
         if resp.tx_hash and not tracker.tx_hash:
             tracker.tx_hash = resp.tx_hash
@@ -533,13 +651,15 @@ class ExecutionEngine:
         for fill in resp.new_fills:
             if tracker.status.is_terminal:
                 break
-            result = tracker.record_fill(
-                fill.fill_usdc, fill.fill_price, fill.fill_tokens, fill.ts
-            )
-            FILLS_TOTAL.labels(platform=self._client.platform.value, strategy=tracker.submission.strategy_id.value).inc()
+            result = tracker.record_fill(fill.fill_usdc, fill.fill_price, fill.fill_tokens, fill.ts)
+            if result.filled_size_usdc <= 0:
+                continue
+            FILLS_TOTAL.labels(
+                platform=self._client.platform.value, strategy=tracker.submission.strategy_id.value
+            ).inc()
             FILL_USDC_TOTAL.labels(platform=self._client.platform.value).inc(fill.fill_usdc)
             ORDER_LATENCY.labels(platform=self._client.platform.value).observe(result.latency_ms / 1000.0)
-            
+
             self.total_filled_usdc += fill.fill_usdc
             if result.status == OrderStatus.FILLED:
                 self.orders_filled += 1
@@ -551,15 +671,19 @@ class ExecutionEngine:
         if not tracker.status.is_terminal:
             if resp.is_filled and not had_fill:
                 remaining = tracker.remaining_usdc
-                if remaining > DUST_FLOOR_USDC_LOCAL:
+                if remaining > 0:
+                    dust_price = tracker.weighted_avg_price or tracker.submission.limit_price
                     result = tracker.record_fill(
                         remaining,
-                        tracker.submission.limit_price,
+                        dust_price,
                         tracker.remaining_tokens,
-                        _now_ms(),
+                        self._clock.now_ms(),
                     )
                     self.total_filled_usdc += remaining
-                    self.orders_filled += 1
+                    if result.status == OrderStatus.FILLED:
+                        self.orders_filled += 1
+                    else:
+                        self.orders_partial += 1
                     await self._dispatch(result)
                     had_fill = True
             elif resp.is_cancelled and not tracker.status.is_terminal:
@@ -569,41 +693,89 @@ class ExecutionEngine:
 
         if tracker.status.is_terminal:
             self._finalise(tracker)
+        self._update_active_order_metric()
         return had_fill
 
     # ── Expiry worker ─────────────────────────────────────────────────────────
 
+    async def _expiry_check(self) -> None:
+        now = self._clock.now_ms()
+        for tracker in list(self._trackers.values()):
+            if tracker.status.is_terminal or not tracker.is_expired(now):
+                continue
+            logger.info(
+                "Order expired: %s (filled=%.2f/%.2f USDC)",
+                tracker.proposal_id[:8],
+                tracker.cumulative_filled_usdc,
+                tracker.submission.size_usdc,
+            )
+            if tracker.exchange_order_id:
+                try:
+                    await self._client.cancel_order(
+                        tracker.exchange_order_id,
+                        tracker.submission.market_id,
+                    )
+                except Exception as exc:
+                    logger.warning("Expiry cancel failed: %s", exc)
+            result = tracker.record_expiry()
+            self.orders_expired += 1
+            self._finalise(tracker)
+            await self._dispatch(result)
+            self._update_active_order_metric()
+
     async def _expiry_worker(self) -> None:
         while not self._stopped:
+            now = self._clock.now_ms()
+
+            # Find next expiry to check
+            earliest_expiry = None
+            for pid in list(self._open_ids):
+                tracker = self._trackers.get(pid)
+                if tracker is None or not tracker.status.is_open:
+                    self._open_ids.discard(pid)
+                    continue
+                if tracker.submission.expiry_ms > now:
+                    if earliest_expiry is None or tracker.submission.expiry_ms < earliest_expiry:
+                        earliest_expiry = tracker.submission.expiry_ms
+
+            # Sleep until 1 second before expiry, then check (or max 5 seconds)
+            if earliest_expiry is not None and earliest_expiry > now:
+                sleep_time = max(0.5, min((earliest_expiry - now - 1000) / 1000.0, 5.0))
+            else:
+                sleep_time = self.expiry_check_s
+
             try:
-                await asyncio.sleep(self.expiry_check_s)
+                await asyncio.sleep(sleep_time)
             except asyncio.CancelledError:
                 return
 
-            now = _now_ms()
-            for tracker in list(self._trackers.values()):
-                if tracker.status.is_terminal or not tracker.is_expired(now):
-                    continue
-                logger.info(
-                    "Order expired: %s (filled=%.2f/%.2f USDC)",
-                    tracker.proposal_id[:8],
-                    tracker.cumulative_filled_usdc,
-                    tracker.submission.size_usdc,
-                )
-                if tracker.exchange_order_id:
-                    try:
-                        await self._client.cancel_order(
-                            tracker.exchange_order_id,
-                            tracker.submission.market_id,
-                        )
-                    except Exception as exc:
-                        logger.warning("Expiry cancel failed: %s", exc)
-                result = tracker.record_expiry()
-                self.orders_expired += 1
-                self._finalise(tracker)
-                await self._dispatch(result)
+            # Check for expired orders
+            await self._expiry_check()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    async def _prune_worker(self) -> None:
+        while not self._stopped:
+            try:
+                await asyncio.sleep(300)
+            except asyncio.CancelledError:
+                return
+            self._prune_terminal_trackers()
+
+    def _prune_terminal_trackers(self) -> int:
+        cutoff = self._clock.now_ms() - self._tracker_retention_ms
+        stale = [
+            pid
+            for pid, tracker in self._trackers.items()
+            if tracker.status.is_terminal and tracker.terminal_at is not None and tracker.terminal_at < cutoff
+        ]
+        for pid in stale:
+            tracker = self._trackers.pop(pid, None)
+            if tracker and tracker.exchange_order_id:
+                self._exch_to_proposal.pop(tracker.exchange_order_id, None)
+        if stale:
+            logger.debug("Pruned %d terminal trackers", len(stale))
+        return len(stale)
 
     def _effective_price(self, submission: OrderSubmission, now: int) -> float:
         """
@@ -638,15 +810,15 @@ class ExecutionEngine:
             return max(aggressive, submission.limit_price)
 
     def _finalise(self, tracker: OrderTracker) -> None:
+        self._open_ids.discard(tracker.proposal_id)
         if tracker.exchange_order_id:
             self._exch_to_proposal.pop(tracker.exchange_order_id, None)
-        # Remove terminal tracker to prevent unbounded memory growth
-        self._trackers.pop(tracker.proposal_id, None)
-        
         if self._store:
-            # Step 6: Remove from active orders in DB
             self._store.remove_order(tracker.proposal_id)
+        self._update_active_order_metric()
 
+    def _update_active_order_metric(self) -> None:
+        ACTIVE_ORDERS_COUNT.labels(platform=self._client.platform.value).set(self.live_order_count)
 
     async def _dispatch(self, result: ExecutionResult) -> None:
         for cb in self._callbacks:
@@ -657,7 +829,3 @@ class ExecutionEngine:
 
 
 DUST_FLOOR_USDC_LOCAL: float = 0.001
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

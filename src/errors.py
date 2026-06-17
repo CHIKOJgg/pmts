@@ -11,7 +11,7 @@ class PMTSError(Exception):
         self.message = message
         self.context = context
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {"code": self.code, "message": self.message, **self.context}
 
 

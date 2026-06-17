@@ -1,15 +1,16 @@
 # Operational Runbooks
 
-This directory contains standard operating procedures for the Polymarket-Arbitrage trading system.
+Owner: Release Manager
 
-## 🟢 Regular Operations
-- [Startup Checklist](startup.md)
-- [Graceful Shutdown Procedure](shutdown.md)
+## Regular Operations
+- [Startup Runbook](startup.md)
+- [Shutdown Runbook](shutdown.md)
 
-## 🔴 Emergency Procedures
-- [Kill Switch Activation & Reset](kill_switch.md)
-- [Exchange Outage Response](exchange_outage.md)
+## Emergency Procedures
+- [Kill Switch Runbook](kill_switch.md)
+- [Exchange Outage Runbook](exchange_outage.md)
 
-## 🛠️ Maintenance & Troubleshooting
-- [Reconciliation Mismatch Handling](reconciliation.md)
-- [Incident Escalation Path](escalation.md)
+## Maintenance and Recovery
+- [Reconciliation Runbook](reconciliation.md)
+- [Escalation Runbook](escalation.md)
+- [Go-Live Plan](go-live.md)

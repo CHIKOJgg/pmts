@@ -6,12 +6,11 @@ Provides model_copy() and model_dump() for API compatibility.
 """
 from __future__ import annotations
 
-import dataclasses
 import math
-from dataclasses import dataclass, field, fields, asdict
-from typing import List, Optional
+from dataclasses import dataclass, asdict, field
+from typing import Any, Dict, List, Optional
 
-from src.types import EpochMs, OFI, Platform, ProbPrice
+from src.enums import Platform
 from src.errors import CrossedBookError
 
 
@@ -19,7 +18,7 @@ from src.errors import CrossedBookError
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _model_copy(instance, update: dict = None):
+def _model_copy(instance: Any, update: Optional[dict[str, Any]] = None) -> Any:
     """Return a new instance with updated fields (mirroring pydantic's API)."""
     d = asdict(instance)
     if update:
@@ -27,7 +26,7 @@ def _model_copy(instance, update: dict = None):
     return instance.__class__(**d)
 
 
-def _model_dump(instance) -> dict:
+def _model_dump(instance: Any) -> dict[str, Any]:
     """Return a plain dict (mirroring pydantic's API)."""
     return asdict(instance)
 
@@ -53,11 +52,18 @@ class MarketSnapshot:
     is_stale:       bool = False
     days_to_resolution: Optional[float] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.yes_bid >= self.yes_ask:
             raise CrossedBookError(
                 f"Crossed YES book on {self.market_id}: "
                 f"bid={self.yes_bid} >= ask={self.yes_ask}",
+                market_id=self.market_id,
+                platform=self.platform.value,
+            )
+        if self.no_bid >= self.no_ask:
+            raise CrossedBookError(
+                f"Crossed NO book on {self.market_id}: "
+                f"bid={self.no_bid} >= ask={self.no_ask}",
                 market_id=self.market_id,
                 platform=self.platform.value,
             )
@@ -86,11 +92,28 @@ class MarketSnapshot:
 
     # ── Pydantic-compatible helpers ──────────────────────────────────────────
 
-    def model_copy(self, update: dict = None) -> "MarketSnapshot":
-        return _model_copy(self, update)
+    def model_copy(self, update: Optional[dict[str, Any]] = None) -> "MarketSnapshot":
+        d = asdict(self)
+        if update:
+            d.update(update)
+        return self.__class__(**d)
 
-    def model_dump(self) -> dict:
-        return _model_dump(self)
+    def model_dump(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VenueSnapshot — per-venue derived data inside FeatureVector
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class VenueSnapshot:
+    """Derived per-venue snapshot inside FeatureVector.venues."""
+    mid:        float
+    spread:     float
+    ofi:        float
+    bid_depth:  float
+    ask_depth:  float
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,15 +131,8 @@ class FeatureVector:
     arb_signal:      float
     stale_markets:   List[Platform]  # populated when arb_signal is NaN
 
-    # Per-venue mid & spread
-    mid_pm:    float
-    mid_op:    float
-    spread_pm: float
-    spread_op: float
-
-    # Order-flow imbalance [-1, 1]
-    ofi_pm:    float
-    ofi_op:    float
+    # Per-venue derived snapshots (keyed by Platform)
+    venues:          Dict[Platform, VenueSnapshot]
 
     # Volatility (None during warm-up)
     vol_30s:   Optional[float]
@@ -127,23 +143,41 @@ class FeatureVector:
     # Portfolio context
     portfolio_delta: float
 
-    # Book depth
-    bid_depth_pm: float
-    ask_depth_pm: float
-    bid_depth_op: float
-    ask_depth_op: float
+    # Volatility regime (None during warm-up)
+    vol_regime: Optional[str] = None
 
-    def __post_init__(self):
-        if math.isnan(self.arb_signal) and not self.stale_markets:
+    # Cross-market correlation (market_id → correlation, empty dict when unavailable)
+    correlations: dict[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        venues = self.venues
+        if venues:
+            converted = {}
+            for k, v in venues.items():
+                key = Platform(k) if isinstance(k, str) else k
+                val = VenueSnapshot(**v) if isinstance(v, dict) else v
+                converted[key] = val
+            object.__setattr__(self, 'venues', converted)
+        arb = self.arb_signal
+        if arb is None or not isinstance(arb, (int, float)):
+            raise ValueError(f"arb_signal must be a number, got {type(arb).__name__}")
+        if math.isnan(arb) and not self.stale_markets:
             raise ValueError("stale_markets must be non-empty when arb_signal is NaN")
-        if not math.isnan(self.arb_signal) and self.stale_markets:
+        if not math.isnan(arb) and self.stale_markets:
             raise ValueError("stale_markets must be empty when arb_signal is a valid number")
 
     @property
     def arb_tradeable(self) -> bool:
         return not math.isnan(self.arb_signal) and self.arb_signal > 0.0
 
-    def model_dump(self) -> dict:
-        d = _model_dump(self)
+    def model_copy(self, update: Optional[dict[str, Any]] = None) -> "FeatureVector":
+        d = asdict(self)
+        if update:
+            d.update(update)
+        return self.__class__(**d)
+
+    def model_dump(self) -> dict[str, Any]:
+        d = asdict(self)
         d["stale_markets"] = [p.value for p in self.stale_markets]
+        d["venues"] = {p.value: dict(v) for p, v in d["venues"].items()}
         return d

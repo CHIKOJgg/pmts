@@ -1,0 +1,194 @@
+{
+  "AI-IPO-2026": {
+    "opinion": "op_ai_ipo_2026",
+    "opinion_question": "AI IPO 2026",
+    "pair_score": "1.000",
+    "polymarket": "pm_ai_ipo_2026",
+    "polymarket_question": "AI IPO 2026",
+    "question": "AI IPO 2026"
+  },
+  "BTC-ETF-APPROVAL": {
+    "opinion": "op_btc_etf_approval",
+    "opinion_question": "BTC ETF APPROVAL",
+    "pair_score": "1.000",
+    "polymarket": "pm_btc_etf_approval",
+    "polymarket_question": "BTC ETF APPROVAL",
+    "question": "BTC ETF APPROVAL"
+  },
+  "BTC-Q4": {
+    "opinion": "op_btc_q4",
+    "opinion_question": "BTC Q4",
+    "pair_score": "1.000",
+    "polymarket": "pm_btc_q4",
+    "polymarket_question": "BTC Q4",
+    "question": "BTC Q4"
+  },
+  "CRYPTO-2026-1": {
+    "opinion": "op_crypto_2026_1",
+    "opinion_question": "CRYPTO 2026 1",
+    "pair_score": "1.000",
+    "polymarket": "pm_crypto_2026_1",
+    "polymarket_question": "CRYPTO 2026 1",
+    "question": "CRYPTO 2026 1"
+  },
+  "CRYPTO-2026-2": {
+    "opinion": "op_crypto_2026_2",
+    "opinion_question": "CRYPTO 2026 2",
+    "pair_score": "1.000",
+    "polymarket": "pm_crypto_2026_2",
+    "polymarket_question": "CRYPTO 2026 2",
+    "question": "CRYPTO 2026 2"
+  },
+  "ETH-ETF-FLOW": {
+    "opinion": "op_eth_etf_flow",
+    "opinion_question": "ETH ETF FLOW",
+    "pair_score": "1.000",
+    "polymarket": "pm_eth_etf_flow",
+    "polymarket_question": "ETH ETF FLOW",
+    "question": "ETH ETF FLOW"
+  },
+  "ETH-Q1": {
+    "opinion": "op_eth_q1",
+    "opinion_question": "ETH Q1",
+    "pair_score": "1.000",
+    "polymarket": "pm_eth_q1",
+    "polymarket_question": "ETH Q1",
+    "question": "ETH Q1"
+  },
+  "EU-CPI-2026": {
+    "opinion": "op_eu_cpi_2026",
+    "opinion_question": "EU CPI 2026",
+    "pair_score": "1.000",
+    "polymarket": "pm_eu_cpi_2026",
+    "polymarket_question": "EU CPI 2026",
+    "question": "EU CPI 2026"
+  },
+  "FED-CUT-SEP": {
+    "opinion": "op_fed_cut_sep",
+    "opinion_question": "FED CUT SEP",
+    "pair_score": "1.000",
+    "polymarket": "pm_fed_cut_sep",
+    "polymarket_question": "FED CUT SEP",
+    "question": "FED CUT SEP"
+  },
+  "GOLD-2500": {
+    "opinion": "op_gold_2500",
+    "opinion_question": "GOLD 2500",
+    "pair_score": "1.000",
+    "polymarket": "pm_gold_2500",
+    "polymarket_question": "GOLD 2500",
+    "question": "GOLD 2500"
+  },
+  "MSTR-2026": {
+    "opinion": "op_mstr_2026",
+    "opinion_question": "MSTR 2026",
+    "pair_score": "1.000",
+    "polymarket": "pm_mstr_2026",
+    "polymarket_question": "MSTR 2026",
+    "question": "MSTR 2026"
+  },
+  "NASDAQ-2026": {
+    "opinion": "op_nasdaq_2026",
+    "opinion_question": "NASDAQ 2026",
+    "pair_score": "1.000",
+    "polymarket": "pm_nasdaq_2026",
+    "polymarket_question": "NASDAQ 2026",
+    "question": "NASDAQ 2026"
+  },
+  "NVDA-2026": {
+    "opinion": "op_nvda_2026",
+    "opinion_question": "NVDA 2026",
+    "pair_score": "1.000",
+    "polymarket": "pm_nvda_2026",
+    "polymarket_question": "NVDA 2026",
+    "question": "NVDA 2026"
+  },
+  "OIL-120": {
+    "opinion": "op_oil_120",
+    "opinion_question": "OIL 120",
+    "pair_score": "1.000",
+    "polymarket": "pm_oil_120",
+    "polymarket_question": "OIL 120",
+    "question": "OIL 120"
+  },
+  "POLITICS-2026-1": {
+    "opinion": "op_politics_2026_1",
+    "opinion_question": "POLITICS 2026 1",
+    "pair_score": "1.000",
+    "polymarket": "pm_politics_2026_1",
+    "polymarket_question": "POLITICS 2026 1",
+    "question": "POLITICS 2026 1"
+  },
+  "POLITICS-2026-2": {
+    "opinion": "op_politics_2026_2",
+    "opinion_question": "POLITICS 2026 2",
+    "pair_score": "1.000",
+    "polymarket": "pm_politics_2026_2",
+    "polymarket_question": "POLITICS 2026 2",
+    "question": "POLITICS 2026 2"
+  },
+  "SOL-Q2": {
+    "opinion": "op_sol_q2",
+    "opinion_question": "SOL Q2",
+    "pair_score": "1.000",
+    "polymarket": "pm_sol_q2",
+    "polymarket_question": "SOL Q2",
+    "question": "SOL Q2"
+  },
+  "SP500-YEAR-END": {
+    "opinion": "op_sp500_year_end",
+    "opinion_question": "SP500 YEAR END",
+    "pair_score": "1.000",
+    "polymarket": "pm_sp500_year_end",
+    "polymarket_question": "SP500 YEAR END",
+    "question": "SP500 YEAR END"
+  },
+  "SPORTS-2026-1": {
+    "opinion": "op_sports_2026_1",
+    "opinion_question": "SPORTS 2026 1",
+    "pair_score": "1.000",
+    "polymarket": "pm_sports_2026_1",
+    "polymarket_question": "SPORTS 2026 1",
+    "question": "SPORTS 2026 1"
+  },
+  "SPORTS-2026-2": {
+    "opinion": "op_sports_2026_2",
+    "opinion_question": "SPORTS 2026 2",
+    "pair_score": "1.000",
+    "polymarket": "pm_sports_2026_2",
+    "polymarket_question": "SPORTS 2026 2",
+    "question": "SPORTS 2026 2"
+  },
+  "TSLA-2026": {
+    "opinion": "op_tsla_2026",
+    "opinion_question": "TSLA 2026",
+    "pair_score": "1.000",
+    "polymarket": "pm_tsla_2026",
+    "polymarket_question": "TSLA 2026",
+    "question": "TSLA 2026"
+  },
+  "US-RECESSION-2026": {
+    "opinion": "op_us_recession_2026",
+    "opinion_question": "US RECESSION 2026",
+    "pair_score": "1.000",
+    "polymarket": "pm_us_recession_2026",
+    "polymarket_question": "US RECESSION 2026",
+    "question": "US RECESSION 2026"
+  },
+  "WORLD-2026-1": {
+    "opinion": "op_world_2026_1",
+    "opinion_question": "WORLD 2026 1",
+    "pair_score": "1.000",
+    "polymarket": "pm_world_2026_1",
+    "polymarket_question": "WORLD 2026 1",
+    "question": "WORLD 2026 1"
+  },
+  "WORLD-2026-2": {
+    "opinion": "op_world_2026_2",
+    "opinion_question": "WORLD 2026 2",
+    "pair_score": "1.000",
+    "polymarket": "pm_world_2026_2",
+    "polymarket_question": "WORLD 2026 2",
+    "question": "WORLD 2026 2"
+  }
+}

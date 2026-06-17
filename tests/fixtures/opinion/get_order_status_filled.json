@@ -1,0 +1,14 @@
+{
+  "orderId": "op-order-123",
+  "status": "filled",
+  "remainingAmount": 0,
+  "filledAmount": 100,
+  "filledPrice": 0.60,
+  "fills": [
+    {
+      "amount": 100,
+      "price": 0.60,
+      "timestamp": 1700000000000
+    }
+  ]
+}
