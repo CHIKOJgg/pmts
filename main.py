@@ -129,6 +129,7 @@ async def run_live() -> None:
     from infrastructure.circuit_breaker import CircuitBreakerExchangeWrapper
     from infrastructure.observability import HealthMonitor, ObservabilityServer
     from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
+    from portfolio.analytics import PortfolioAnalytics
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
     from portfolio.storage_postgres import PostgresPortfolioStore
@@ -137,7 +138,6 @@ async def run_live() -> None:
     from risk.limits import RiskLimits
     from strategies.arbitrage import ArbConfig
     from strategies.delta_neutral import DeltaNeutralConfig
-    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
 
     settings = get_settings()
     settings.validate(mode="live")
@@ -362,7 +362,7 @@ async def run_live() -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, handle_sig)
-    except Exception:
+    except NotImplementedError:
         pass
 
     # START
@@ -401,7 +401,10 @@ async def run_live() -> None:
     await pm_client.close()
     await op_client.close()
     await alert_router.close()
-    store.close()
+    if asyncio.iscoroutinefunction(store.close):
+        await store.close()
+    else:
+        store.close()
     logger.info("Shutdown complete.")
 
 
@@ -419,6 +422,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
+    from portfolio.storage_postgres import PostgresPortfolioStore
     from risk.engine import RiskEngine
     from risk.kill_switch import KillSwitch
     from risk.limits import RiskLimits
@@ -673,7 +677,10 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     await pm_client.close()
     await op_client.close()
     await alert_router.close()
-    store.close()
+    if asyncio.iscoroutinefunction(store.close):
+        await store.close()
+    else:
+        store.close()
     logger.info("Paper trading shutdown complete.")
 
 
@@ -689,6 +696,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
+    from portfolio.storage_postgres import PostgresPortfolioStore
     from risk.engine import RiskEngine
     from risk.kill_switch import KillSwitch
     from risk.limits import RiskLimits
@@ -879,7 +887,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, handle_sig)
-    except Exception:
+    except NotImplementedError:
         pass
 
     await obs_server.start()
@@ -912,7 +920,10 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     await pm_client.close()
     await op_client.close()
     await alert_router.close()
-    store.close()
+    if asyncio.iscoroutinefunction(store.close):
+        await store.close()
+    else:
+        store.close()
     logger.info("Offline paper trading shutdown complete.")
 
 

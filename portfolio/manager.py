@@ -393,10 +393,15 @@ class PortfolioManager:
                     pos_to_save,
                 )
 
-    # ── Capital reservation (called synchronously by RiskEngine) ─────────────
+    # ── Capital reservation ──────────────────────────────────────────────────
 
     async def reserve_capital(self, amount: float) -> None:
         async with self._lock:
+            self._reserved_usdc += amount
+
+    def reserve_capital_sync(self, amount: float) -> None:
+        """Synchronous variant for RiskEngine.evaluate() which runs on the event loop thread."""
+        with self._sync_lock:
             self._reserved_usdc += amount
 
     async def release_capital(self, amount: float) -> None:
@@ -444,8 +449,9 @@ class PortfolioManager:
                 yes_mid, no_mid = prices
                 total_pos += yes_qty * yes_mid + no_qty * no_mid
         equity = cash + total_pos
+        total_realised = sum(p.realised_pnl for p in self._positions.values()) + closed_pnl
         PORTFOLIO_MTM_USDC.set(equity)
-        PORTFOLIO_REALISED_PNL_USDC.set(closed_pnl)
+        PORTFOLIO_REALISED_PNL_USDC.set(total_realised)
         CAPITAL_UTILIZATION.set((reserved / equity) if equity > 0 else 0.0)
         return PortfolioMTM(
             total_cash_usdc=cash,
@@ -525,9 +531,14 @@ class PortfolioManager:
     # ── Snapshot ─────────────────────────────────────────────────────────────
 
     def build_snapshot(self) -> Dict[str, Any]:
+        with self._sync_lock:
+            cash = self._cash_usdc
+            peak = self._peak_equity
+            closed_pnl = self._closed_pnl
+            snap_items = list(self._positions.items())
         entries = []
         total_pos = 0.0
-        for (mid, plat), pos in self._positions.items():
+        for (mid, plat), pos in snap_items:
             prices = self._price_source(mid, plat)
             if not prices:
                 continue
@@ -545,10 +556,9 @@ class PortfolioManager:
                 }
             )
 
-        total_mtm = self._cash_usdc + total_pos
-        peak = self._peak_equity
+        total_mtm = cash + total_pos
         drawdown = max(0.0, (peak - total_mtm) / peak) if peak > 0 else 0.0
-        total_real = sum(p.realised_pnl for p in self._positions.values()) + self._closed_pnl
+        total_real = sum(p.realised_pnl for _, p in snap_items) + closed_pnl
         PORTFOLIO_MTM_USDC.set(total_mtm)
         PORTFOLIO_REALISED_PNL_USDC.set(total_real)
         return {

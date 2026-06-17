@@ -98,7 +98,7 @@ class TestPolymarketWSAdapter:
     @pytest.mark.asyncio
     async def test_start_creates_task(self) -> None:
         adapter = PolymarketWSAdapter(asset_ids=["mkt-1"])
-        with patch.object(adapter, "_run_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(adapter, "_run_loop", new_callable=AsyncMock):
             await adapter.start()
             assert adapter._running is True
             assert adapter._task is not None
@@ -107,7 +107,7 @@ class TestPolymarketWSAdapter:
     @pytest.mark.asyncio
     async def test_stop_cancels_task(self) -> None:
         adapter = PolymarketWSAdapter(asset_ids=["mkt-1"])
-        with patch.object(adapter, "_run_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(adapter, "_run_loop", new_callable=AsyncMock):
             await adapter.start()
             await adapter.stop()
             assert adapter._running is False
@@ -115,7 +115,7 @@ class TestPolymarketWSAdapter:
     @pytest.mark.asyncio
     async def test_start_idempotent(self) -> None:
         adapter = PolymarketWSAdapter(asset_ids=["mkt-1"])
-        with patch.object(adapter, "_run_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(adapter, "_run_loop", new_callable=AsyncMock):
             await adapter.start()
             task1 = adapter._task
             await adapter.start()
@@ -214,7 +214,7 @@ class TestOpinionWSAdapter:
     @pytest.mark.asyncio
     async def test_start_creates_task(self) -> None:
         adapter = OpinionWSAdapter(market_ids=["mkt-1"])
-        with patch.object(adapter, "_run_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(adapter, "_run_loop", new_callable=AsyncMock):
             await adapter.start()
             assert adapter._running is True
             assert adapter._task is not None
@@ -223,7 +223,7 @@ class TestOpinionWSAdapter:
     @pytest.mark.asyncio
     async def test_stop_cancels_task(self) -> None:
         adapter = OpinionWSAdapter(market_ids=["mkt-1"])
-        with patch.object(adapter, "_run_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(adapter, "_run_loop", new_callable=AsyncMock):
             await adapter.start()
             await adapter.stop()
             assert adapter._running is False
@@ -231,7 +231,7 @@ class TestOpinionWSAdapter:
     @pytest.mark.asyncio
     async def test_start_idempotent(self) -> None:
         adapter = OpinionWSAdapter(market_ids=["mkt-1"])
-        with patch.object(adapter, "_run_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(adapter, "_run_loop", new_callable=AsyncMock):
             await adapter.start()
             task1 = adapter._task
             await adapter.start()

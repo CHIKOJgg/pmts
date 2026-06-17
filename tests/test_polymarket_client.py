@@ -22,6 +22,7 @@ from tests.venue_fixtures import (
     _FakeSession,
     opinion_order_submission,
     polymarket_order_submission,
+    temp_dir_windows_safe,
 )
 
 
@@ -168,7 +169,9 @@ class TestPolymarketClientOrderSubmission:
 
     @pytest.fixture
     def polymarket_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "pm-order-123"})
+        return session
 
     @pytest.fixture
     def polymarket_order_submission(self):
@@ -197,6 +200,7 @@ class TestPolymarketClientOrderSubmission:
         self,
         polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        polymarket_order_submission,
     ) -> None:
         """Place order should POST correct payload to /order endpoint."""
         client = PolymarketClient(
@@ -213,7 +217,7 @@ class TestPolymarketClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: "signed-order")
 
-        submission = polymarket_order_submission()
+        submission = polymarket_order_submission
         result = await client.place_order(submission, 0.50)
 
         assert result.exchange_order_id == "pm-order-123"
@@ -229,6 +233,7 @@ class TestPolymarketClientOrderSubmission:
         self,
         polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        polymarket_order_submission,
     ) -> None:
         """Place order should include EIP-712 signature."""
         client = PolymarketClient(
@@ -246,7 +251,7 @@ class TestPolymarketClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: signature)
 
-        submission = polymarket_order_submission()
+        submission = polymarket_order_submission
         await client.place_order(submission, 0.50)
 
         # Verify signature is included in the request
@@ -258,6 +263,7 @@ class TestPolymarketClientOrderSubmission:
         self,
         polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        polymarket_order_submission,
     ) -> None:
         """Place order should accept custom nonce for idempotency."""
         client = PolymarketClient(
@@ -274,7 +280,7 @@ class TestPolymarketClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: "signed-order")
 
-        submission = polymarket_order_submission()
+        submission = polymarket_order_submission
         custom_nonce = 123456789
         result = await client.place_order(submission, 0.50, nonce=custom_nonce)
 
@@ -285,6 +291,7 @@ class TestPolymarketClientOrderSubmission:
         self,
         polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        polymarket_order_submission,
     ) -> None:
         """4xx responses should raise ExchangeRejected exception."""
         from src.errors import ExchangeRejected
@@ -308,7 +315,7 @@ class TestPolymarketClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: "signed-order")
 
-        submission = polymarket_order_submission()
+        submission = polymarket_order_submission
 
         with pytest.raises(ExchangeRejected):
             await client.place_order(submission, 0.50)
@@ -319,7 +326,9 @@ class TestPolymarketClientOrderCancellation:
 
     @pytest.fixture
     def polymarket_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "pm-order-123"})
+        return session
 
     @pytest.mark.asyncio
     async def test_cancel_order_returns_true(
@@ -412,7 +421,9 @@ class TestPolymarketClientOrderStatus:
 
     @pytest.fixture
     def polymarket_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "pm-order-123"})
+        return session
 
     @pytest.mark.asyncio
     async def test_get_order_status_parses_open(
@@ -545,7 +556,6 @@ class TestPolymarketClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders(
         self,
-        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return list of open orders."""
@@ -565,7 +575,7 @@ class TestPolymarketClientOpenOrders:
                     [
                         {
                             "orderID": "pm-1",
-                            "market_id": "mkt-1",
+                            "tokenId": "mkt-1",
                             "side": "BUY",
                             "originalSize": 100.0,
                             "remainingSize": 50.0,
@@ -590,7 +600,6 @@ class TestPolymarketClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders_empty(
         self,
-        polymarket_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return empty list when no orders."""
@@ -622,7 +631,9 @@ class TestPolymarketClientConnectivity:
 
     @pytest.fixture
     def polymarket_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "pm-order-123"})
+        return session
 
     @pytest.mark.asyncio
     async def test_verify_connectivity(

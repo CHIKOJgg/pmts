@@ -81,10 +81,13 @@ class OpinionWSAdapter:
                 async with websockets.connect(self._ws_url) as ws:
                     retry_delay = 1.0
 
-                    # Subscribe to tickers: ticker@marketId
                     params = [f"ticker@{mid}" for mid in self._market_ids]
                     sub_msg = {"method": "SUBSCRIBE", "params": params, "id": self._clock.now_ms()}
                     await ws.send(json.dumps(sub_msg))
+                    ack = await asyncio.wait_for(asyncio.ensure_future(ws.recv()), timeout=5.0)
+                    ack_data = json.loads(ack)
+                    if ack_data.get("result") is None:
+                        raise ConnectionError(f"Opinion WS subscribe rejected: {ack_data}")
                     logger.info("Subscribed to Opinion tickers: %s", params)
 
                     await self._process_messages(ws)
@@ -106,7 +109,6 @@ class OpinionWSAdapter:
                 retry_delay = min(retry_delay * 2, 60.0)
 
     async def _process_messages(self, ws: Any) -> None:
-        """Process WebSocket messages in a separate task."""
         try:
             async for message in ws:
                 if not self._running:
@@ -117,6 +119,7 @@ class OpinionWSAdapter:
         except Exception as exc:
             if self._running:
                 logger.error("Error processing Opinion WS messages: %s", exc)
+            raise
 
     async def _handle_message(self, message: Any) -> None:
         try:

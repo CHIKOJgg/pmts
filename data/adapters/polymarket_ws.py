@@ -81,10 +81,12 @@ class PolymarketWSAdapter:
                 async with websockets.connect(self._ws_url) as ws:
                     retry_delay = 1.0  # Reset delay on successful connection
 
-                    # Subscribe to all assets
-                    # Based on Polymarket CLOB docs: {"type": "subscribe", "assets_ids": [...]}
                     sub_msg = {"type": "subscribe", "assets_ids": self._asset_ids, "type_of_market": "clob"}
                     await ws.send(json.dumps(sub_msg))
+                    ack = await asyncio.wait_for(asyncio.ensure_future(ws.recv()), timeout=5.0)
+                    ack_data = json.loads(ack)
+                    if ack_data.get("type") == "error":
+                        raise ConnectionError(f"Polymarket WS subscribe rejected: {ack_data}")
                     logger.info("Subscribed to Polymarket assets: %s", self._asset_ids)
 
                     await self._process_messages(ws)
@@ -106,7 +108,6 @@ class PolymarketWSAdapter:
                 retry_delay = min(retry_delay * 2, 60.0)
 
     async def _process_messages(self, ws: Any) -> None:
-        """Process WebSocket messages in a separate task."""
         try:
             async for message in ws:
                 if not self._running:
@@ -117,6 +118,7 @@ class PolymarketWSAdapter:
         except Exception as exc:
             if self._running:
                 logger.error("Error processing Polymarket WS messages: %s", exc)
+            raise
 
     async def _handle_message(self, message: Any) -> None:
         try:

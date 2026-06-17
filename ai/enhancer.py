@@ -275,7 +275,8 @@ class AISignalEnhancer:
         if now - entry.created_at > ttl:
             del self._cache[fv.market_id]
             return None
-        curr = fv.arb_signal if not math.isnan(fv.arb_signal) else 0.0
+        arb_val = fv.arb_signal
+        curr = arb_val if isinstance(arb_val, (int, float)) and not math.isnan(arb_val) else 0.0
         if abs(curr - entry.arb_signal) > self._cfg.cache_invalidation_delta:
             del self._cache[fv.market_id]
             return None
@@ -287,7 +288,7 @@ class AISignalEnhancer:
         self._cache[fv.market_id] = _CacheEntry(
             context=ctx,
             created_at=self._clock.now_ms(),
-            arb_signal=fv.arb_signal if not math.isnan(fv.arb_signal) else 0.0,
+            arb_signal=float(fv.arb_signal) if isinstance(fv.arb_signal, (int, float)) and not math.isnan(fv.arb_signal) else 0.0,
         )
 
 
@@ -297,7 +298,8 @@ class AISignalEnhancer:
 
 
 def _build_prompt(fv: FeatureVector) -> str:
-    arb = f"{fv.arb_signal:.4f}" if not math.isnan(fv.arb_signal) else "N/A"
+    arb_signal_val = fv.arb_signal
+    arb = f"{arb_signal_val:.4f}" if isinstance(arb_signal_val, (int, float)) and not math.isnan(arb_signal_val) else "N/A"
     vol = f"{fv.vol_30s:.4f}" if fv.vol_30s is not None else "N/A"
     days = f"{fv.days_to_resolution:.1f}" if fv.days_to_resolution else "unknown"
     pm_v = fv.venues.get(Platform.POLYMARKET)

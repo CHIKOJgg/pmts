@@ -59,7 +59,7 @@ def _mkfv(
     market="BTC-Q4", arb_signal=0.20, stale=None,
     mid_pm=0.5, mid_op=0.5, spread=0.02, ofi=0.0,
     depth=1000.0, vol_30s=0.01, days=30.0, delta=0.0,
-) -> "FeatureVector":
+) -> "FeatureVector":  # noqa: F821
     from data.models import FeatureVector, VenueSnapshot
     from src.enums import Platform
     return FeatureVector(

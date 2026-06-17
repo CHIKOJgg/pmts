@@ -107,51 +107,62 @@ async def _run_strategy(
 
     while True:
         try:
-            message = message_queue.get(timeout=1.0)
-        except queue.Empty:
-            continue
+            try:
+                message = message_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
 
-        msg_type = message.get("type", "")
+            msg_type = message.get("type", "")
 
-        if msg_type == "shutdown":
-            break
+            if msg_type == "shutdown":
+                break
 
-        if msg_type == "market_data":
-            data = message.get("data", {})
-            snapshots = data.get("snapshots", [])
-            for snap_dict in snapshots:
-                snap = MarketSnapshot(**snap_dict)
-                correlation.update(snap.market_id, snap.yes_mid)
+            if msg_type == "market_data":
+                data = message.get("data", {})
+                snapshots = data.get("snapshots", [])
+                for snap_dict in snapshots:
+                    snap = MarketSnapshot(**snap_dict)
+                    correlation.update(snap.market_id, snap.yes_mid)
 
-            result = await _process_market_data(strategy_id, data, engine, correlation, proposals)
-            if result:
-                result_queue.put(result)
+                result = await _process_market_data(strategy_id, data, engine, correlation, proposals)
+                if result:
+                    result_queue.put(result)
 
-        elif msg_type == "feature_vector":
-            fv_dict = message.get("feature_vector", {})
-            from data.models import FeatureVector
-            fv = FeatureVector(**fv_dict)
-            mid_pm = fv.venues[Platform.POLYMARKET].mid if Platform.POLYMARKET in fv.venues else 0.5
-            mid_op = fv.venues[Platform.OPINION].mid if Platform.OPINION in fv.venues else 0.5
-            correlation.update(fv.market_id, (mid_pm + mid_op) / 2)
-            await engine.on_feature_vector(fv)
-            if proposals:
-                result_queue.put({
-                    "strategy_id": strategy_id,
-                    "type": "proposals",
-                    "proposals": list(proposals),
-                })
-                proposals.clear()
+            elif msg_type == "feature_vector":
+                fv_dict = message.get("feature_vector", {})
+                from data.models import FeatureVector
+                from data.models import VenueSnapshot
+                if "venues" in fv_dict:
+                    fv_dict["venues"] = {
+                        Platform(k) if isinstance(k, str) else k:
+                        VenueSnapshot(**v) if isinstance(v, dict) else v
+                        for k, v in fv_dict["venues"].items()
+                    }
+                fv = FeatureVector(**fv_dict)
+                mid_pm = fv.venues[Platform.POLYMARKET].mid if Platform.POLYMARKET in fv.venues else 0.5
+                mid_op = fv.venues[Platform.OPINION].mid if Platform.OPINION in fv.venues else 0.5
+                correlation.update(fv.market_id, (mid_pm + mid_op) / 2)
+                await engine.on_feature_vector(fv)
+                if proposals:
+                    result_queue.put({
+                        "strategy_id": strategy_id,
+                        "type": "proposals",
+                        "proposals": list(proposals),
+                    })
+                    proposals.clear()
 
-        elif msg_type == "notify_arb_terminal":
-            engine.notify_arb_terminal(message.get("size_usdc", 0.0))
+            elif msg_type == "notify_arb_terminal":
+                engine.notify_arb_terminal(message.get("size_usdc", 0.0))
 
-        elif msg_type == "notify_mm_terminal":
-            engine.notify_mm_terminal(message.get("size_usdc", 0.0))
+            elif msg_type == "notify_mm_terminal":
+                engine.notify_mm_terminal(message.get("size_usdc", 0.0))
 
-        elif msg_type == "flush":
-            engine.flush_market_state()
-            result_queue.put({"strategy_id": strategy_id, "type": "flushed"})
+            elif msg_type == "flush":
+                engine.flush_market_state()
+                result_queue.put({"strategy_id": strategy_id, "type": "flushed"})
+        except Exception as exc:
+            logger.error("Strategy %s message loop error: %s", strategy_id, exc, exc_info=True)
+            result_queue.put({"error": str(exc), "strategy_id": strategy_id})
 
     logger.info("Strategy %s stopped.", strategy_id)
 
@@ -166,7 +177,14 @@ async def _process_market_data(
     fv_data = data.get("feature_vector")
     if fv_data:
         from data.models import FeatureVector
+        from data.models import VenueSnapshot
 
+        if "venues" in fv_data:
+            fv_data["venues"] = {
+                Platform(k) if isinstance(k, str) else k:
+                VenueSnapshot(**v) if isinstance(v, dict) else v
+                for k, v in fv_data["venues"].items()
+            }
         fv = FeatureVector(**fv_data)
         avg_mid = sum(v.mid for v in fv.venues.values()) / max(len(fv.venues), 1)
         correlation.update(fv.market_id, avg_mid)

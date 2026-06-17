@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from data.models import FeatureVector, MarketSnapshot
+from data.models import FeatureVector, MarketSnapshot, VenueSnapshot
 from execution.models import OrderProposal
 from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
@@ -35,19 +35,13 @@ def _make_feature_vector(market_id: str, ts: int) -> FeatureVector:
         computed_ts=ts,
         arb_signal=0.01,
         stale_markets=[],
-        mid_pm=0.50,
-        mid_op=0.50,
-        spread_pm=0.02,
-        spread_op=0.02,
-        ofi_pm=0.1,
-        ofi_op=0.1,
+        venues={
+            Platform.POLYMARKET: VenueSnapshot(mid=0.50, spread=0.02, ofi=0.1, bid_depth=500.0, ask_depth=500.0),
+            Platform.OPINION: VenueSnapshot(mid=0.50, spread=0.02, ofi=0.1, bid_depth=500.0, ask_depth=500.0),
+        },
         vol_30s=0.005,
         days_to_resolution=30.0,
         portfolio_delta=0.0,
-        bid_depth_pm=500.0,
-        ask_depth_pm=500.0,
-        bid_depth_op=500.0,
-        ask_depth_op=500.0,
     )
 
 

@@ -91,7 +91,7 @@ class ArbConfig:
     min_order_usdc: float = 5.0
     max_signal_age_ms: int = 1000  # 1 second — accounts for WS latency + pipeline stages
     arb_expiry_ms: int = ARB_EXPIRY_MS
-    fees: Dict[Platform, int] = None  # per-platform fee in bps
+    fees: Optional[Dict[Platform, int]] = None  # per-platform fee in bps
     min_days_to_resolution: float = 0.0
     ofi_adverse_threshold: float = OFI_ADVERSE_THRESHOLD
     ofi_adverse_mult: float = OFI_ADVERSE_MULT

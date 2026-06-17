@@ -79,7 +79,8 @@ def heuristic_enhance(fv: FeatureVector) -> SignalContext:
         regime = MarketRegime.MEAN_REVERTING
 
     # ── Arb quality ───────────────────────────────────────────────────────────
-    if math.isnan(fv.arb_signal) or fv.arb_signal <= 0:
+    arb_signal = fv.arb_signal
+    if arb_signal is None or not isinstance(arb_signal, (int, float)) or math.isnan(arb_signal) or arb_signal <= 0:
         arb_quality = 0.0
     else:
         base = min(1.0, fv.arb_signal / 0.03)

@@ -220,3 +220,11 @@ class PaperTradingClient:
             return min(0.95, base_prob + aggressiveness * 2)
         else:
             return max(0.1, base_prob + aggressiveness * 3)
+
+    async def get_market(self, condition_id: str) -> None:
+        """Stub for market resolution checking - paper trading doesn't resolve markets."""
+        return None
+
+    async def redeem_market(self, condition_id: str) -> None:
+        """Stub for market redemption - paper trading doesn't redeem."""
+        pass

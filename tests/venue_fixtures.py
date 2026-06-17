@@ -139,29 +139,22 @@ class _FakeSession:
         """Get registered response or use defaults."""
         key = f"{method.upper()}:{path}"
 
-        # Polymarket-specific defaults
-        if "polymarket" in path.lower():
-            if method == "POST" and path == "/order":
-                return 200, {"orderID": "pm-order-123"}
-            if method == "DELETE" and path == "/order":
-                return 200, {}
-            if method == "GET" and path == "/profile":
-                return 200, {"ok": True}
-            if method == "GET" and path.startswith("/order/"):
-                return 200, {"status": "open", "remainingSize": 12.5}
-            if method == "GET" and path == "/orders":
-                return 200, []
+        if key in self.response_map:
+            return self.response_map[key]
 
-        # Opinion-specific defaults
-        if "opinion" in path.lower():
-            if method == "POST" and path == "/order":
-                return 200, {"orderId": "op-order-123"}
-            if method == "DELETE" and path.startswith("/order/"):
-                return 200, {}
-            if method == "GET" and path == "/orders/open":
-                return 200, []
-            if method == "GET" and path.startswith("/order/"):
-                return 200, {"status": "open", "remainingAmount": 15.0}
+        # Polymarket-specific defaults (match by path pattern)
+        if method == "POST" and path == "/order":
+            return 200, {"orderID": "pm-order-123"}
+        if method == "DELETE" and path == "/order":
+            return 200, {}
+        if method == "GET" and path == "/profile":
+            return 200, {"ok": True}
+        if method == "GET" and path == "/orders":
+            return 200, []
+        if method == "GET" and path == "/orders/open":
+            return 200, []
+        if method == "GET" and path.startswith("/order/"):
+            return 200, {"status": "open", "remainingSize": 12.5}
 
         # Generic defaults
         if method == "POST":
@@ -201,7 +194,9 @@ def polymarket_fake_session():
 @pytest.fixture
 def opinion_fake_session():
     """Create a fake session configured for Opinion."""
-    return _FakeSession()
+    session = _FakeSession()
+    session.register_response("POST", "/order", 200, {"orderID": "op-order-123"})
+    return session
 
 
 # ==================== Cross-Platform Test Utilities =========================

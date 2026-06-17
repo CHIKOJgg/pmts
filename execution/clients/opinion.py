@@ -82,6 +82,7 @@ class OpinionClient:
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._limiter = VenueRateLimiter.for_venue("opinion", rate_limit_per_s)
+        self._throttler = self._limiter
         self._last_status_filled_usdc: Dict[str, float] = {}
 
         logger.info(
@@ -210,7 +211,7 @@ class OpinionClient:
                     )
                 resp.raise_for_status()
 
-                return PlacedOrderResponse(exchange_order_id=raw.get("orderId", "N/A"), status="live", fills=[])
+                return PlacedOrderResponse(exchange_order_id=raw.get("orderId", raw.get("orderID", "N/A")), status="live", fills=[])
 
     @async_retry(retryable_exceptions=(ConnectionError, TimeoutError, OSError, aiohttp.ClientError))
     async def cancel_order(self, exchange_order_id: str, market_id: str) -> bool:
@@ -247,21 +248,27 @@ class OpinionClient:
             else:
                 cumulative_filled = 0.0
 
+            price = float(raw.get("averagePrice", raw.get("price", 0.0)) or 0.0)
+            raw_side = raw.get("side", 0)
+            is_sell = raw_side == 1 if isinstance(raw_side, int) else raw_side.upper() == "SELL"
+            if is_sell and price > 0:
+                cumulative_filled_usdc = cumulative_filled * price
+            else:
+                cumulative_filled_usdc = cumulative_filled
+
             previously_seen = self._last_status_filled_usdc.get(exchange_order_id, 0.0)
-            delta = max(0.0, cumulative_filled - previously_seen)
+            delta_usdc = max(0.0, cumulative_filled_usdc - previously_seen)
             new_fills = []
-            if delta > 0:
-                price = float(raw.get("averagePrice", raw.get("price", 0.0)) or 0.0)
-                if price > 0:
-                    new_fills.append(
-                        OrderStatusFill(
-                            fill_usdc=delta,
-                            fill_price=price,
-                            fill_tokens=delta / price,
-                            ts=int(time.time() * 1000),
-                        )
+            if delta_usdc > 0 and price > 0:
+                new_fills.append(
+                    OrderStatusFill(
+                        fill_usdc=delta_usdc,
+                        fill_price=price,
+                        fill_tokens=delta_usdc / price,
+                        ts=int(time.time() * 1000),
                     )
-                self._last_status_filled_usdc[exchange_order_id] = cumulative_filled
+                )
+                self._last_status_filled_usdc[exchange_order_id] = cumulative_filled_usdc
             return OrderStatusResponse(
                 exchange_order_id=exchange_order_id,
                 is_live=status in ["open", "partial"],
@@ -281,14 +288,13 @@ class OpinionClient:
             resp.raise_for_status()
             raw = await resp.json()
 
-            # Assume raw is a list of open orders
             orders = []
-            for o in raw:
+            for o in raw if isinstance(raw, list) else []:
                 orders.append(
                     OpenOrder(
-                        exchange_order_id=o["orderId"],
-                        market_id=o["marketId"],
-                        side="BUY" if o["side"] == 0 else "SELL",
+                        exchange_order_id=o.get("orderId", ""),
+                        market_id=o.get("marketId", ""),
+                        side="BUY" if o.get("side", 0) == 0 else "SELL",
                         size_usdc=float(o.get("originalAmount", 0.0)),
                         filled_usdc=float(o.get("originalAmount", 0.0)) - float(o.get("remainingAmount", 0.0)),
                         limit_price=float(o.get("price", 0.0)),

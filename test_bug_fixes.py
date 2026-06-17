@@ -12,48 +12,48 @@ def test_imports():
     try:
         from config.settings import Settings, get_settings
 
-        print("✓ config/settings.py imports successfully")
+        print("[OK] config/settings.py imports successfully")
 
         from risk.kill_switch import KillSwitch
 
-        print("✓ risk/kill_switch.py imports successfully")
+        print("[OK] risk/kill_switch.py imports successfully")
 
         from ai.enhancer import AISignalEnhancer
 
-        print("✓ ai/enhancer.py imports successfully")
+        print("[OK] ai/enhancer.py imports successfully")
 
         from strategies.arbitrage import ArbitrageStrategy
 
-        print("✓ strategies/arbitrage.py imports successfully")
+        print("[OK] strategies/arbitrage.py imports successfully")
 
         from engine.orchestrator import Orchestrator
 
-        print("✓ engine/orchestrator.py imports successfully")
+        print("[OK] engine/orchestrator.py imports successfully")
 
         from backtest.engine import BacktestEngine
 
-        print("✓ backtest/engine.py imports successfully")
+        print("[OK] backtest/engine.py imports successfully")
 
         # Test that kill switch token validation works
         try:
             KillSwitch("short")  # Too short
-            print("✗ KillSwitch should reject short tokens")
+            print("[FAIL] KillSwitch should reject short tokens")
         except ValueError as e:
             if "at least 16 characters" in str(e):
-                print("✓ KillSwitch token validation working (short)")
+                print("[OK] KillSwitch token validation working (short)")
 
         # Test complexity requirement
         try:
-            KillSwitch("alllowercase123456")  # Missing special char
-            print("✗ KillSwitch should reject tokens without enough complexity")
+            KillSwitch("alllowercaseonly")  # Only lowercase - complexity 1
+            print("[FAIL] KillSwitch should reject tokens without enough complexity")
         except ValueError as e:
             if "at least 2 of" in str(e):
-                print("✓ KillSwitch token validation working (complexity)")
+                print("[OK] KillSwitch token validation working (complexity)")
 
         return True
 
     except Exception as e:
-        print(f"✗ Import failed: {e}")
+        print(f"[FAIL] Import failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -80,18 +80,19 @@ def test_backtest_kill_switch():
     )
 
     if hasattr(engine, "_kill_switch_check_interval"):
-        print("✓ BacktestEngine has kill switch check interval")
+        print("[OK] BacktestEngine has kill switch check interval")
     else:
-        print("✗ BacktestEngine missing kill switch check interval")
+        print("[FAIL] BacktestEngine missing kill switch check interval")
         return False
 
     # Run a quick backtest
     try:
-        result = engine.run()
-        print(f"✓ Backtest ran successfully (ticks: {result.total_ticks})")
+        import asyncio
+        result = asyncio.run(engine.run())
+        print(f"[OK] Backtest ran successfully (ticks: {result.total_ticks})")
         return True
     except Exception as e:
-        print(f"✗ Backtest failed: {e}")
+        print(f"[FAIL] Backtest failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -112,16 +113,16 @@ def main():
     print("=" * 60)
 
     for name, passed in results:
-        status = "✓ PASS" if passed else "✗ FAIL"
+        status = "[PASS]" if passed else "[FAIL]"
         print(f"{status}: {name}")
 
     all_passed = all(passed for _, passed in results)
 
     if all_passed:
-        print("\n🎉 All tests passed! Bug fixes are working correctly.")
+        print("\n[SUCCESS] All tests passed! Bug fixes are working correctly.")
         return 0
     else:
-        print("\n⚠️  Some tests failed. Review the output above.")
+        print("\n[WARN] Some tests failed. Review the output above.")
         return 1
 
 

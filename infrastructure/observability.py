@@ -127,7 +127,10 @@ class HealthMonitor:
 
     async def _check_engine_connectivity(self, engine: ExecutionEngine) -> bool:
         """Check exchange connectivity with TTL cache to avoid rate-limit issues."""
-        plat = engine._client.platform.value
+        client = getattr(engine, "_client", None)
+        if client is None:
+            return False
+        plat = client.platform.value
         now = time.time()
         cached = self._connectivity_cache.get(plat)
         if cached is not None:
@@ -135,7 +138,7 @@ class HealthMonitor:
             if now - ts < self._connectivity_ttl_s:
                 return ok
         try:
-            ok = bool(await engine._client.verify_connectivity())
+            ok = bool(await client.verify_connectivity())
         except Exception:
             ok = False
         self._connectivity_cache[plat] = (now, ok)
@@ -155,7 +158,10 @@ class HealthMonitor:
         # 2. Exchange API & Reconciliation
         details["engines"] = {}
         for engine in self.engines:
-            plat = engine._client.platform.value
+            client = getattr(engine, "_client", None)
+            if client is None:
+                continue
+            plat = client.platform.value
             recon = getattr(engine, "reconciliation_complete", False)
             
             # Use cached connectivity check to avoid expensive calls per probe

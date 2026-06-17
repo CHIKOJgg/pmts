@@ -13,6 +13,17 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
+    class BaseModel:  # type: ignore[no-redef]
+        """Fallback BaseModel when pydantic is unavailable.
+
+        Allows the module to import cleanly on systems without fastapi/pydantic.
+        The HTTP API itself will not function, but no NameError is raised.
+        """
+
+        def __init__(self, **data: Any) -> None:
+            for k, v in data.items():
+                setattr(self, k, v)
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -174,14 +185,12 @@ def create_app(
 
     @app.post("/kill-switch/reset", response_model=KillSwitchResponse)
     async def reset_kill_switch(token: str = Query(..., description="Kill switch reset token")):
-        if kill_switch is None:
-            raise HTTPException(status_code=503, detail="Kill switch not available")
+        if risk_engine is None:
+            raise HTTPException(status_code=503, detail="Risk engine not available")
         if not kill_switch_token:
             raise HTTPException(status_code=400, detail="Kill switch token not configured")
-        if not kill_switch.reset(token=token):
+        if not risk_engine.reset_kill_switch(token):
             raise HTTPException(status_code=403, detail="Invalid kill switch token")
-        if orchestrator is not None:
-            orchestrator._on_kill_switch_reset()
         logger.warning("Kill switch reset via API")
         return KillSwitchResponse(success=True, message="Kill switch reset")
 

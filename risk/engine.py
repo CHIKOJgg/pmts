@@ -1,4 +1,4 @@
-﻿"""
+"""
 risk/engine.py вЂ” Synchronous pre-trade risk gate.
 
 Critical design: capital is reserved SYNCHRONOUSLY inside evaluate() before
@@ -148,7 +148,7 @@ class RiskEngine:
         self._capital_lock: threading.Lock = threading.Lock()
 
         if self._store:
-            loaded_res = self._store.load_reservations()
+            loaded_res = self._store.load_reservations() or {}
             for pid, (amt, plat, strat) in loaded_res.items():
                 self._reservations[pid] = (amt, plat, strat)
                 self._total_reserved += amt
@@ -361,6 +361,7 @@ class RiskEngine:
                 self._arb_allocated += proposal.size_usdc
             else:
                 self._mm_allocated += proposal.size_usdc
+        self._portfolio.reserve_capital_sync(proposal.size_usdc)
 
         if self._store:
             self._store.save_reservation(
@@ -386,9 +387,21 @@ class RiskEngine:
 
     async def notify_terminal(self, proposal_id: str, platform: Platform, amount_usdc: float) -> None:
         """Release reservation when order reaches terminal state."""
-        info = self._reservations.pop(proposal_id, None)
+        released = 0.0
+        strategy_id: Optional[StrategyId] = None
+        with self._capital_lock:
+            info = self._reservations.pop(proposal_id, None)
+            if info is not None:
+                reserved_amount, _, strat = info
+                released = reserved_amount
+                strategy_id = strat
+                self._total_reserved = max(0.0, self._total_reserved - reserved_amount)
+                if strategy_id == StrategyId.ARB:
+                    self._arb_allocated = max(0.0, self._arb_allocated - reserved_amount)
+                else:
+                    self._mm_allocated = max(0.0, self._mm_allocated - reserved_amount)
+
         if info is None:
-            # Check if it's in the store (reconciliation case)
             if self._store:
                 self._store.remove_reservation(proposal_id)
             return
@@ -396,13 +409,7 @@ class RiskEngine:
         if self._store:
             self._store.remove_reservation(proposal_id)
 
-        reserved_amount, _, strategy_id = info
-        self._total_reserved = max(0.0, self._total_reserved - reserved_amount)
-        if strategy_id == StrategyId.ARB:
-            self._arb_allocated = max(0.0, self._arb_allocated - reserved_amount)
-        else:
-            self._mm_allocated = max(0.0, self._mm_allocated - reserved_amount)
-        await self._portfolio.release_capital(reserved_amount)
+        await self._portfolio.release_capital(released)
 
     def notify_fill(self, realised_pnl: float) -> None:
         """Update session PnL tracking after a fill."""
@@ -427,18 +434,16 @@ class RiskEngine:
         logger.info("Reconciling risk reservations...")
         db_res = self._store.load_reservations()
 
-        # Memory is empty on startup, so we populate it from DB
-        for pid, (amt, plat, strat) in db_res.items():
-            if pid not in self._reservations:
-                self._reservations[pid] = (amt, plat, strat)
-                self._total_reserved += amt
-                if strat == StrategyId.ARB:
-                    self._arb_allocated += amt
-                else:
-                    self._mm_allocated += amt
+        with self._capital_lock:
+            for pid, (amt, plat, strat) in db_res.items():
+                if pid not in self._reservations:
+                    self._reservations[pid] = (amt, plat, strat)
+                    self._total_reserved += amt
+                    if strat == StrategyId.ARB:
+                        self._arb_allocated += amt
+                    else:
+                        self._mm_allocated += amt
 
-        # Any PID in memory that is NOT in ExecutionEngine trackers (after its reconcile)
-        # will be handled by the notify_terminal calls triggered by reconcile failures.
         self.reconciliation_complete = True
 
     # в”Ђв”Ђ Kill switch control в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -458,13 +463,16 @@ class RiskEngine:
     def reset_kill_switch(self, confirmation_token: str, operator_id: Optional[str] = None) -> bool:
         success = self._kill_switch.reset(confirmation_token, operator_id)
         if success:
-            for proposal_id in list(self._reservations.keys()):
-                if self._store:
-                    self._store.remove_reservation(proposal_id)
-            self._reservations.clear()
-            self._total_reserved = 0.0
-            self._arb_allocated = 0.0
-            self._mm_allocated = 0.0
+            with self._capital_lock:
+                for proposal_id in list(self._reservations.keys()):
+                    amt, _, _ = self._reservations[proposal_id]
+                    self._portfolio.reserve_capital_sync(-amt)
+                    if self._store:
+                        self._store.remove_reservation(proposal_id)
+                self._reservations.clear()
+                self._total_reserved = 0.0
+                self._arb_allocated = 0.0
+                self._mm_allocated = 0.0
             KILL_SWITCH_ACTIVE.set(0.0)
             if self._store:
                 self._store.save_kill_switch(False)
@@ -608,3 +616,4 @@ def _projected_delta(current_delta: float, proposal: OrderProposal) -> float:
         return current_delta - qty
     else:  # SELL_NO
         return current_delta + qty
+

@@ -23,7 +23,7 @@ class JournalEntry:
     price: float
     fee_usdc: float
     realised_pnl: float
-    hold_time_ms: int
+    hold_time_ms: float
     slippage_bps: Optional[int]
     strategy_id: str
     proposal_id: str

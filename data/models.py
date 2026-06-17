@@ -150,9 +150,20 @@ class FeatureVector:
     correlations: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if math.isnan(self.arb_signal) and not self.stale_markets:
+        venues = self.venues
+        if venues:
+            converted = {}
+            for k, v in venues.items():
+                key = Platform(k) if isinstance(k, str) else k
+                val = VenueSnapshot(**v) if isinstance(v, dict) else v
+                converted[key] = val
+            object.__setattr__(self, 'venues', converted)
+        arb = self.arb_signal
+        if arb is None or not isinstance(arb, (int, float)):
+            raise ValueError(f"arb_signal must be a number, got {type(arb).__name__}")
+        if math.isnan(arb) and not self.stale_markets:
             raise ValueError("stale_markets must be non-empty when arb_signal is NaN")
-        if not math.isnan(self.arb_signal) and self.stale_markets:
+        if not math.isnan(arb) and self.stale_markets:
             raise ValueError("stale_markets must be empty when arb_signal is a valid number")
 
     @property

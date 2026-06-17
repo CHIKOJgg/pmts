@@ -101,32 +101,31 @@ class FeatureEngine:
             if age_ms > STALE_MS * 2:  # More lenient for backtest scenarios
                 stale.append(p)
 
-        # Compute arb signal
-        if stale or pm is None or op is None:
-            arb_signal = math.nan
-            if not stale:
-                stale = [other_plat]
-        else:
-            fee_pm = self._fees[Platform.POLYMARKET] / 10_000
-            fee_op = self._fees[Platform.OPINION] / 10_000
-            arb_signal = 1.0 - pm.yes_ask - op.no_ask - fee_pm - fee_op
-
-        # OFI: (bid_depth - ask_depth) / total_depth
-        def _ofi(s: Optional[MarketSnapshot]) -> float:
-            if s is None:
-                return 0.0
-            total = s.bid_depth_usdc + s.ask_depth_usdc
-            if total < 1e-6:
-                return 0.0
-            return (s.bid_depth_usdc - s.ask_depth_usdc) / total
-
-        def _safe(s: Optional[MarketSnapshot], attr: str, fallback: float) -> float:
-            return getattr(s, attr) if s is not None else fallback
-
-        vol_30s = self._vol(plat_key, now)
-        delta = self._portfolio.get_delta(snap.market_id)
-
         try:
+            # Compute arb signal
+            if stale or pm is None or op is None:
+                arb_signal = math.nan
+                if not stale:
+                    stale = [other_plat]
+            else:
+                fee_pm = self._fees.get(Platform.POLYMARKET, 20) / 10_000
+                fee_op = self._fees.get(Platform.OPINION, 25) / 10_000
+                arb_signal = 1.0 - pm.yes_ask - op.no_ask - fee_pm - fee_op
+
+            # OFI: (bid_depth - ask_depth) / total_depth
+            def _ofi(s: Optional[MarketSnapshot]) -> float:
+                if s is None:
+                    return 0.0
+                total = s.bid_depth_usdc + s.ask_depth_usdc
+                if total < 1e-6:
+                    return 0.0
+                return (s.bid_depth_usdc - s.ask_depth_usdc) / total
+
+            def _safe(s: Optional[MarketSnapshot], attr: str, fallback: float) -> float:
+                return getattr(s, attr) if s is not None else fallback
+
+            vol_30s = self._vol(plat_key, now)
+            delta = self._portfolio.get_delta(snap.market_id)
             vol_regime = self._vol_regime(vol_30s)
 
             def _build_vs(s: Optional[MarketSnapshot]) -> VenueSnapshot:
@@ -179,7 +178,7 @@ class FeatureEngine:
             return None
         try:
             return statistics.stdev(p for _, p in hist)
-        except statistics.StatisticsError:
+        except (statistics.StatisticsError, Exception):
             return None
 
     def _vol_regime(self, vol_30s: Optional[float]) -> Optional[str]:

@@ -22,6 +22,7 @@ from tests.venue_fixtures import (
     _FakeSession,
     opinion_order_submission,
     polymarket_order_submission,
+    temp_dir_windows_safe,
 )
 
 
@@ -150,7 +151,9 @@ class TestOpinionClientOrderSubmission:
 
     @pytest.fixture
     def opinion_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "op-order-123"})
+        return session
 
     @pytest.fixture
     def opinion_order_submission(self):
@@ -211,6 +214,7 @@ class TestOpinionClientOrderSubmission:
         self,
         opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        opinion_order_submission,
     ) -> None:
         """Place order should include EIP-712 signature."""
         client = OpinionClient(
@@ -227,7 +231,7 @@ class TestOpinionClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: signature)
 
-        submission = opinion_order_submission()
+        submission = opinion_order_submission
         await client.place_order(submission, 0.60)
 
         # Verify signature is included in the request
@@ -239,6 +243,7 @@ class TestOpinionClientOrderSubmission:
         self,
         opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        opinion_order_submission,
     ) -> None:
         """Place order should accept custom nonce for idempotency."""
         client = OpinionClient(
@@ -254,7 +259,7 @@ class TestOpinionClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: "signed-order")
 
-        submission = opinion_order_submission()
+        submission = opinion_order_submission
         custom_nonce = 123456789
         result = await client.place_order(submission, 0.60, nonce=custom_nonce)
 
@@ -265,6 +270,7 @@ class TestOpinionClientOrderSubmission:
         self,
         opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
+        opinion_order_submission,
     ) -> None:
         """4xx responses should raise ExchangeRejected exception."""
         from src.errors import ExchangeRejected
@@ -287,7 +293,7 @@ class TestOpinionClientOrderSubmission:
         monkeypatch.setattr(client, "_get_session", _session)
         monkeypatch.setattr(client, "_sign_order", lambda order: "signed-order")
 
-        submission = opinion_order_submission()
+        submission = opinion_order_submission
 
         with pytest.raises(ExchangeRejected):
             await client.place_order(submission, 0.60)
@@ -298,7 +304,9 @@ class TestOpinionClientOrderCancellation:
 
     @pytest.fixture
     def opinion_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "op-order-123"})
+        return session
 
     @pytest.mark.asyncio
     async def test_cancel_order_returns_true(
@@ -388,7 +396,9 @@ class TestOpinionClientOrderStatus:
 
     @pytest.fixture
     def opinion_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "op-order-123"})
+        return session
 
     @pytest.mark.asyncio
     async def test_get_order_status_parses_open(
@@ -517,7 +527,6 @@ class TestOpinionClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders(
         self,
-        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return list of open orders."""
@@ -561,7 +570,6 @@ class TestOpinionClientOpenOrders:
     @pytest.mark.asyncio
     async def test_get_open_orders_empty(
         self,
-        opinion_fake_session: _FakeSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should return empty list when no orders."""
@@ -592,7 +600,9 @@ class TestOpinionClientConnectivity:
 
     @pytest.fixture
     def opinion_fake_session(self) -> _FakeSession:
-        return _FakeSession()
+        session = _FakeSession()
+        session.register_response("POST", "/order", 200, {"orderID": "op-order-123"})
+        return session
 
     @pytest.mark.asyncio
     async def test_verify_connectivity(
