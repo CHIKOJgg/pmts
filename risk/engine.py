@@ -168,6 +168,7 @@ class RiskEngine:
 
         # Session P&L tracking for session loss limit
         self._session_pnl: float = 0.0
+        self._session_reset_ts: int = self._clock.now_ms()
 
         # Soft-kill grace period state
         self._grace_start_ms: Optional[int] = None
@@ -404,12 +405,23 @@ class RiskEngine:
         await self._portfolio.release_capital(reserved_amount)
 
     def notify_fill(self, realised_pnl: float) -> None:
+        """Update session PnL tracking after a fill."""
         self._session_pnl += realised_pnl
-        """
-        Sync SQLite reservations with memory and purge orphaned ones.
-        Called after ExecutionEngine reconciliation.
+
+    def reset_session_pnl(self) -> None:
+        """Reset session PnL counter (called daily or on operator command)."""
+        self._session_pnl = 0.0
+        self._session_reset_ts = self._clock.now_ms()
+        logger.info("Session PnL reset to $0.00")
+
+    def reconcile_reservations(self) -> None:
+        """Sync SQLite reservations with memory and purge orphaned ones.
+
+        Called after ExecutionEngine reconciliation completes.
+        Separated from notify_fill to keep concerns single-purpose.
         """
         if not self._store:
+            self.reconciliation_complete = True
             return
 
         logger.info("Reconciling risk reservations...")

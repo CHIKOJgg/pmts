@@ -160,6 +160,14 @@ class OrderTracker:
             f"record_fill called in terminal state {self.status}"
         )
 
+        max_allowed = self.submission.size_usdc * 1.002
+        new_cumulative = self.cumulative_filled_usdc + fill_usdc
+        if new_cumulative > max_allowed:
+            clamped = max(0.0, max_allowed - self.cumulative_filled_usdc)
+            if clamped <= 0:
+                return self._build(OrderStatus.PARTIAL, 0.0, None, self.fill_ratio, None)
+            fill_usdc = clamped
+            fill_tokens = fill_usdc / fill_price if fill_price > 0 else 0
         self.fills.append(FillEvent(fill_usdc, fill_price, fill_tokens, ts))
         self._last_latency_ms = ts - self.submission.submitted_at
 

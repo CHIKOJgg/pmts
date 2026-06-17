@@ -251,12 +251,13 @@ class ExecutionEngine:
         logger.info("ExecutionEngine started (%s)", self._client.platform.value)
 
     async def stop(self) -> None:
-        self._stopped = True
         logger.info("ExecutionEngine stopping (%s). Draining queue...", self._client.platform.value)
 
-        # Step 5: Wait for queue to drain before cancelling workers (Issue #5)
+        # Drain queue first, THEN stop workers (Bug #2: deadlock fix)
         while not self._queue.empty():
             await asyncio.sleep(0.1)
+
+        self._stopped = True
 
         for t in self._tasks:
             t.cancel()
@@ -457,7 +458,20 @@ class ExecutionEngine:
                 continue
 
             async with self._semaphore:
-                await self._execute_submission(tracker)
+                try:
+                    await self._execute_submission(tracker)
+                except Exception as exc:
+                    logger.error(
+                        "Submit worker failed for %s: %s",
+                        entry.submission.proposal_id[:8], exc, exc_info=True,
+                    )
+                    tracker = self._trackers.get(entry.submission.proposal_id)
+                    if tracker is not None and not tracker.status.is_terminal:
+                        result = tracker.record_timeout()
+                        self.orders_timed_out += 1
+                        self._finalise(tracker)
+                        await self._dispatch(result)
+                        self._update_active_order_metric()
             self._queue.task_done()
 
     async def _execute_submission(self, tracker: OrderTracker) -> None:
@@ -467,6 +481,7 @@ class ExecutionEngine:
         if tracker.is_expired(now):
             result = tracker.record_expiry()
             self.orders_expired += 1
+            self._finalise(tracker)
             await self._dispatch(result)
             return
 
@@ -656,15 +671,19 @@ class ExecutionEngine:
         if not tracker.status.is_terminal:
             if resp.is_filled and not had_fill:
                 remaining = tracker.remaining_usdc
-                if remaining > DUST_FLOOR_USDC_LOCAL:
+                if remaining > 0:
+                    dust_price = tracker.weighted_avg_price or tracker.submission.limit_price
                     result = tracker.record_fill(
                         remaining,
-                        tracker.submission.limit_price,
+                        dust_price,
                         tracker.remaining_tokens,
                         self._clock.now_ms(),
                     )
                     self.total_filled_usdc += remaining
-                    self.orders_filled += 1
+                    if result.status == OrderStatus.FILLED:
+                        self.orders_filled += 1
+                    else:
+                        self.orders_partial += 1
                     await self._dispatch(result)
                     had_fill = True
             elif resp.is_cancelled and not tracker.status.is_terminal:

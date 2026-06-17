@@ -18,13 +18,13 @@ from src.enums import ArbLeg, OrderType, Platform, Side, StrategyId
 logger = logging.getLogger(__name__)
 
 # Cost model constants
-IMPACT_FACTOR: float = 0.012  # sqrt-impact; calibrated to thin books
+IMPACT_FACTOR: float = 0.018  # sqrt-impact; calibrated to thin prediction market books
 OFI_ADVERSE_THRESHOLD: float = 0.25  # OFI above this → adversity premium
 OFI_ADVERSE_MULT: float = 1.60  # impact multiplier when OFI adverse
 MIN_DEPTH_USDC: float = 10.0  # minimum depth for reliable cost estimate
-FILL_CERTAINTY: float = 0.65  # fraction of displayed depth actually fillable
+FILL_CERTAINTY: float = 0.50  # prediction market books are thinner than displayed
 
-ARB_EXPIRY_MS: int = 2_000  # 2-second deadline for both legs
+ARB_EXPIRY_MS: int = 3_000  # 3-second deadline for both legs (accounts for cross-venue latency)
 
 # Default fees by platform (via ArbConfig)
 DEFAULT_FEES: Dict[Platform, int] = {
@@ -89,7 +89,7 @@ class ArbConfig:
     min_fill_ratio: float = 0.80
     max_order_usdc: float = 200.0
     min_order_usdc: float = 5.0
-    max_signal_age_ms: int = 300
+    max_signal_age_ms: int = 1000  # 1 second — accounts for WS latency + pipeline stages
     arb_expiry_ms: int = ARB_EXPIRY_MS
     fees: Dict[Platform, int] = None  # per-platform fee in bps
     min_days_to_resolution: float = 0.0
@@ -262,7 +262,7 @@ class ArbitrageStrategy:
                 min_net_edge *= max(0.1, 1.0 + ctx.confidence_adjustment)
 
             if net_edge < min_net_edge:
-                if best is None or (best.accepted and net_edge > best.net_edge) or (not best.accepted and (best.net_edge is None or net_edge > best.net_edge)):
+                if best is None or (not best.accepted and (best.net_edge is None or net_edge > best.net_edge)):
                     best = _pair_reject(
                         f"net_edge={net_edge:.4f}<min={min_net_edge:.4f} (gross={gross:.4f} c1={c1_frac:.4f} c2={c2_frac:.4f})",
                         direction=direction, leg1_cost_frac=c1_frac, leg2_cost_frac=c2_frac,

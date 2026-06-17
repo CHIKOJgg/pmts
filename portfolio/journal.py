@@ -37,16 +37,16 @@ class TradeJournal:
     def record_fill(self, fill: FillRecord) -> None:
         entry = JournalEntry(
             timestamp=datetime.now(timezone.utc).isoformat(),
-            fill_id=fill.fill_id,
+            fill_id=fill.proposal_id,
             market_id=fill.market_id,
             platform=fill.platform.value if hasattr(fill.platform, "value") else str(fill.platform),
             side=fill.side.value if hasattr(fill.side, "value") else str(fill.side),
-            size_usdc=fill.size_usdc,
-            price=fill.price,
-            fee_usdc=fill.fee_usdc,
+            size_usdc=fill.filled_usdc,
+            price=fill.fill_price,
+            fee_usdc=0.0,
             realised_pnl=fill.realised_pnl,
             hold_time_ms=fill.hold_time_ms,
-            slippage_bps=fill.slippage_bps,
+            slippage_bps=None,
             strategy_id=fill.strategy_id.value if hasattr(fill.strategy_id, "value") else str(fill.strategy_id),
             proposal_id=fill.proposal_id,
         )

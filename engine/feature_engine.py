@@ -39,9 +39,10 @@ class FeatureEngine:
     Returns None until at least MIN_VOL_TICKS entries exist in the 30s window.
     """
 
-    def __init__(self, portfolio: PortfolioManager, clock: Optional[Clock] = None) -> None:
+    def __init__(self, portfolio: PortfolioManager, clock: Optional[Clock] = None, fees: Optional[Dict[Platform, int]] = None) -> None:
         self._portfolio = portfolio
         self._clock = clock or LiveClock()
+        self._fees = fees if fees is not None else dict(FEES)
         self._callbacks: List[_FV_CB] = []
         self._snaps: Dict[Tuple[str, Platform], MarketSnapshot] = {}
         self._history: Dict[Tuple[str, Platform], Deque[Tuple[int, float]]] = {}
@@ -106,8 +107,8 @@ class FeatureEngine:
             if not stale:
                 stale = [other_plat]
         else:
-            fee_pm = FEES[Platform.POLYMARKET] / 10_000
-            fee_op = FEES[Platform.OPINION] / 10_000
+            fee_pm = self._fees[Platform.POLYMARKET] / 10_000
+            fee_op = self._fees[Platform.OPINION] / 10_000
             arb_signal = 1.0 - pm.yes_ask - op.no_ask - fee_pm - fee_op
 
         # OFI: (bid_depth - ask_depth) / total_depth

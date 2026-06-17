@@ -186,7 +186,7 @@ class StrategyEngine:
         if not result.accepted or result.leg1_proposal is None or result.leg2_proposal is None:
             return []
 
-        total_needed = result.leg1_proposal.size_usdc * 2
+        total_needed = result.leg1_proposal.size_usdc + result.leg2_proposal.size_usdc
         if total_needed > self.arb_available_budget:
             self.suppressed_bud += 1
             return []

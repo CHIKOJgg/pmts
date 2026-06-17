@@ -170,7 +170,9 @@ class _Position:
             self.realised_pnl += usdc_received - cost * qty
             self.yes_qty = 0.0
             self.avg_cost_yes = None
-            # NO tokens expire worthless
+            # NO tokens expire worthless — realise the cost as a loss
+            if self.avg_cost_no is not None:
+                self.realised_pnl -= self.no_qty * self.avg_cost_no
         elif outcome == "no":
             # NO resolved - receive USDC for each NO token held
             qty = self.no_qty
@@ -178,7 +180,9 @@ class _Position:
             self.realised_pnl += usdc_received - cost * qty
             self.no_qty = 0.0
             self.avg_cost_no = None
-            # YES tokens expire worthless
+            # YES tokens expire worthless — realise the cost as a loss
+            if self.avg_cost_yes is not None:
+                self.realised_pnl -= self.yes_qty * self.avg_cost_yes
         else:
             logger.warning(f"Unknown resolution outcome: {outcome}")
 
@@ -368,8 +372,7 @@ class PortfolioManager:
             pos.close_on_redemption(redemption.outcome.value, redemption.usdc_received)
             self._cash_usdc += redemption.usdc_received
             self._closed_pnl += pos.realised_pnl
-            if pos.is_flat:
-                del self._positions[key]
+            del self._positions[key]
             equity = self._equity_locked()
             if equity > self._peak_equity:
                 self._peak_equity = equity
@@ -419,21 +422,30 @@ class PortfolioManager:
         )
 
     def get_portfolio_mtm(self) -> PortfolioMTM:
-        """Compute mark-to-market equity."""
-        # Take atomic snapshot of state to avoid race conditions
+        """Compute mark-to-market equity.
+
+        Takes a deep snapshot of position state under the sync lock to
+        prevent inconsistent reads when record_fill mutates positions concurrently.
+        """
+        # Take atomic snapshot of all mutable state
         with self._sync_lock:
-            positions = dict(self._positions)
             cash = self._cash_usdc
             reserved = self._reserved_usdc
+            closed_pnl = self._closed_pnl
+            # Deep-copy position numeric fields to avoid reading stale/mutated state
+            pos_snapshots: list[tuple[str, Platform, float, float]] = []
+            for (mid, plat), pos in self._positions.items():
+                pos_snapshots.append((mid, plat, pos.yes_qty, pos.no_qty))
 
         total_pos = 0.0
-        for (mid, plat), pos in positions.items():
+        for mid, plat, yes_qty, no_qty in pos_snapshots:
             prices = self._price_source(mid, plat)
             if prices:
-                total_pos += pos.mtm(*prices)
+                yes_mid, no_mid = prices
+                total_pos += yes_qty * yes_mid + no_qty * no_mid
         equity = cash + total_pos
         PORTFOLIO_MTM_USDC.set(equity)
-        PORTFOLIO_REALISED_PNL_USDC.set(self._closed_pnl)
+        PORTFOLIO_REALISED_PNL_USDC.set(closed_pnl)
         CAPITAL_UTILIZATION.set((reserved / equity) if equity > 0 else 0.0)
         return PortfolioMTM(
             total_cash_usdc=cash,

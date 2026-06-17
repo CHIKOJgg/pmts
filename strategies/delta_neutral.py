@@ -283,19 +283,30 @@ class DeltaNeutralStrategy:
         if mid < 0.05 or mid > 0.95:
             return _suppress(f"near_boundary:mid={mid:.3f}")
 
+        # Book depth checks — don't quote when we'd be the entire book
+        venue = fv.venues[platform]
+        total_book_depth = venue.bid_depth + venue.ask_depth
+        if total_book_depth < 50.0:
+            return _suppress(f"book_too_thin:depth=${total_book_depth:.0f}")
+        if venue.bid_depth < 10.0 or venue.ask_depth < 10.0:
+            return _suppress(f"one_sided_book:bid=${venue.bid_depth:.0f},ask=${venue.ask_depth:.0f}")
+
         # Stoikov parameters
-        sigma = fv.vol_30s
+        sigma = fv.vol_30s                      # 30-second rolling stdev
         gamma = cfg.gamma
         k = cfg.k
         T_minus_t = max(0.01, days if days is not None else 1.0)
         delta = fv.portfolio_delta
 
+        # Convert T from days to 30-second units so sigma² × T is dimensionally consistent
+        t_30s_units = T_minus_t * 2880.0  # 24h × 60m × 60s / 30s = 2880
+
         # Reservation price
-        r_mid = mid - delta * gamma * (sigma**2) * T_minus_t
+        r_mid = mid - delta * gamma * (sigma**2) * t_30s_units
         r_mid = max(0.01, min(0.99, r_mid))
 
         # Optimal spread
-        base_spread = gamma * (sigma**2) * T_minus_t
+        base_spread = gamma * (sigma**2) * t_30s_units
         arrival_adj = (2.0 / gamma) * math.log(1.0 + gamma / k)
         half_spread = max(0.005, min(0.05, (base_spread + arrival_adj) / 2.0))
 
@@ -307,6 +318,18 @@ class DeltaNeutralStrategy:
         if fills and self._detect_adverse_selection(fv.market_id, fills):
             half_spread = self._widen_spread_for_adverse_selection(half_spread)
             logger.info("Adverse selection detected for %s — spread widened to %.4f", fv.market_id, half_spread)
+
+        # Isolation penalty — widen spread when our quote is a large fraction of book
+        min_depth = min(venue.bid_depth, venue.ask_depth)
+        if min_depth > 0:
+            quote_fraction = size / min_depth
+            if quote_fraction > 0.5:
+                isolation_mult = 1.0 + (quote_fraction - 0.5) * 2.0
+                half_spread *= isolation_mult
+                logger.debug(
+                    "Isolation penalty for %s: quote=%.0f%% of min_depth, spread widened to %.4f",
+                    fv.market_id, quote_fraction * 100, half_spread,
+                )
 
         bid_price = max(0.01, r_mid - half_spread)
         ask_price = min(0.99, r_mid + half_spread)

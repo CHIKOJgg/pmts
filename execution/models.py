@@ -103,6 +103,8 @@ class OrderSubmission:
     def __post_init__(self) -> None:
         if self.token_quantity <= 0:
             raise ValueError(f"token_quantity must be > 0, got {self.token_quantity}")
+        if self.limit_price <= 0:
+            raise ValueError(f"limit_price must be > 0, got {self.limit_price}")
         # Validate consistency (allow 0.2% tolerance for rounding)
         expected = self.size_usdc / self.limit_price
         if abs(self.token_quantity - expected) / expected > 0.002:

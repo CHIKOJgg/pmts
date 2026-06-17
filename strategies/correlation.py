@@ -30,7 +30,7 @@ class CorrelationTracker:
     def get_correlation(self, market_a: str, market_b: str) -> float:
         if market_a not in self._prices or market_b not in self._prices:
             return 0.0
-        if market_a in self._cache and market_b in self._cache[market_a] and market_a not in self._dirty:
+        if market_a in self._cache and market_b in self._cache[market_a] and market_a not in self._dirty and market_b not in self._dirty:
             return self._cache[market_a][market_b]
         return self._compute(market_a, market_b)
 
@@ -56,9 +56,9 @@ class CorrelationTracker:
         prices_b = prices_b[-min_len:]
         mean_a = sum(prices_a) / min_len
         mean_b = sum(prices_b) / min_len
-        cov = sum((a - mean_a) * (b - mean_b) for a, b in zip(prices_a, prices_b)) / min_len
-        std_a = (sum((a - mean_a) ** 2 for a in prices_a) / min_len) ** 0.5
-        std_b = (sum((b - mean_b) ** 2 for b in prices_b) / min_len) ** 0.5
+        cov = sum((a - mean_a) * (b - mean_b) for a, b in zip(prices_a, prices_b)) / (min_len - 1)
+        std_a = (sum((a - mean_a) ** 2 for a in prices_a) / (min_len - 1)) ** 0.5
+        std_b = (sum((b - mean_b) ** 2 for b in prices_b) / (min_len - 1)) ** 0.5
         if std_a < 1e-9 or std_b < 1e-9:
             return 0.0
         return cov / (std_a * std_b)

@@ -38,9 +38,9 @@ from strategies.delta_neutral import DeltaNeutralConfig
 
 logger = logging.getLogger(__name__)
 
-FILL_CERTAINTY: float = 0.65
-PARTIAL_FILL_ALPHA: float = 2.0
-PARTIAL_FILL_BETA: float = 1.5
+FILL_CERTAINTY: float = 0.50  # prediction market books are thinner than displayed
+PARTIAL_FILL_ALPHA: float = 1.5
+PARTIAL_FILL_BETA: float = 2.0  # mean ~43%, right-skewed but pessimistic for thin books
 MIN_FILL_USDC: float = 0.01
 
 
@@ -221,11 +221,18 @@ class FillSimulator:
         impact_factor = 0.012  # calibrated to thin books
         impact_bps = int(round(impact_factor * math.sqrt(fill_ratio) * 10_000))
 
-        # Apply slippage to market price
+        # Adverse selection: 30% chance of informed flow picking off resting orders
+        # Adds 5-25 bps penalty to simulate adverse price movement after fill
+        adverse_bps = 0
+        if random.random() < 0.30:
+            adverse_bps = random.randint(5, 25)
+
+        # Apply slippage and adverse selection to market price
+        total_bps = impact_bps + adverse_bps
         if side.is_buy:
-            effective_price = market_price * (1 + impact_bps / 10_000)
+            effective_price = market_price * (1 + total_bps / 10_000)
         else:
-            effective_price = market_price * (1 - impact_bps / 10_000)
+            effective_price = market_price * (1 - total_bps / 10_000)
 
         # Stochastic fill fraction with depth consideration
         frac = random.betavariate(PARTIAL_FILL_ALPHA, PARTIAL_FILL_BETA)
@@ -414,6 +421,8 @@ class BacktestEngine:
         self._rejected = 0
         self._total = 0
         self._reject_reasons: Dict[str, int] = {}
+        # Track completed arb groups for _finalize_arb (Bug #32)
+        self._arb_completed_groups: set[tuple[str, str]] = set()
 
     async def run(self) -> BacktestResult:
         """Execute the full backtest."""
@@ -578,8 +587,9 @@ class BacktestEngine:
             else:
                 self._se.notify_mm_terminal(evt.filled_usdc)
 
-        # Release risk reservation
-        await self._risk.notify_terminal(evt.proposal_id, proposal.platform, proposal.size_usdc)
+        # Release risk reservation only on terminal fill events (Bug #24)
+        if evt.status in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
+            await self._risk.notify_terminal(evt.proposal_id, proposal.platform, proposal.size_usdc)
 
         # Record trade
         latency_ms = evt.sim_ts - submit_ts if evt.sim_ts > submit_ts else None
@@ -606,30 +616,15 @@ class BacktestEngine:
         )
 
         if evt.status in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
+            # Track completed arb groups before popping (Bug #32)
+            if proposal.strategy_id == StrategyId.ARB and fill_ratio >= 0.999 and proposal.leg_group_id:
+                self._arb_completed_groups.add((proposal.market_id, proposal.leg_group_id))
             self._pending.pop(evt.proposal_id, None)
 
     def _finalize_arb(self) -> None:
         """Call notify_arb_cleared() for completed ARB trades."""
-        # Track which markets/leg_groups have all legs complete
-        completed: Dict[str, set] = {}  # market_id → set of leg_group_ids
-
-        for trade in self._trades:
-            if trade.strategy_id == StrategyId.ARB.value and trade.fill_ratio >= 0.999:
-                pending = self._pending.get(trade.proposal_id)
-                if pending is None:  # Already processed
-                    continue
-                proposal, _ = pending
-                market_id = proposal.market_id
-                leg_group = proposal.leg_group_id
-
-                if market_id not in completed:
-                    completed[market_id] = set()
-                completed[market_id].add(leg_group)
-
-        # For each completed arb group, notify the strategy engine
-        for market_id, groups in completed.items():
-            for leg_group_id in groups:
-                self._se.notify_arb_cleared(market_id, leg_group_id)
+        for market_id, leg_group_id in self._arb_completed_groups:
+            self._se.notify_arb_cleared(market_id, leg_group_id)
 
     def _build_result(
         self,

@@ -129,19 +129,11 @@ def heuristic_enhance(fv: FeatureVector) -> SignalContext:
 
     # Safety: cannot suppress both arb and MM simultaneously
     if suppress_mm and arb_quality < 0.01:
-        # If both would be suppressed, force at least one enabled
         if conf <= CONFIDENCE_MIN:
             arb_quality = 0.05
-            suppress_mm = False  # Must allow arbitrage
-        else:
-            # Allow MM but raise confidence to make it viable
             suppress_mm = False
-
-    # Additional check: ensure at least one strategy is enabled
-    if suppress_mm and arb_quality < 0.01:
-        logger.warning("AI/Heuristic produced total blackout - forcing minimal arb viability")
-        arb_quality = max(0.05, arb_quality)
-        suppress_mm = False
+        else:
+            suppress_mm = False
 
     # ── Hedge urgency ─────────────────────────────────────────────────────────
     ad = abs(fv.portfolio_delta)

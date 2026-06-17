@@ -85,7 +85,7 @@ class PortfolioAnalytics:
         if not returns:
             return 0.0
         mean = sum(returns) / len(returns)
-        variance = sum((r - mean) ** 2 for r in returns) / len(returns)
+        variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
         std = math.sqrt(variance)
         if std < 1e-9:
             return 0.0
@@ -98,7 +98,7 @@ class PortfolioAnalytics:
         downside = [r for r in returns if r < 0]
         if not downside:
             return 0.0
-        downside_std = math.sqrt(sum(r ** 2 for r in downside) / len(downside))
+        downside_std = math.sqrt(sum(r ** 2 for r in downside) / (len(downside) - 1))
         if downside_std < 1e-9:
             return 0.0
         return (mean - risk_free_rate) / downside_std * math.sqrt(252 * 24 * 60)
@@ -130,8 +130,8 @@ class PortfolioAnalytics:
     def _avg_hold_time_ms(self) -> float:
         if not self._fills:
             return 0.0
-        total = sum(getattr(f, "hold_time_ms", 0) for f in self._fills if hasattr(f, "hold_time_ms") and getattr(f, "hold_time_ms", 0) > 0)
-        return total / len(self._fills)
+        holds = [f.hold_time_ms for f in self._fills if f.hold_time_ms > 0]
+        return sum(holds) / len(holds) if holds else 0.0
 
     def _empty_metrics(self) -> PerformanceMetrics:
         return PerformanceMetrics(

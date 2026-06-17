@@ -166,11 +166,11 @@ class OpinionClient:
         """Submit an order to Opinion Markets."""
         await self._limiter.acquire()
         # Side mapping: 0 for Buy, 1 for Sell (Typical Opinion side mapping)
-        side_val = 0 if "BUY" in submission.side.value else 1
+        side_val = 0 if submission.side.is_buy else 1
 
         # Placeholder amounts
-        tokens = int(submission.token_quantity)
-        usdc_amount = int(submission.size_usdc * 1_000_000)
+        tokens = round(submission.token_quantity)
+        usdc_amount = round(submission.size_usdc * 1_000_000)
 
         maker_amount, taker_amount = (usdc_amount, tokens) if side_val == 0 else (tokens, usdc_amount)
 

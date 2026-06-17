@@ -175,8 +175,8 @@ class PolymarketClient:
     ) -> PlacedOrderResponse:
         """Submit a limit order to Polymarket CLOB."""
         await self._limiter.acquire()
-        tokens = int(submission.token_quantity)
-        usdc_amount = int(submission.size_usdc * 1_000_000)
+        tokens = round(submission.token_quantity)
+        usdc_amount = round(submission.size_usdc * 1_000_000)
 
         if "BUY" in submission.side.value:
             maker_amount = usdc_amount
@@ -194,7 +194,7 @@ class PolymarketClient:
             "tokenId": self._market_id_map.get(submission.market_id, submission.market_id),
             "makerAmount": str(maker_amount),
             "takerAmount": str(taker_amount),
-            "side": "BUY" if "BUY" in submission.side.value else "SELL",
+            "side": "BUY" if submission.side.is_buy else "SELL",
             "expiration": str(int(time.time()) + 3600),
             "nonce": str(final_nonce),
         }

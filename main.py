@@ -55,7 +55,8 @@ def _venue_token_ids(settings, token_field: str) -> list[str]:
     """Extract CLOB token IDs from registry for WS subscription."""
     registry = settings.trading.market_registry
     if not registry:
-        return list(settings.trading.markets)
+        logger.warning("No market registry configured — cannot resolve CLOB token IDs for WS subscription")
+        return []
     return [registry[m].get(token_field, "") for m in settings.trading.markets if registry[m].get(token_field)]
 
 

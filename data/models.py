@@ -60,6 +60,13 @@ class MarketSnapshot:
                 market_id=self.market_id,
                 platform=self.platform.value,
             )
+        if self.no_bid >= self.no_ask:
+            raise CrossedBookError(
+                f"Crossed NO book on {self.market_id}: "
+                f"bid={self.no_bid} >= ask={self.no_ask}",
+                market_id=self.market_id,
+                platform=self.platform.value,
+            )
 
     # ── Computed properties ──────────────────────────────────────────────────
 

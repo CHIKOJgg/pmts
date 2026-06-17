@@ -83,7 +83,7 @@ class TradeReporter:
                 no_qty=p.no_qty,
                 avg_cost_yes=p.avg_cost_yes,
                 avg_cost_no=p.avg_cost_no,
-                unrealized_pnl=p.realised_pnl,
+                unrealized_pnl=0.0,
             )
             for p in positions
         ]

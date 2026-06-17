@@ -277,6 +277,11 @@ class Orchestrator:
 
         if decision.rejected:
             self.proposals_rejected += 1
+            # Release strategy budget allocated before RiskEngine gate (Bug #20)
+            if proposal.strategy_id == StrategyId.ARB:
+                self._strategy.notify_arb_terminal(proposal.size_usdc)
+            else:
+                self._strategy.notify_mm_terminal(proposal.size_usdc)
             if decision.kill_switch_active:
                 task = asyncio.create_task(
                     self._kill_switch_response(),
@@ -449,7 +454,13 @@ class Orchestrator:
                         grp.pop("leg2_proposal", None)
                     else:
                         new_size_usdc = leg2_proposal.size_usdc * actual_ratio
-                        token_qty = round(new_size_usdc / leg2_proposal.limit_price, 6)
+                        # Release unused budget portion from scaling (leg2.size - new_size)
+                        unused = leg2_proposal.size_usdc - new_size_usdc
+                        if unused > 0.001:
+                            self._strategy.notify_arb_terminal(unused)
+                        # Refresh limit price from current market data to avoid stale price race
+                        refreshed_price = self._refresh_leg2_price(leg2_proposal)
+                        token_qty = round(new_size_usdc / refreshed_price, 6)
                         if token_qty > 0:
                             submission = OrderSubmission(
                                 order_id=str(uuid.uuid4()),
@@ -458,7 +469,7 @@ class Orchestrator:
                                 platform=leg2_proposal.platform,
                                 side=leg2_proposal.side,
                                 size_usdc=new_size_usdc,
-                                limit_price=leg2_proposal.limit_price,
+                                limit_price=refreshed_price,
                                 order_type=leg2_proposal.order_type,
                                 strategy_id=leg2_proposal.strategy_id,
                                 expiry_ms=leg2_proposal.expiry_ms,
@@ -471,6 +482,13 @@ class Orchestrator:
                             engine = self._pm_engine if leg2_proposal.platform == Platform.POLYMARKET else self._op_engine
                             grp[ArbLeg.LEG_2.value] = leg2_proposal.proposal_id
                             grp.pop("leg2_proposal", None)
+                            # Update _in_flight with the actual (scaled) size
+                            self._in_flight[leg2_proposal.proposal_id] = (
+                                leg2_proposal.strategy_id,
+                                new_size_usdc,
+                                leg2_proposal.platform,
+                                leg2_proposal.leg_group_id,
+                            )
                             await engine.submit(submission)
                         else:
                             await self._risk.notify_terminal(
@@ -483,32 +501,30 @@ class Orchestrator:
             # Check if all submitted legs are terminal → clear arb_in_flight
             submitted_pids = [pid for k, pid in grp.items() if isinstance(k, int)]
 
-            # Also check if leg2_proposal exists and is terminal (was never submitted due to abort)
             pending_leg2 = grp.get("leg2_proposal")
             all_terminal = False
 
             if not submitted_pids:
-                # No legs were submitted at all
                 all_terminal = True
-            elif pending_leg2 is not None:
-                # Leg1 was submitted, leg2 never was (aborted)
-                # Check if leg1 is terminal
-                all_terminal = (
-                    len(submitted_pids) == 1
-                    and (
-                        self._pm_engine.get_tracker(submitted_pids[0])
-                        or self._op_engine.get_tracker(submitted_pids[0])
-                        or _NullTracker()
-                    ).status.is_terminal
-                )
             else:
-                # Both legs were submitted, check both are terminal
-                all_terminal = len(submitted_pids) == 2 and all(
-                    (
-                        self._pm_engine.get_tracker(pid) or self._op_engine.get_tracker(pid) or _NullTracker()
-                    ).status.is_terminal
-                    for pid in submitted_pids
-                )
+                # Check whether every submitted leg is terminal
+                all_terminal = True
+                for pid in submitted_pids:
+                    tracker = (
+                        self._pm_engine.get_tracker(pid)
+                        or self._op_engine.get_tracker(pid)
+                    )
+                    if tracker is None:
+                        logger.warning(
+                            "ARB group %s: tracker missing for leg %s — treating as lost, clearing group",
+                            leg_group_id[:8],
+                            pid[:8],
+                        )
+                        all_terminal = True
+                        break
+                    if not tracker.status.is_terminal:
+                        all_terminal = False
+                        break
 
             if all_terminal and market_id:
                 self._strategy.notify_arb_cleared(market_id, leg_group_id)
@@ -525,6 +541,42 @@ class Orchestrator:
                 await engine.cancel(pid)
             except Exception as exc:
                 logger.error("Cancel failed for %s: %s", pid[:8], exc)
+
+    def _refresh_leg2_price(self, leg2_proposal: OrderProposal) -> float:
+        """Refresh leg 2 limit price from current market snapshot.
+
+        When leg 2 is submitted after leg 1 fills, the original limit price
+        may be stale. Use the current ask/bid with 1-tick crossing to
+        improve fill odds while preserving the arb edge.
+        """
+        from src.enums import Side as _Side
+        try:
+            snap = self._mdp.get_snapshot(leg2_proposal.market_id, leg2_proposal.platform)
+        except AttributeError:
+            # MDP doesn't support get_snapshot (test stubs)
+            return leg2_proposal.limit_price
+        if snap is None:
+            logger.warning("No snapshot for leg2 refresh on %s/%s, using original price",
+                           leg2_proposal.market_id, leg2_proposal.platform.value)
+            return leg2_proposal.limit_price
+
+        TICK = 0.001
+        if leg2_proposal.side == _Side.BUY_YES:
+            best_ask = snap.yes_ask
+            refreshed = round(best_ask + TICK, 4)
+        elif leg2_proposal.side == _Side.BUY_NO:
+            best_ask = snap.no_ask
+            refreshed = round(best_ask + TICK, 4)
+        elif leg2_proposal.side == _Side.SELL_YES:
+            best_bid = snap.yes_bid
+            refreshed = round(best_bid - TICK, 4)
+        else:  # SELL_NO
+            best_bid = snap.no_bid
+            refreshed = round(best_bid - TICK, 4)
+
+        # Clamp to valid range
+        refreshed = round(max(0.001, min(0.999, refreshed)), 4)
+        return refreshed
 
     # ── Property access to sub-components ───────────────────────────────────
 
@@ -547,11 +599,3 @@ class Orchestrator:
     def export_trade_journal(self, filename: Optional[str] = None) -> str:
         return self._trade_journal.export_csv(filename)
 
-
-class _NullTracker:
-    """Sentinel used when tracker lookup fails — always reports terminal."""
-
-    class _S:
-        is_terminal = True
-
-    status = _S()
