@@ -1,6 +1,9 @@
 version: "3.9"
 
 services:
+  # ────────────────────────────────────────────────────────────────────────────
+  # PMTS — основной сервис торговой системы
+  # ────────────────────────────────────────────────────────────────────────────
   pmts:
     build: .
     env_file: .env
@@ -8,11 +11,18 @@ services:
       - PYTHONPATH=/app
       - LOG_FORMAT=json
       - OBSERVABILITY_BIND_HOST=0.0.0.0
+      # Путь к БД внутри контейнера (соответствует DB_PATH из .env)
+      - DB_PATH=/app/data/portfolio.db
     volumes:
+      # Логи — сохраняем на хост для просмотра
       - ./logs:/app/logs
+      # Данные (SQLite) — сохраняем между перезапусками
+      - pmts-data:/app/data
     ports:
       - "8080:8080"
     restart: unless-stopped
+    # По умолчанию paper-режим. Для live замените на --mode live
+    # и переключите ENABLE_TRADING=true в .env
     command: ["--mode", "paper"]
     deploy:
       resources:
@@ -21,40 +31,36 @@ services:
         reservations:
           memory: 128M
 
+  # ────────────────────────────────────────────────────────────────────────────
+  # Prometheus — сбор метрик (опционально)
+  # ────────────────────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v2.54.1
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=7d"
-      - "--storage.tsdb.min-block-duration=2h"
-      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
-      - "--web.console.templates=/usr/share/prometheus/consoles"
     volumes:
       - ./docs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
     restart: unless-stopped
-    depends_on:
-      - pmts
-    deploy:
-      resources:
-        limits:
-          memory: 192M
-        reservations:
-          memory: 96M
+    profiles:
+      - monitoring
 
+  # ────────────────────────────────────────────────────────────────────────────
+  # Grafana — визуализация метрик (опционально)
+  # ────────────────────────────────────────────────────────────────────────────
   grafana:
     image: grafana/grafana:11.1.0
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?Set GF_SECURITY_ADMIN_PASSWORD}
+      # Пароль задаётся через .env или export:
+      #   GF_SECURITY_ADMIN_PASSWORD=secure_password
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
-      GF_INSTALL_PLUGINS: ""
     volumes:
       - grafana-data:/var/lib/grafana
       - ./docs/grafana-dashboard.json:/var/lib/grafana/dashboards/pmts-dashboard.json:ro
@@ -63,15 +69,13 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
-    depends_on:
-      - prometheus
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-        reservations:
-          memory: 64M
+    profiles:
+      - monitoring
 
+  # ────────────────────────────────────────────────────────────────────────────
+  # Backtest — разовый запуск бэктеста
+  #   docker compose --profile backtest up pmts-backtest
+  # ────────────────────────────────────────────────────────────────────────────
   pmts-backtest:
     build: .
     env_file: .env
@@ -79,9 +83,10 @@ services:
       - PYTHONPATH=/app
       - LOG_FORMAT=text
     command: ["--mode", "backtest", "--ticks", "5000", "--capital", "10000", "--verbose"]
-    profiles: ["backtest"]
+    profiles:
+      - backtest
 
 volumes:
-  logs:
+  pmts-data:
   prometheus-data:
   grafana-data:

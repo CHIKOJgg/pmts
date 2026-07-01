@@ -171,6 +171,7 @@ class TradingConfig:
     max_market_exposure_pct: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_PCT", 0.05))
     max_market_exposure_usdc: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_USDC", 500.0))
     max_net_delta: float = field(default_factory=lambda: _ef("MAX_NET_DELTA", 50.0))
+    db_path: Optional[str] = field(default_factory=lambda: _es("DB_PATH"))
     database_url: Optional[str] = field(default_factory=lambda: _es("DATABASE_URL"))
     redis_url: Optional[str] = field(default_factory=lambda: _es("REDIS_URL"))
     redis_enabled: bool = field(default_factory=lambda: _eb("REDIS_ENABLED", False))

@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Virtual environments
+.venv
+.venv_new
+.venv-wsl
+venv
+env
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# IDE
+.idea
+.vscode
+
+# Environment (secrets)
+.env
+
+# Databases (created at runtime)
+*.db
+*.db-shm
+*.db-wal
+backtest_results.db
+
+# Logs
+logs/
+
+# Documentation source (not needed in image)
+*.md
+docs/
+
+# Test files (not needed in runtime)
+test_*.py
+tests/
+test_output.txt
+
+# Reports and misc
+all_code.txt
+run*.txt
+*.md
