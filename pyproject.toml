@@ -6,6 +6,7 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+cache_dir = ".pytest_cache_local"
 markers = [
     "windows_only: mark test as Windows-specific (skipped on other platforms)",
 ]

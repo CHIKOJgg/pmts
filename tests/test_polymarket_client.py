@@ -921,7 +921,7 @@ class TestPolymarketClientEIP712Signing:
         signature = client._sign_order(order)
 
         assert signature is not None
-        assert len(signature) == 130  # 64 bytes + '0x' prefix
+        assert len(signature) == 132  # 65 bytes + '0x' prefix
 
 
 if __name__ == "__main__":
