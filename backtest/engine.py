@@ -519,11 +519,19 @@ class BacktestEngine:
                 self._pending[proposal.proposal_id] = (proposal, submit_ts)
                 self._sim.submit(proposal, submit_ts)
 
-            # Step 5: Process fills
+            # Step 5: Process fills (buys before sells to prevent NegativeHoldings)
             fill_ts = submit_ts + int(self._latency.submit_to_fill())
+            all_events: List[SimFill] = []
             for snap in [snap_pm, snap_op]:
-                for evt in self._sim.process_tick(snap, fill_ts):
-                    await self._handle_fill(evt)
+                all_events.extend(self._sim.process_tick(snap, fill_ts))
+
+            def _buy_key(e: SimFill) -> int:
+                p = self._pending.get(e.proposal_id)
+                return 0 if p is not None and p[0].side.is_buy else 1
+            all_events.sort(key=_buy_key)
+
+            for evt in all_events:
+                await self._handle_fill(evt)
 
             # Equity snapshot every 100 ticks
             if total_ticks % 100 == 0:
@@ -576,7 +584,18 @@ class BacktestEngine:
                 fill_price=evt.fill_price,
                 ts=evt.sim_ts,
             )
-            await self._portfolio.record_fill(fill)
+            try:
+                await self._portfolio.record_fill(fill)
+            except NegativeHoldings:
+                logger.warning(
+                    "Backtest fill skipped: NegativeHoldings for %s %s %s (filled=$%.2f @ %.4f)",
+                    proposal.proposal_id[:8], proposal.side.value, proposal.market_id,
+                    evt.filled_usdc, evt.fill_price,
+                )
+                self._sim.cancel(evt.proposal_id)
+                await self._risk.notify_terminal(evt.proposal_id, proposal.platform, proposal.size_usdc)
+                self._pending.pop(evt.proposal_id, None)
+                return
 
             # Release strategy budget and notify arb clearing if complete
             if proposal.strategy_id == StrategyId.ARB:

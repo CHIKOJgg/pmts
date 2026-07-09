@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PMTS Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        surface: { DEFAULT: '#0f1117', alt: '#1a1d29', hover: '#242738' },
+        border: '#2a2d3a',
+        text: { primary: '#e8eaed', secondary: '#9aa0a6', muted: '#5f6368' },
+        accent: { green: '#00c853', red: '#ff1744', yellow: '#ffd600', blue: '#448aff' }
+      }
+    }
+  }
+}
+</script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e8eaed; }
+.skeleton { background: linear-gradient(90deg, #1a1d29 25%, #242738 50%, #1a1d29 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 8px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.card { background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 12px; padding: 1.25rem; }
+.card-hover { transition: border-color 0.2s; }
+.card-hover:hover { border-color: #448aff; }
+.stat-value { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+.stat-label { font-size: 0.75rem; color: #9aa0a6; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; transition: all 0.2s; }
+.btn-primary { background: #448aff; color: white; }
+.btn-primary:hover { background: #2979ff; }
+.btn-danger { background: #ff1744; color: white; }
+.btn-danger:hover { background: #d50000; }
+.btn-outline { background: transparent; color: #9aa0a6; border: 1px solid #2a2d3a; }
+.btn-outline:hover { border-color: #e8eaed; color: #e8eaed; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+.badge-green { background: rgba(0,200,83,0.15); color: #00c853; }
+.badge-red { background: rgba(255,23,68,0.15); color: #ff1744; }
+.badge-yellow { background: rgba(255,214,0,0.15); color: #ffd600; }
+.badge-gray { background: rgba(154,160,166,0.15); color: #9aa0a6; }
+input, select { background: #0f1117; border: 1px solid #2a2d3a; border-radius: 8px; padding: 0.5rem 0.75rem; color: #e8eaed; font-size: 0.875rem; }
+input:focus, select:focus { outline: none; border-color: #448aff; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 0.75rem 0.5rem; font-size: 0.75rem; color: #5f6368; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; border-bottom: 1px solid #2a2d3a; }
+td { padding: 0.625rem 0.5rem; font-size: 0.875rem; border-bottom: 1px solid #2a2d3a; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.tab { padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 600; color: #5f6368; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+.tab.active { color: #448aff; border-bottom-color: #448aff; }
+.tab:hover { color: #e8eaed; }
+@media (max-width: 768px) { .stat-value { font-size: 1.25rem; } .card { padding: 1rem; } }
+</style>
+</head>
+<body>
+<div id="app" class="max-w-7xl mx-auto px-4 py-6">
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">PMTS</h1>
+      <p class="text-sm text-[#5f6368]">Prediction Market Trading System</p>
+    </div>
+    <div class="flex items-center gap-4">
+      <div id="status-indicator" class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-[#5f6368]"></span>
+        <span class="text-sm text-[#5f6368]">Connecting...</span>
+      </div>
+      <button onclick="refreshAll()" class="btn btn-outline text-sm">Refresh</button>
+    </div>
+  </div>
+
+  <div id="tabs" class="flex gap-1 mb-6 border-b border-[#2a2d3a]">
+    <span class="tab active" onclick="switchTab('overview',this)">Overview</span>
+    <span class="tab" onclick="switchTab('positions',this)">Positions</span>
+    <span class="tab" onclick="switchTab('kill-switch',this)">Kill Switch</span>
+    <span class="tab" onclick="switchTab('alerts',this)">Alerts</span>
+    <span class="tab" onclick="switchTab('trading',this)">Trading</span>
+  </div>
+
+  <div id="tab-overview" class="tab-content">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div class="card"><div class="stat-label">Total Value</div><div id="stat-total-value" class="stat-value mt-1">--</div></div>
+      <div class="card"><div class="stat-label">Cash (USDC)</div><div id="stat-cash" class="stat-value mt-1">--</div></div>
+      <div class="card"><div class="stat-label">Drawdown</div><div id="stat-drawdown" class="stat-value mt-1">--</div></div>
+      <div class="card"><div class="stat-label">Capital Util</div><div id="stat-cap-util" class="stat-value mt-1">--</div></div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div class="card"><div class="stat-label">Active Orders</div><div id="stat-active-orders" class="stat-value mt-1" data-platform="">--</div></div>
+      <div class="card"><div class="stat-label">Filled USDC</div><div id="stat-filled-usdc" class="stat-value mt-1">--</div></div>
+      <div class="card"><div class="stat-label">Proposals (A/R)</div><div id="stat-proposals" class="stat-value mt-1">--</div></div>
+    </div>
+    <div class="card">
+      <div class="stat-label mb-3">System Health</div>
+      <div id="health-details" class="text-sm text-[#9aa0a6]">Loading...</div>
+    </div>
+  </div>
+
+  <div id="tab-positions" class="tab-content hidden">
+    <div class="card">
+      <div class="flex items-center justify-between mb-4">
+        <div class="stat-label">Current Positions</div>
+        <span id="positions-count" class="text-sm text-[#5f6368]">0 positions</span>
+      </div>
+      <div id="positions-loading" class="skeleton h-32"></div>
+      <div id="positions-empty" class="hidden text-center py-12 text-[#5f6368]">
+        <p class="text-lg mb-1">No open positions</p>
+        <p class="text-sm">Active trades will appear here once placed</p>
+      </div>
+      <div id="positions-error" class="hidden text-center py-12 text-[#ff1744]"></div>
+      <div id="positions-table-wrapper" class="hidden overflow-x-auto">
+        <table><thead><tr>
+          <th>Market</th><th>Platform</th><th>Yes Qty</th><th>No Qty</th><th>Avg Cost Yes</th><th>Avg Cost No</th><th>Realised PnL</th>
+        </tr></thead><tbody id="positions-tbody"></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-kill-switch" class="tab-content hidden">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="card">
+        <div class="stat-label mb-3">Status</div>
+        <div id="ks-status" class="flex items-center gap-3 mb-4">
+          <span class="w-3 h-3 rounded-full bg-[#5f6368]"></span>
+          <span class="font-semibold">Unknown</span>
+        </div>
+        <div class="text-sm text-[#9aa0a6]" id="ks-details">Loading...</div>
+      </div>
+      <div class="card">
+        <div class="stat-label mb-3">Control</div>
+        <div class="flex flex-col gap-3">
+          <button id="btn-ks-activate" onclick="activateKillSwitch()" class="btn btn-danger">Activate Kill Switch</button>
+          <div class="flex gap-2 items-end">
+            <input id="ks-token-input" type="password" placeholder="Reset token" class="flex-1">
+            <button id="btn-ks-reset" onclick="resetKillSwitch()" class="btn btn-outline">Reset</button>
+          </div>
+          <div id="ks-message" class="hidden text-sm mt-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-alerts" class="tab-content hidden">
+    <div class="card">
+      <div class="stat-label mb-4">Recent Alerts</div>
+      <div id="alerts-loading" class="skeleton h-32"></div>
+      <div id="alerts-empty" class="hidden text-center py-12 text-[#5f6368]">
+        <p class="text-lg mb-1">No recent alerts</p>
+        <p class="text-sm">Alerts from the system will appear here</p>
+      </div>
+      <div id="alerts-table-wrapper" class="hidden overflow-x-auto">
+        <table><thead><tr><th>Time</th><th>Severity</th><th>Title</th><th>Message</th></tr></thead><tbody id="alerts-tbody"></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-trading" class="tab-content hidden">
+    <div class="card mb-4">
+      <div class="stat-label mb-3">Orchestrator Metrics</div>
+      <div id="trading-loading" class="skeleton h-24"></div>
+      <div id="trading-content" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div><div class="stat-label">Evaluated</div><div id="t-proposals" class="text-lg font-bold mt-1">--</div></div>
+        <div><div class="stat-label">Approved</div><div id="t-approved" class="text-lg font-bold mt-1">--</div></div>
+        <div><div class="stat-label">Rejected</div><div id="t-rejected" class="text-lg font-bold mt-1">--</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="stat-label mb-3">Market Data</div>
+      <div id="market-loading" class="skeleton h-24"></div>
+      <div id="market-content" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div><div class="stat-label">Snapshots</div><div id="m-snapshots" class="text-lg font-bold mt-1">--</div></div>
+        <div><div class="stat-label">Stale</div><div id="m-stale" class="text-lg font-bold mt-1">--</div></div>
+        <div><div class="stat-label">Dedup</div><div id="m-dedup" class="text-lg font-bold mt-1">--</div></div>
+        <div><div class="stat-label">Markets Seen</div><div id="m-markets" class="text-lg font-bold mt-1">--</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = '';
+let polling = null;
+
+async function apiFetch(path, options = {}) {
+  const resp = await fetch(API_BASE + path, {
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+    ...options,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    let msg;
+    try { msg = JSON.parse(text).error || text; } catch { msg = text; }
+    throw new Error(msg || `HTTP ${resp.status}`);
+  }
+  if (resp.status === 204) return null;
+  return resp.json();
+}
+
+async function fetchHealth() {
+  try {
+    const h = await apiFetch('/health');
+    updateStatus(h.status === 'ALIVE');
+    return h;
+  } catch {
+    updateStatus(false);
+    return null;
+  }
+}
+
+async function fetchMetrics() {
+  try {
+    return await apiFetch('/metrics/json');
+  } catch { return null; }
+}
+
+function updateStatus(alive) {
+  const el = document.getElementById('status-indicator');
+  if (alive) {
+    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-[#00c853]"></span><span class="text-sm text-[#00c853]">Connected</span>';
+  } else {
+    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-[#ff1744]"></span><span class="text-sm text-[#ff1744]">Disconnected</span>';
+  }
+}
+
+function fmt(val, decimals = 2) {
+  if (val === null || val === undefined) return '--';
+  if (typeof val === 'number') return val.toFixed(decimals);
+  return val;
+}
+
+function fmtPct(val) {
+  if (val === null || val === undefined) return '--';
+  return (val * 100).toFixed(2) + '%';
+}
+
+function fmtUsd(val) {
+  if (val === null || val === undefined) return '--';
+  return '$' + Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function refreshAll() {
+  const metrics = await fetchMetrics();
+  const health = await fetchHealth();
+
+  if (metrics) {
+    const r = metrics.risk || {};
+    const p = metrics.portfolio || {};
+    const o = metrics.orchestrator || {};
+    const m = metrics.market_data || {};
+
+    setText('stat-total-value', fmtUsd(p.total_value));
+    setText('stat-cash', fmtUsd(p.cash_usdc));
+    setText('stat-drawdown', fmtPct(r.drawdown));
+    setText('stat-cap-util', fmtPct(r.capital_utilization || p.reserved_capital && p.total_value ? p.reserved_capital / p.total_value : 0));
+
+    setText('stat-active-orders', fmt(o.active_orders ?? o.orders_submitted ?? '--'));
+    setText('stat-filled-usdc', fmtUsd(o.filled_usdc));
+    setText('stat-proposals', (o.proposals_evaluated ?? '--') + ' / ' + (o.proposals_approved ?? '--'));
+
+    setText('t-proposals', fmt(o.proposals_evaluated, 0));
+    setText('t-approved', fmt(o.proposals_approved, 0));
+    setText('t-rejected', fmt(o.proposals_rejected, 0));
+    setText('m-snapshots', fmt(m.snapshots_received, 0));
+    setText('m-stale', fmt(m.stale_emitted, 0));
+    setText('m-dedup', fmt(m.dedup_suppressed, 0));
+    setText('m-markets', fmt(m.markets_seen_total, 0));
+
+    showEl('trading-content');
+    hideEl('trading-loading');
+    showEl('market-content');
+    hideEl('market-loading');
+
+    if (r.kill_switch_active) {
+      updateKillSwitchUI(true);
+    } else {
+      updateKillSwitchUI(false);
+    }
+  }
+
+  if (health) {
+    const details = document.getElementById('health-details');
+    details.innerHTML = `<pre class="text-xs text-[#9aa0a6] overflow-auto max-h-64">${JSON.stringify(health, null, 2)}</pre>`;
+  }
+}
+
+async function refreshPositions() {
+  showEl('positions-loading');
+  hideEl('positions-empty');
+  hideEl('positions-error');
+  hideEl('positions-table-wrapper');
+  try {
+    const positions = await apiFetch('/api/positions');
+    const tbody = document.getElementById('positions-tbody');
+    const count = document.getElementById('positions-count');
+    tbody.innerHTML = '';
+    if (!positions || positions.length === 0) {
+      hideEl('positions-loading');
+      showEl('positions-empty');
+      count.textContent = '0 positions';
+      return;
+    }
+    count.textContent = positions.length + ' position' + (positions.length !== 1 ? 's' : '');
+    for (const p of positions) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="font-medium">${esc(p.market_id)}</td><td>${esc(p.platform)}</td><td>${fmt(p.yes_qty, 4)}</td><td>${fmt(p.no_qty, 4)}</td><td>${fmtUsd(p.avg_cost_yes)}</td><td>${fmtUsd(p.avg_cost_no)}</td><td class="${p.unrealized_pnl >= 0 ? 'text-[#00c853]' : 'text-[#ff1744]'}">${fmtUsd(p.unrealized_pnl)}</td>`;
+      tbody.appendChild(tr);
+    }
+    hideEl('positions-loading');
+    showEl('positions-table-wrapper');
+  } catch (err) {
+    hideEl('positions-loading');
+    const errEl = document.getElementById('positions-error');
+    errEl.classList.remove('hidden');
+    errEl.textContent = 'Error: ' + err.message;
+    count.textContent = 'error';
+  }
+}
+
+async function refreshAlerts() {
+  showEl('alerts-loading');
+  hideEl('alerts-empty');
+  hideEl('alerts-table-wrapper');
+  try {
+    const alerts = await apiFetch('/api/alerts?limit=50');
+    const tbody = document.getElementById('alerts-tbody');
+    tbody.innerHTML = '';
+    if (!alerts || alerts.length === 0) {
+      hideEl('alerts-loading');
+      showEl('alerts-empty');
+      return;
+    }
+    for (const a of alerts) {
+      const tr = document.createElement('tr');
+      const sevClass = a.severity === 'critical' || a.severity === 'error' ? 'badge-red' : a.severity === 'warning' ? 'badge-yellow' : 'badge-gray';
+      const ts = new Date(a.timestamp * 1000).toLocaleString();
+      tr.innerHTML = `<td class="text-xs text-[#5f6368]">${ts}</td><td><span class="badge ${sevClass}">${esc(a.severity)}</span></td><td class="font-medium">${esc(a.title)}</td><td class="text-[#9aa0a6] text-sm">${esc(a.message)}</td>`;
+      tbody.appendChild(tr);
+    }
+    hideEl('alerts-loading');
+    showEl('alerts-table-wrapper');
+  } catch {
+    hideEl('alerts-loading');
+    showEl('alerts-empty');
+  }
+}
+
+function updateKillSwitchUI(active) {
+  const el = document.getElementById('ks-status');
+  if (active) {
+    el.innerHTML = '<span class="w-3 h-3 rounded-full bg-[#ff1744]"></span><span class="font-semibold text-[#ff1744]">ACTIVE</span>';
+    document.getElementById('btn-ks-activate').disabled = true;
+  } else {
+    el.innerHTML = '<span class="w-3 h-3 rounded-full bg-[#00c853]"></span><span class="font-semibold text-[#00c853]">Inactive</span>';
+    document.getElementById('btn-ks-activate').disabled = false;
+  }
+  document.getElementById('ks-details').textContent = active ? 'Kill switch is active. New orders are blocked.' : 'Kill switch is inactive. Trading proceeds normally.';
+}
+
+async function activateKillSwitch() {
+  const btn = document.getElementById('btn-ks-activate');
+  btn.disabled = true;
+  btn.textContent = 'Activating...';
+  const msgEl = document.getElementById('ks-message');
+  msgEl.classList.remove('hidden');
+  try {
+    const res = await apiFetch('/kill-switch/activate', {
+      method: 'POST',
+      body: JSON.stringify({ token: '', reason: 'dashboard_manual', operator_id: 'dashboard' }),
+    });
+    msgEl.className = 'text-sm mt-2 text-[#00c853]';
+    msgEl.textContent = 'Kill switch activated successfully';
+    updateKillSwitchUI(true);
+  } catch (err) {
+    msgEl.className = 'text-sm mt-2 text-[#ff1744]';
+    msgEl.textContent = 'Activation failed: ' + err.message;
+  }
+  btn.disabled = false;
+  btn.textContent = 'Activate Kill Switch';
+}
+
+async function resetKillSwitch() {
+  const token = document.getElementById('ks-token-input').value;
+  if (!token) { showKsMsg('Enter the reset token', 'text-[#ffd600]'); return; }
+  const msgEl = document.getElementById('ks-message');
+  msgEl.classList.remove('hidden');
+  try {
+    const res = await apiFetch('/kill-switch/reset?token=' + encodeURIComponent(token), { method: 'POST' });
+    msgEl.className = 'text-sm mt-2 text-[#00c853]';
+    msgEl.textContent = 'Kill switch reset successfully';
+    updateKillSwitchUI(false);
+    document.getElementById('ks-token-input').value = '';
+  } catch (err) {
+    msgEl.className = 'text-sm mt-2 text-[#ff1744]';
+    msgEl.textContent = 'Reset failed: ' + err.message;
+  }
+}
+
+function showKsMsg(msg, cls) {
+  const el = document.getElementById('ks-message');
+  el.className = 'text-sm mt-2 ' + cls;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function showEl(id) { document.getElementById(id).classList.remove('hidden'); }
+function hideEl(id) { document.getElementById(id).classList.add('hidden'); }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  if (name === 'positions') refreshPositions();
+  if (name === 'alerts') refreshAlerts();
+}
+
+refreshAll();
+if (polling) clearInterval(polling);
+polling = setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>

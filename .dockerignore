@@ -6,6 +6,7 @@
 # Virtual environments
 .venv
 .venv_new
+.venv_local
 .venv-wsl
 venv
 env
@@ -16,6 +17,8 @@ __pycache__
 *.pyo
 *.pyd
 .pytest_cache
+.pytest_cache_local
+.pytest-tmp
 .mypy_cache
 .ruff_cache
 
