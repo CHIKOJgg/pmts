@@ -11,6 +11,7 @@ services:
       - PYTHONPATH=/app
       - LOG_FORMAT=json
       - OBSERVABILITY_BIND_HOST=0.0.0.0
+      - OBSERVABILITY_PORT=8090
       # Путь к БД внутри контейнера (соответствует DB_PATH из .env)
       - DB_PATH=/app/data/portfolio.db
     volumes:
@@ -19,7 +20,7 @@ services:
       # Данные (SQLite) — сохраняем между перезапусками
       - pmts-data:/app/data
     ports:
-      - "8080:8080"
+      - "8090:8090"
     restart: unless-stopped
     # По умолчанию paper-режим. Для live замените на --mode live
     # и переключите ENABLE_TRADING=true в .env

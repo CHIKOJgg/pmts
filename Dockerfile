@@ -25,10 +25,10 @@ USER pmts
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8080
+EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/ready || exit 1
+    CMD curl -f http://localhost:8090/ready || exit 1
 
 ENTRYPOINT ["python", "main.py"]
 CMD ["--mode", "paper"]
