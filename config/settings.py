@@ -172,6 +172,7 @@ class TradingConfig:
     max_market_exposure_usdc: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_USDC", 500.0))
     max_net_delta: float = field(default_factory=lambda: _ef("MAX_NET_DELTA", 50.0))
     db_path: Optional[str] = field(default_factory=lambda: _es("DB_PATH"))
+    market_registry_path: str = field(default_factory=lambda: _e("MARKET_REGISTRY_PATH", "market_registry.json"))
     database_url: Optional[str] = field(default_factory=lambda: _es("DATABASE_URL"))
     redis_url: Optional[str] = field(default_factory=lambda: _es("REDIS_URL"))
     redis_enabled: bool = field(default_factory=lambda: _eb("REDIS_ENABLED", False))
@@ -230,6 +231,12 @@ class AlertConfig:
 
 
 @dataclass
+class ObservabilityConfig:
+    bind_host: str = field(default_factory=lambda: _e("OBSERVABILITY_BIND_HOST", "127.0.0.1"))
+    port: int = field(default_factory=lambda: _ei("OBSERVABILITY_PORT", 8080))
+
+
+@dataclass
 class Settings:
     polymarket: PolymarketConfig = field(default_factory=PolymarketConfig)
     opinion: OpinionConfig = field(default_factory=OpinionConfig)
@@ -237,6 +244,7 @@ class Settings:
     ai: AIConfig = field(default_factory=AIConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
     def validate(self, mode: str = "live") -> None:
         """Strict validation of all configuration before startup."""

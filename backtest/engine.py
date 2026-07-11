@@ -436,17 +436,14 @@ class BacktestEngine:
         self._se.add_proposal_callback(_collect)
 
         # Wrapper: intercept FE→SE to pass simulated now_ts (signal age fix)
-        # Remove the direct FE→SE callback added in __init__ and replace with
-        # a closure that captures the current tick's submit_ts.
-        if self._se.on_feature_vector in self._fe._callbacks:
-            self._fe._callbacks.remove(self._se.on_feature_vector)
-
+        # Replace the direct FE→SE callback added in __init__ with a closure
+        # that captures the current tick's submit_ts.
         _current_submit_ts: list = [0]  # mutable cell for closure capture
 
         async def _fe_to_se_with_simtime(fv: "FeatureVector") -> None:
             await self._se.on_feature_vector(fv, now_ts=_current_submit_ts[0])
 
-        self._fe.add_callback(_fe_to_se_with_simtime)
+        self._fe.replace_callback(self._se.on_feature_vector, _fe_to_se_with_simtime)
 
         # Merge all tick streams in chronological order
         all_ticks: List[Tuple[int, str, MarketSnapshot, MarketSnapshot]] = []

@@ -9,10 +9,10 @@ from eth_account import Account
 from execution.rate_limiter import VenueRateLimiter
 from infrastructure.retry import async_retry
 
+from execution.clients.base import BaseExchangeClient
 from execution.engine import (
     ExchangeClient,
     OpenOrder,
-    OrderStatusFill,
     OrderStatusResponse,
     PlacedOrderResponse,
 )
@@ -37,7 +37,7 @@ _EIP712_DOMAIN = {
 _SANDBOX_HOST: str = "https://openapi-testnet.opinion.trade/openapi"
 
 
-class OpinionClient:
+class OpinionClient(BaseExchangeClient):
     """
     Opinion Markets REST API Client implementation.
     Includes EIP-712 order signing.
@@ -97,28 +97,10 @@ class OpinionClient:
             return int(market_id, 16)
         return int.from_bytes(market_id.encode()[:8], byteorder="big", signed=False)
 
-    @property
-    def platform(self) -> Platform:
-        return self.PLATFORM
+    _ERROR_KEY: str = "message"
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                base_url=self._host, headers={"Content-Type": "application/json", "apikey": self._api_key}
-            )
-        return self._session
-
-    async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
-        self._wallet_private_key = ""
-        self._last_status_filled_usdc.clear()
-
-    async def _read_json_or_text(self, resp: aiohttp.ClientResponse) -> Any:
-        try:
-            return await resp.json()
-        except Exception:
-            return {"message": await resp.text()}
+    def _session_headers(self) -> Dict[str, str]:
+        return {"Content-Type": "application/json", "apikey": self._api_key}
 
     def _sign_order(self, order: Dict[str, Any]) -> str:
         """Sign order using EIP-712."""
@@ -256,19 +238,7 @@ class OpinionClient:
             else:
                 cumulative_filled_usdc = cumulative_filled
 
-            previously_seen = self._last_status_filled_usdc.get(exchange_order_id, 0.0)
-            delta_usdc = max(0.0, cumulative_filled_usdc - previously_seen)
-            new_fills = []
-            if delta_usdc > 0 and price > 0:
-                new_fills.append(
-                    OrderStatusFill(
-                        fill_usdc=delta_usdc,
-                        fill_price=price,
-                        fill_tokens=delta_usdc / price,
-                        ts=int(time.time() * 1000),
-                    )
-                )
-                self._last_status_filled_usdc[exchange_order_id] = cumulative_filled_usdc
+            new_fills = self._compute_fill_delta(exchange_order_id, cumulative_filled_usdc, price)
             return OrderStatusResponse(
                 exchange_order_id=exchange_order_id,
                 is_live=status in ["open", "partial"],

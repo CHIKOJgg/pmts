@@ -300,6 +300,7 @@ class ObservabilityServer:
         try:
             body = await request.json()
         except Exception:
+            logger.debug("Failed to parse request JSON; using empty body")
             body = {}
 
         token = body.get("token", "")
@@ -333,6 +334,7 @@ class ObservabilityServer:
         try:
             body = await request.json()
         except Exception:
+            logger.debug("Failed to parse request JSON; using empty body")
             body = {}
 
         token = body.get("token", "")

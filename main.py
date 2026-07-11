@@ -17,10 +17,14 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config.settings import get_settings
+from config.settings import Settings, get_settings
 from config.logging_setup import configure_logging
 from src.enums import Platform
 from src.clock import LiveClock
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from data.market_data_provider import MarketDataProvider
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +48,14 @@ def _stable_seed(value: str) -> int:
     return int.from_bytes(digest[:4], "big")
 
 
-def _venue_market_ids(settings, venue: str) -> list[str]:
+def _venue_market_ids(settings: Settings, venue: str) -> list[str]:
     registry = settings.trading.market_registry
     if not registry:
         return list(settings.trading.markets)
     return [registry[m][venue] for m in settings.trading.markets]
 
 
-def _venue_token_ids(settings, token_field: str) -> list[str]:
+def _venue_token_ids(settings: Settings, token_field: str) -> list[str]:
     """Extract CLOB token IDs from registry for WS subscription."""
     registry = settings.trading.market_registry
     if not registry:
@@ -60,7 +64,7 @@ def _venue_token_ids(settings, token_field: str) -> list[str]:
     return [registry[m].get(token_field, "") for m in settings.trading.markets if registry[m].get(token_field)]
 
 
-def _token_to_logical_map(settings, token_field: str) -> dict[str, str]:
+def _token_to_logical_map(settings: Settings, token_field: str) -> dict[str, str]:
     """Map from CLOB token IDs back to logical market IDs."""
     registry = settings.trading.market_registry
     if not registry:
@@ -73,7 +77,7 @@ def _token_to_logical_map(settings, token_field: str) -> dict[str, str]:
     return result
 
 
-def _pm_market_id_map(settings) -> dict[str, str]:
+def _pm_market_id_map(settings: Settings) -> dict[str, str]:
     """Build a market_id_map for PolymarketClient using YES token IDs.
 
     The PolymarketClient uses this to resolve logical market IDs to CLOB token
@@ -92,7 +96,7 @@ def _pm_market_id_map(settings) -> dict[str, str]:
     return result
 
 
-def _logical_to_venue_map(settings, venue: str) -> dict[str, str]:
+def _logical_to_venue_map(settings: Settings, venue: str) -> dict[str, str]:
     registry = settings.trading.market_registry
     if not registry:
         return {}
@@ -106,7 +110,7 @@ def _venue_to_logical_map(settings, venue: str) -> dict[str, str]:
     return {registry[m][venue]: m for m in settings.trading.markets}
 
 
-def _market_data_metrics(mdp) -> dict:
+def _market_data_metrics(mdp: MarketDataProvider) -> dict[str, Any]:
     return {
         "snapshots_received": mdp.snapshots_received,
         "stale_emitted": mdp.stale_emitted,
@@ -147,7 +151,7 @@ async def run_live() -> None:
     clock = LiveClock()
     
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
-    database_url = settings.trading.database_url or os.environ.get("DATABASE_URL")
+    database_url = settings.trading.database_url
     if database_url:
         store = PostgresPortfolioStore(dsn=database_url)
         await store.connect()
@@ -299,7 +303,7 @@ async def run_live() -> None:
     )
 
     # Market registry hot-reload
-    market_registry_path = os.environ.get("MARKET_REGISTRY_PATH", "market_registry.json")
+    market_registry_path = settings.trading.market_registry_path
     from infrastructure.market_watcher import MarketRegistryWatcher
     def _reload_market_registry(registry: dict) -> None:
         logger.info("Market registry hot-reloaded (%d entries)", len(registry))
@@ -313,8 +317,8 @@ async def run_live() -> None:
         poll_interval_s=30.0,
     )
 
-    obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_bind_host = settings.observability.bind_host
+    obs_port = settings.observability.port
     obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
     
     monitor = HealthMonitor(
@@ -436,7 +440,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     logger.info("Paper trading initializing: markets=%s", settings.trading.markets)
     
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
-    database_url = settings.trading.database_url or os.environ.get("DATABASE_URL")
+    database_url = settings.trading.database_url
     if database_url:
         store = PostgresPortfolioStore(dsn=database_url)
         await store.connect()
@@ -577,7 +581,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     )
 
     # Market registry hot-reload
-    market_registry_path = os.environ.get("MARKET_REGISTRY_PATH", "market_registry.json")
+    market_registry_path = settings.trading.market_registry_path
     from infrastructure.market_watcher import MarketRegistryWatcher
     def _reload_market_registry(registry: dict) -> None:
         logger.info("Market registry hot-reloaded (%d entries)", len(registry))
@@ -591,8 +595,8 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         poll_interval_s=30.0,
     )
 
-    obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_bind_host = settings.observability.bind_host
+    obs_port = settings.observability.port
     obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
     
     monitor = HealthMonitor(
@@ -711,7 +715,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     logger.info("Offline paper trading initializing: markets=%s", settings.trading.markets)
 
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
-    database_url = settings.trading.database_url or os.environ.get("DATABASE_URL")
+    database_url = settings.trading.database_url
     if database_url:
         store = PostgresPortfolioStore(dsn=database_url)
         await store.connect()
@@ -838,8 +842,8 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     )
     risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
 
-    obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_bind_host = settings.observability.bind_host
+    obs_port = settings.observability.port
     obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
 
     monitor = HealthMonitor(

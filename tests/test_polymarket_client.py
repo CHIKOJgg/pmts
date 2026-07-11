@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from execution.clients.polymarket import PolymarketClient, _assert_protocol_compat
+from execution.clients.polymarket import PolymarketClient
 from execution.engine import ExchangeClient
 from src.enums import Platform
 
@@ -62,12 +62,6 @@ class TestPolymarketClientInstantiation:
             host="https://placeholder.invalid",
         )
         assert isinstance(client, ExchangeClient)
-
-    def test_protocol_compat_function_does_not_raise(self) -> None:
-        """Protocol compatibility check should pass."""
-        # This function is now a no-op since validation happens in __init__
-        # The actual validation is tested in test_rejects_empty_api_key and similar
-        _assert_protocol_compat()
 
     def test_rejects_empty_api_key(self) -> None:
         """Client should reject empty API key."""
