@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)

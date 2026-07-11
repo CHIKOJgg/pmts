@@ -1,11 +1,10 @@
-import os
 import pytest
-import sqlite3
-from risk.engine import RiskEngine
-from risk.kill_switch import KillSwitch
-from risk.limits import RiskLimits
+
 from portfolio.manager import PortfolioManager
 from portfolio.storage import SqlitePortfolioStore
+from risk.engine import RiskEngine
+from risk.kill_switch import KillSwitch
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -54,16 +53,16 @@ def test_kill_switch_recovery_on_startup(db_path, portfolio):
     store1 = SqlitePortfolioStore(db_path=db_path)
     ks1 = KillSwitch(confirmation_token="test-token-secure-123")
     re1 = RiskEngine(portfolio=portfolio, kill_switch=ks1, store=store1)
-    
+
     re1.manual_activate(reason="test_manual")
     assert re1.kill_switch_active
-    
+
     # 2. Simulate process restart by creating new objects with same DB
     store2 = SqlitePortfolioStore(db_path=db_path)
     ks2 = KillSwitch(confirmation_token="test-token-secure-123")
     # This should load the state from store2
     re2 = RiskEngine(portfolio=portfolio, kill_switch=ks2, store=store2)
-    
+
     assert re2.kill_switch_active, "Kill switch should be active after restart"
 
 def test_kill_switch_no_recovery_if_not_activated(db_path, portfolio):
@@ -71,12 +70,12 @@ def test_kill_switch_no_recovery_if_not_activated(db_path, portfolio):
     store1 = SqlitePortfolioStore(db_path=db_path)
     ks1 = KillSwitch(confirmation_token="test-token-secure-123")
     re1 = RiskEngine(portfolio=portfolio, kill_switch=ks1, store=store1)
-    
+
     assert not re1.kill_switch_active
-    
+
     # 2. Restart
     store2 = SqlitePortfolioStore(db_path=db_path)
     ks2 = KillSwitch(confirmation_token="test-token-secure-123")
     re2 = RiskEngine(portfolio=portfolio, kill_switch=ks2, store=store2)
-    
+
     assert not re2.kill_switch_active

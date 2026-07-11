@@ -293,7 +293,7 @@ class ArbitrageStrategy:
                     leg_group_id=group_id, leg_number=ArbLeg.LEG_2,
                     min_fill_ratio=None, expiry_ms=expiry_ms, source_ts=fv.ts,
                 )
-            except Exception as exc:
+            except Exception:
                 continue
 
             valid1, err1 = self._validate_proposal(leg1)

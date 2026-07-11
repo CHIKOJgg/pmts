@@ -17,8 +17,8 @@ from execution.models import ExecutionResult, OrderProposal, OrderSubmission
 from infrastructure.alerting import Alert, AlertRouter, AlertSeverity
 from infrastructure.latency import LatencyTracker, Timer
 from infrastructure.observability import PROPOSALS_TOTAL
-from portfolio.manager import FillRecord, PortfolioManager
 from portfolio.journal import TradeJournal
+from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
 from risk.trading_schedule import TradingSchedule
 from src.clock import Clock, LiveClock

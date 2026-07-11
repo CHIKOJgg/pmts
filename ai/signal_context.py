@@ -1,5 +1,6 @@
 """ai/signal_context.py — SignalContext: the ONLY output the AI module produces."""
 from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 

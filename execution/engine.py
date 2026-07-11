@@ -21,9 +21,9 @@ from infrastructure.observability import (
 )
 from risk.engine import RiskEngine
 from src.clock import Clock, LiveClock
+from src.enums import ArbLeg, OrderStatus, OrderType, Platform, Side, StrategyId
 from src.errors import ExchangeRejected
 from src.protocols import MarketDataProvider, PortfolioStore
-from src.enums import ArbLeg, OrderStatus, OrderType, Platform, Side, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -430,6 +430,15 @@ class ExecutionEngine:
 
     def get_tracker(self, proposal_id: str) -> Optional[OrderTracker]:
         return self._trackers.get(proposal_id)
+
+    def get_open_exchange_order_ids(self) -> set[str]:
+        """Exchange order IDs that are currently tracked as open locally."""
+        ids: set[str] = set()
+        for pid in list(self._open_ids):
+            tracker = self._trackers.get(pid)
+            if tracker is not None and tracker.exchange_order_id:
+                ids.add(tracker.exchange_order_id)
+        return ids
 
     @property
     def live_order_count(self) -> int:

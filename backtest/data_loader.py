@@ -4,7 +4,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from data.models import MarketSnapshot
 from src.enums import Platform

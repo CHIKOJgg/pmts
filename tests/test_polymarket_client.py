@@ -20,9 +20,6 @@ from src.enums import Platform
 from tests.venue_fixtures import (
     _FakeResponse,
     _FakeSession,
-    opinion_order_submission,
-    polymarket_order_submission,
-    temp_dir_windows_safe,
 )
 
 

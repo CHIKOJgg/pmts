@@ -7,8 +7,8 @@ from src.enums import Platform, StrategyId
 
 # Forward references for circular import avoidance
 if False:
-    from portfolio.manager import DeltaResult, PortfolioMTM
     from data.models import MarketSnapshot
+    from portfolio.manager import DeltaResult, PortfolioMTM
 
 
 class PortfolioProvider(Protocol):

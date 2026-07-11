@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import csv
-import io
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from portfolio.manager import FillRecord
 

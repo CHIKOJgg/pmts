@@ -3,25 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import multiprocessing
 import queue
 from typing import Any, Dict, Optional
 
 from data.models import MarketSnapshot
-from src.clock import SimClock
-from src.enums import Platform, Side, StrategyId
+from src.enums import Platform
 
 logger = logging.getLogger(__name__)
 
 
 def _build_strategy(strategy_id: str, config: Dict[str, Any]) -> Any:
     """Instantiate a strategy based on config."""
-    from engine.strategy_engine import StrategyEngine, StrategyConfig
+    from engine.strategy_engine import StrategyConfig, StrategyEngine
     from strategies.arbitrage import ArbConfig
-    from strategies.delta_neutral import DeltaNeutralConfig
     from strategies.correlation import CorrelationTracker
+    from strategies.delta_neutral import DeltaNeutralConfig
 
     strat_cfg = StrategyConfig(
         arb_enabled=config.get("arb_enabled", True),
@@ -130,8 +128,7 @@ async def _run_strategy(
 
             elif msg_type == "feature_vector":
                 fv_dict = message.get("feature_vector", {})
-                from data.models import FeatureVector
-                from data.models import VenueSnapshot
+                from data.models import FeatureVector, VenueSnapshot
                 if "venues" in fv_dict:
                     fv_dict["venues"] = {
                         Platform(k) if isinstance(k, str) else k:
@@ -176,8 +173,7 @@ async def _process_market_data(
 ) -> Optional[Dict[str, Any]]:
     fv_data = data.get("feature_vector")
     if fv_data:
-        from data.models import FeatureVector
-        from data.models import VenueSnapshot
+        from data.models import FeatureVector, VenueSnapshot
 
         if "venues" in fv_data:
             fv_data["venues"] = {

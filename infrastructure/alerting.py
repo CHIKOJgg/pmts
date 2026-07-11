@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -143,6 +142,7 @@ class AlertRouter:
 
     async def _send_email(self, alert: Alert) -> None:
         from email.mime.text import MIMEText
+
         import aiosmtplib
 
         email_username = self._config.email_username

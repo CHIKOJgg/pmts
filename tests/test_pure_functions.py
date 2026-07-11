@@ -6,9 +6,8 @@ These exercise pricing/risk math directly without any IO, network, or async.
 from __future__ import annotations
 
 from execution.models import OrderProposal
-from src.enums import ArbLeg, OrderType, Platform, Side, StrategyId
-
 from risk.engine import _drawdown, _projected_delta
+from src.enums import ArbLeg, OrderType, Platform, Side, StrategyId
 from strategies.arbitrage import estimate_taker_cost
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
@@ -9,6 +11,16 @@ from typing import List, Optional
 from execution.models import ExecutionResult, OrderSubmission
 from src.clock import Clock, LiveClock
 from src.enums import OrderStatus
+
+# Monotonic nonce source. Polymarket rejects duplicate/non-increasing order
+# nonces for the same signer, so we use a strictly increasing counter seeded at
+# the current time rather than a wall-clock value that can collide within a
+# single millisecond at high order throughput.
+_nonce_counter = itertools.count(int(time.time() * 1000))
+
+
+def _new_nonce() -> int:
+    return next(_nonce_counter)
 
 FILL_COMPLETE_THRESHOLD: float = 0.999  # dust tolerance
 DUST_FLOOR_USDC: float = 0.001
@@ -86,8 +98,8 @@ class OrderTracker:
         self.tx_hash: Optional[str] = None
         self._last_latency_ms: int = 0
         self.terminal_at: Optional[int] = None
-        # Microsecond resolution to prevent nonce collisions (Issue #1)
-        self.nonce: int = int(self._clock.now_ms() * 1000)
+        # Strictly increasing, collision-free nonce for the exchange (Issue #1)
+        self.nonce: int = _new_nonce()
 
     # ── Computed properties ───────────────────────────────────────────────────
 

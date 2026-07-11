@@ -7,12 +7,11 @@ Provides model_copy() and model_dump() for API compatibility.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 from src.enums import Platform
 from src.errors import CrossedBookError
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers

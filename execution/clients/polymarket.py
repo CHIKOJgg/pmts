@@ -8,9 +8,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import aiohttp
 from eth_account import Account
 
-from execution.rate_limiter import VenueRateLimiter
-from infrastructure.retry import async_retry
-
 from execution.clients.base import BaseExchangeClient
 from execution.engine import (
     ExchangeClient,
@@ -19,8 +16,10 @@ from execution.engine import (
     PlacedOrderResponse,
 )
 from execution.models import OrderSubmission
-from src.errors import ExchangeRejected
+from execution.rate_limiter import VenueRateLimiter
+from infrastructure.retry import async_retry
 from src.enums import Platform
+from src.errors import ExchangeRejected
 
 logger = logging.getLogger(__name__)
 

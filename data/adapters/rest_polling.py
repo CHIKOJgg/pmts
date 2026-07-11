@@ -49,7 +49,7 @@ class RestPollingAdapter:
     async def start(self) -> None:
         if self._task is not None:
             return
-        
+
         self._stopped = False
         self._session = aiohttp.ClientSession()
         self._task = asyncio.create_task(
@@ -67,17 +67,17 @@ class RestPollingAdapter:
             except asyncio.CancelledError:
                 pass
             self._task = None
-            
+
         if self._session:
             await self._session.close()
             self._session = None
-            
+
         logger.info("REST polling adapter stopped for %s", self._platform.value)
 
     async def _poll_loop(self) -> None:
         while not self._stopped:
             start_time = self._clock.now_ms()
-            
+
             # Fetch for all markets
             # Note: This is an MVP implementation that fetches each market sequentially.
             # In a real implementation, we would use a bulk endpoint or gather concurrent requests.
@@ -95,7 +95,7 @@ class RestPollingAdapter:
 
             elapsed = (self._clock.now_ms() - start_time) / 1000.0
             sleep_time = max(0.01, self._poll_interval_s - elapsed)
-            
+
             try:
                 await asyncio.sleep(sleep_time)
             except asyncio.CancelledError:

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
-
 
 REQUIRED_REGISTRY_KEYS: set[str] = {"polymarket", "opinion", "question"}
 OPTIONAL_REGISTRY_KEYS: set[str] = {"pair_score", "polymarket_question", "opinion_question"}
@@ -195,6 +194,10 @@ class TradingConfig:
     poll_normal_s: float = field(default_factory=lambda: _ef("POLL_NORMAL_S", 2.0))
     poll_fast_s: float = field(default_factory=lambda: _ef("POLL_FAST_S", 0.5))
     stale_threshold_ms: int = field(default_factory=lambda: _ei("STALE_THRESHOLD_MS", 2000))
+
+    # Order-state reconciliation: compare locally-tracked open orders against the
+    # exchange's open-order book at this interval (seconds). 0 disables it.
+    reconcile_interval_s: float = field(default_factory=lambda: _ef("RECONCILE_INTERVAL_S", 60.0))
 
 
 @dataclass

@@ -3,13 +3,13 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from typing import Dict, Any, Callable, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from src.protocols import MarketDataProvider, PortfolioStore
     from execution.engine import ExecutionEngine
     from risk.engine import RiskEngine
     from risk.kill_switch import KillSwitch
+    from src.protocols import MarketDataProvider, PortfolioStore
 
 try:
     from aiohttp import web
@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover - import guard for backtest/offline enviro
     web = None  # type: ignore[assignment]
 
 try:
-    from prometheus_client import Gauge, Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 except Exception:  # pragma: no cover - import guard for backtest/offline environments
     CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
 
@@ -98,11 +98,11 @@ class HealthMonitor:
     Exchange connectivity is cached with a short TTL to avoid expensive calls per probe.
     """
     def __init__(
-        self, 
-        mdp: MarketDataProvider, 
-        engines: List[ExecutionEngine], 
-        risk: RiskEngine, 
-        store: PortfolioStore, 
+        self,
+        mdp: MarketDataProvider,
+        engines: List[ExecutionEngine],
+        risk: RiskEngine,
+        store: PortfolioStore,
         kill_switch: KillSwitch,
         obs_server: Optional[ObservabilityServer] = None,
         liveness_timeout_s: float = 30.0,
@@ -163,10 +163,10 @@ class HealthMonitor:
                 continue
             plat = client.platform.value
             recon = getattr(engine, "reconciliation_complete", False)
-            
+
             # Use cached connectivity check to avoid expensive calls per probe
             api_ok = await self._check_engine_connectivity(engine)
-            
+
             details["engines"][plat] = {
                 "reconciliation_complete": recon,
                 "api_connectivity": api_ok
@@ -183,7 +183,7 @@ class HealthMonitor:
         # 4. Risk & KillSwitch
         ks_active = self.kill_switch.is_active
         risk_recon = getattr(self.risk, "reconciliation_complete", False)
-        
+
         details["risk"] = {
             "kill_switch_active": ks_active,
             "reconciliation_complete": risk_recon
@@ -255,7 +255,7 @@ class ObservabilityServer:
         """Liveness check (is the event loop stuck?)."""
         if not self.health_monitor:
             return web.json_response({"status": "error", "message": "HealthMonitor not set"}, status=500)
-        
+
         health = self.health_monitor.check_liveness()
         status = 200 if health["status"] == "ALIVE" else 503
         return web.json_response(health, status=status)
@@ -264,7 +264,7 @@ class ObservabilityServer:
         """Readiness check (is the system ready to trade?)."""
         if not self.health_monitor:
             return web.json_response({"status": "error", "message": "HealthMonitor not set"}, status=500)
-        
+
         ready = await self.health_monitor.check_readiness()
         status = 200 if ready["status"] in ("READY", "DEGRADED") else 503
         return web.json_response(ready, status=status)

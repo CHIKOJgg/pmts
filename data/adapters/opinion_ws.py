@@ -4,7 +4,6 @@ import logging
 from typing import Any, List, Optional
 
 from data.adapters.base_ws import BaseWsAdapter
-from data.market_data_provider import _SnapshotCB
 from data.models import MarketSnapshot
 from infrastructure.observability import API_ERRORS_TOTAL, FEED_LAST_TS
 from src.clock import Clock, LiveClock

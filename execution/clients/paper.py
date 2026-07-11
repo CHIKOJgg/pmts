@@ -11,10 +11,9 @@ import time
 from typing import Any, Dict, List, Optional
 
 from execution.engine import (
-    ExchangeClient,
     OpenOrder,
-    OrderStatusResponse,
     OrderStatusFill,
+    OrderStatusResponse,
     PlacedFill,
     PlacedOrderResponse,
 )

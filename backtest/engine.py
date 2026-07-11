@@ -33,6 +33,7 @@ from risk.kill_switch import KillSwitch
 from risk.limits import DEFAULT_LIMITS, RiskLimits
 from src.clock import SimClock
 from src.enums import OrderStatus, Platform, Side, StrategyId
+from src.errors import NegativeHoldings
 from strategies.arbitrage import ArbConfig
 from strategies.delta_neutral import DeltaNeutralConfig
 
@@ -708,8 +709,10 @@ def build_synthetic_tick_stream(
     n_ticks: int = 1_000,
     start_ts_ms: int = -1,  # -1 = use current wall-clock time
     tick_interval_ms: int = 500,
-    initial_pm_mid: float = 0.45,
-    initial_op_mid: float = 0.55,
+    initial_pm_mid: float = 0.50,
+    initial_op_mid: float = 0.50,
+    pm_bias: float = 0.0,
+    op_bias: float = 0.0,
     vol: float = 0.005,
     spread: float = 0.012,
     pm_fee_bps: int = 20,
@@ -719,8 +722,19 @@ def build_synthetic_tick_stream(
     """
     Generate a correlated random-walk tick stream for backtesting.
 
+    The SAME event is modelled at the SAME initial mid on both venues
+    (``initial_pm_mid == initial_op_mid`` by default). Because cross-venue
+    arbitrage only exists when the two venues disagree on the same event,
+    genuine arb opportunities in this generator arise only from transient,
+    independent dislocations in the correlated random walk — not from a
+    permanent hardcoded spread. This keeps backtest P&L honest.
+
+    To stress-test with persistent mispricing, pass non-zero ``pm_bias`` /
+    ``op_bias`` (e.g. ``pm_bias=-0.03`` to make Polymarket systematically
+    cheaper). This is for adversarial testing only, not a realistic baseline.
+
     - Both venues share a common price shock (70% correlated)
-    - Mean-reversion toward 0.5
+    - Mean-reversion toward 0.5 (plus optional persistent bias)
     - Depth varies randomly each tick
     - days_to_resolution decreases linearly from 10 to 0
     """
@@ -738,9 +752,10 @@ def build_synthetic_tick_stream(
     ts = start_ts_ms
 
     for i in range(n_ticks):
-        # Correlated mean-reverting random walk
-        rev_pm = 0.01 * (0.5 - pm)
-        rev_op = 0.01 * (0.5 - op)
+        # Correlated mean-reverting random walk. Targets include the optional
+        # persistent bias so the venues can diverge systematically if requested.
+        rev_pm = 0.01 * ((0.5 + pm_bias) - pm)
+        rev_op = 0.01 * ((0.5 + op_bias) - op)
         common = random.gauss(0, vol)
         pm = max(0.02, min(0.98, pm + 0.7 * common + 0.3 * random.gauss(0, vol) + rev_pm))
         op = max(0.02, min(0.98, op + 0.7 * common + 0.3 * random.gauss(0, vol) + rev_op))

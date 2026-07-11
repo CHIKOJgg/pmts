@@ -17,8 +17,8 @@ from infrastructure.observability import (
     STRATEGY_FILL_USDC_TOTAL,
 )
 from src.clock import Clock, LiveClock
-from src.errors import NegativeHoldings
 from src.enums import Outcome, Platform, Side
+from src.errors import NegativeHoldings
 
 logger = logging.getLogger(__name__)
 

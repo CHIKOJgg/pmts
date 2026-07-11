@@ -1,5 +1,6 @@
 """config/logging_setup.py — Structured logging configuration."""
 from __future__ import annotations
+
 import json
 import logging
 import logging.handlers

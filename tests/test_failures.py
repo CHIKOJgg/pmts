@@ -1,21 +1,22 @@
 
 import asyncio
 import json
+import time
 import unittest
 import uuid
-import time
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.enums import Platform, Side, OrderType, StrategyId, ArbLeg
-from execution.models import OrderSubmission, OrderProposal
-from execution.engine import ExecutionEngine, PlacedOrderResponse, OpenOrder
+from engine.orchestrator import Orchestrator
+from execution.engine import ExecutionEngine, OpenOrder, PlacedOrderResponse
+from execution.models import OrderProposal, OrderSubmission
 from execution.order_tracker import OrderTracker, TrackerStatus
+from portfolio.manager import FillRecord, PortfolioManager
 from portfolio.storage import SqlitePortfolioStore
 from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
 from risk.limits import RiskLimits
-from engine.orchestrator import Orchestrator
-from portfolio.manager import PortfolioManager, FillRecord
+from src.enums import ArbLeg, OrderType, Platform, Side, StrategyId
+
 
 def run(coro):
     loop = asyncio.new_event_loop()
@@ -32,11 +33,14 @@ class TestFailureModes(unittest.TestCase):
         import types
         websockets_stub = types.SimpleNamespace(connect=MagicMock())
         with patch.dict(sys.modules, {"websockets": websockets_stub}):
-            from data.adapters.polymarket_ws import PolymarketWSAdapter
             import data.adapters.polymarket_ws as polymarket_ws_module
+            from data.adapters.polymarket_ws import PolymarketWSAdapter
             polymarket_ws_module.websockets = websockets_stub
+            # base_ws is the module that actually calls websockets.connect()
+            import data.adapters.base_ws as base_ws_module
+            base_ws_module.websockets = websockets_stub
         adapter = PolymarketWSAdapter(asset_ids=["BTC-Q4"])
-        
+
         # Mock connection sequence: Fail, then Success (then close)
         mock_ws = AsyncMock()
         mock_ws.__aenter__.return_value = mock_ws
@@ -45,19 +49,32 @@ class TestFailureModes(unittest.TestCase):
             ["""{"event_type": "order_book_v2", "asset_id": "BTC-Q4", "bids": [{"price": "0.50", "size": "100"}], "asks": [{"price": "0.51", "size": "100"}]}"""],
             StopAsyncIteration
         ]
-        
+
         websockets_stub.connect.side_effect = [
             Exception("Connection Failed"), # First attempt fails
             mock_ws, # Second attempt succeeds
         ]
-        
-        # We need to run it for a bit
+
+        # We need to run it for a bit. The adapter reconnects with exponential
+        # backoff, so replace asyncio.sleep with a zero-delay yield. This keeps
+        # cooperative scheduling (the loop actually switches to the adapter task)
+        # while removing wall-clock dependency on suite load / backoff timing.
+        _real_sleep = asyncio.sleep
+
+        async def _yield_only(*_args, **_kwargs):
+            await _real_sleep(0)
+
         async def run_briefly():
-            adapter._running = True
-            task = asyncio.create_task(adapter._run_loop())
-            await asyncio.sleep(1.5) # Allow some time for retries
-            adapter._running = False
-            await task
+            with patch("asyncio.sleep", new=_yield_only):
+                adapter._running = True
+                task = asyncio.create_task(adapter._run_loop())
+                deadline = time.time() + 5.0
+                while time.time() < deadline:
+                    if websockets_stub.connect.call_count >= 2:
+                        break
+                    await asyncio.sleep(0)
+                adapter._running = False
+                await task
 
         run(run_briefly())
         self.assertGreaterEqual(websockets_stub.connect.call_count, 2)
@@ -71,10 +88,10 @@ class TestFailureModes(unittest.TestCase):
             Exception("500 Internal Server Error"),
             PlacedOrderResponse(exchange_order_id="EXCH-123", status="live")
         ])
-        
+
         engine = ExecutionEngine(mock_client)
         engine.submit_base_delay_s = 0.01 # Fast retries for test
-        
+
         sub = OrderSubmission(
             order_id=str(uuid.uuid4()),
             proposal_id="PROP-1",
@@ -92,7 +109,7 @@ class TestFailureModes(unittest.TestCase):
             leg_number=ArbLeg.LEG_1,
             min_fill_ratio=0.8
         )
-        
+
         run(engine._execute_submission(engine._trackers.get("PROP-1") or OrderTracker(sub)))
         self.assertEqual(mock_client.place_order.call_count, 3)
         self.assertEqual(engine.submit_retries, 2)
@@ -102,7 +119,7 @@ class TestFailureModes(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.platform = Platform.POLYMARKET
         mock_client.cancel_order = AsyncMock(return_value=True)
-        
+
         engine = ExecutionEngine(mock_client)
         sub = OrderSubmission(
             order_id=str(uuid.uuid4()),
@@ -118,18 +135,18 @@ class TestFailureModes(unittest.TestCase):
             token_quantity=200.0,
             submitted_at=int(time.time()*1000) - 5000,
         )
-        
+
         tracker = OrderTracker(sub)
         tracker.exchange_order_id = "EXCH-PF"
         tracker.status = TrackerStatus.SUBMITTED
         # Partial fill: 40 USDC
         tracker.record_fill(40.0, 0.50, 80.0, int(time.time()*1000))
-        
+
         engine._trackers["PROP-PF"] = tracker
-        
+
         # Run expiry check (single pass, not the infinite worker loop)
         run(engine._expiry_check())
-        
+
         self.assertEqual(tracker.status, TrackerStatus.EXPIRED)
         self.assertEqual(tracker.cumulative_filled_usdc, 40.0)
         mock_client.cancel_order.assert_called_once()
@@ -151,15 +168,15 @@ class TestFailureModes(unittest.TestCase):
             submitted_at=int(time.time()*1000),
         )
         tracker = OrderTracker(sub)
-        
+
         # First fill
         tracker.record_fill(50.0, 0.50, 100.0, 1000)
         # Duplicate fill (same USDC, price, tokens, TS)
-        # Note: OrderTracker currently just appends. 
+        # Note: OrderTracker currently just appends.
         # If we wanted to handle duplicates, we'd need more logic.
         # But let's verify current behavior and see if it's "safe" (e.g. doesn't crash)
         tracker.record_fill(50.0, 0.50, 100.0, 1000)
-        
+
         self.assertEqual(tracker.cumulative_filled_usdc, 100.0)
         self.assertEqual(tracker.status, TrackerStatus.FILLED)
 
@@ -176,16 +193,16 @@ class TestFailureModes(unittest.TestCase):
         mock_store.load_active_orders.return_value = [
             ("PROP-REC", "EXCH-REC", json.dumps(sub.model_dump()))
         ]
-        
+
         mock_client = MagicMock()
         mock_client.platform = Platform.POLYMARKET
         mock_client.get_open_orders = AsyncMock(return_value=[
             OpenOrder(exchange_order_id="EXCH-REC", market_id="M1", side="BUY", size_usdc=100.0, filled_usdc=20.0, limit_price=0.50, ts=123)
         ])
-        
+
         engine = ExecutionEngine(mock_client, store=mock_store)
         run(engine.reconcile())
-        
+
         self.assertIn("PROP-REC", engine._trackers)
         tracker = engine._trackers["PROP-REC"]
         self.assertEqual(tracker.exchange_order_id, "EXCH-REC")
@@ -200,7 +217,7 @@ class TestFailureModes(unittest.TestCase):
         mock_op_engine = MagicMock()
         mock_pm_engine.cancel = AsyncMock()
         mock_op_engine.cancel = AsyncMock()
-        
+
         orchestrator = Orchestrator(
             mdp=mock_mdp, portfolio=MagicMock(), risk=mock_risk,
             strategy=mock_strategy, pm_engine=mock_pm_engine, op_engine=mock_op_engine,
@@ -223,11 +240,11 @@ class TestFailureModes(unittest.TestCase):
         store = SqlitePortfolioStore(":memory:")
         # Force a failure by closing the connection
         store._conn.close()
-        
+
         from portfolio.manager import FillRecord, _Position
         fill = FillRecord("P1", "E1", "M1", Platform.POLYMARKET, "buy_yes", 100.0, 0.50, 1000)
         pos = _Position("M1", Platform.POLYMARKET)
-        
+
         # Should not crash, just log error
         with self.assertLogs("portfolio.storage", level="ERROR") as cm:
             store.save_fill_and_position(fill, pos, 1000.0, 10000.0, 0.0)
@@ -242,7 +259,7 @@ class TestFailureModes(unittest.TestCase):
         pm.cash_usdc = 1000.0
         pm.get_market_exposure_usdc.return_value = 0.0
         pm.get_delta.return_value.net_delta = 0.0
-        
+
         risk = RiskEngine(
             pm, KillSwitch("test-token-secure-123"),
             RiskLimits(
@@ -250,19 +267,19 @@ class TestFailureModes(unittest.TestCase):
                 max_net_delta_per_market=10000,
             ),
         )
-        
+
         proposals = []
         for i in range(10):
             p = OrderProposal(str(i), "M1", Platform.POLYMARKET, Side.BUY_YES, 150.0, 0.50, OrderType.LIMIT, StrategyId.MM, int(time.time()*1000)+10000, 0)
             proposals.append(p)
-            
+
         # available capital = 1000. Each needs 150. Max 6 should pass.
         # But wait, RiskEngine.evaluate is synchronous. To test "concurrent" load we just call it many times.
         # If it were async and had a race, we'd use gather.
-        
+
         results = [risk.evaluate(p) for p in proposals]
         approved = [r for r in results if r.approved]
-        
+
         self.assertEqual(len(approved), 6) # 150 * 6 = 900. Next one would be 1050 > 1000.
 
     def test_risk_engine_concurrent_async_evaluate(self):

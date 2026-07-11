@@ -65,7 +65,7 @@ class TestPortfolioManagerPerformance:
                     ts=i * 1000,
                 )
                 await pm.record_fill(fill)
-                
+
         start = time.perf_counter()
         import asyncio
         asyncio.run(_run_fills())
