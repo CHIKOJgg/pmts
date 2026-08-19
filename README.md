@@ -1260,6 +1260,30 @@ Or restart the process normally — if the drawdown has recovered below the thre
 
 ## 17. Monitoring Your System
 
+### Web Dashboard (recommended)
+
+The system ships with a live web dashboard, served automatically by the
+ObservabilityServer on the observability port (default **`http://localhost:8080`**).
+Open it in a browser — no extra setup. It shows, in real time:
+
+- **Money first:** Total equity, total return %, realized P&L, open positions (MTM), and unrealized P&L.
+- **What the bot is seeing:** every arbitrage / market-making proposal it evaluates, with the verdict (approved / rejected / dry-run) and the reason for any rejection.
+- **Open positions** with per-position cost basis, mark-to-market, unrealized and realized P&L.
+- **Recent fills**, **performance** (win rate, Sharpe, profit factor, max drawdown), **risk gate** state, **kill switch** controls, and **alerts**.
+
+The dashboard polls `GET /api/summary` every 3 seconds. All endpoints are also
+available as JSON for scripting:
+
+```bash
+curl http://localhost:8080/api/summary        # everything
+curl http://localhost:8080/api/opportunities  # what the bot is evaluating
+curl http://localhost:8080/api/positions      # open positions
+curl http://localhost:8080/api/performance    # performance metrics
+```
+
+> To expose the dashboard to other machines, set `OBSERVABILITY_BIND_HOST=0.0.0.0`
+> (and protect the port). Kill-switch reset still requires your `KILL_SWITCH_TOKEN`.
+
 ### Portfolio snapshot
 
 ```python

@@ -169,7 +169,7 @@ async def _process_market_data(
     data: Dict[str, Any],
     engine: Any,
     correlation: Any,
-    proposals: list,
+    proposals: list[Any],
 ) -> Optional[Dict[str, Any]]:
     fv_data = data.get("feature_vector")
     if fv_data:

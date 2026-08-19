@@ -202,11 +202,8 @@ class StrategyEngine:
         self, fv: FeatureVector, st: _MarketState, now: int, ctx: SignalContext
     ) -> Optional[OrderProposal]:
         # Bypass cooldown if hedge urgency is urgent (above 0.8)
-        min_cooldown = self._config.hedge_cooldown_ms
-
-        if ctx and hasattr(ctx, "hedge_urgency") and ctx.hedge_urgency >= 0.8:
-            min_cooldown = 0  # No cooldown for urgent hedging
-        elif now - st.last_hedge_ts < self._config.hedge_cooldown_ms:
+        urgent = ctx is not None and getattr(ctx, "hedge_urgency", 0.0) >= 0.8
+        if not urgent and now - st.last_hedge_ts < self._config.hedge_cooldown_ms:
             return None
 
         result = self._dn.evaluate_hedge(fv, ctx=ctx)

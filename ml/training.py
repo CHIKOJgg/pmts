@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,15 @@ class SimpleLogisticRegression:
         return sum(x * y for x, y in zip(a, b))
 
 
+class _ModelProtocol(Protocol):
+    """Common interface implemented by both model backends."""
+
+    def fit(self, X: List[Dict[str, float]], y: List[float]) -> None: ...
+    def predict_proba(self, X: List[Dict[str, float]]) -> List[float]: ...
+    def predict(self, X: List[Dict[str, float]], threshold: float = 0.5) -> List[int]: ...
+    def get_feature_importance(self) -> Dict[str, float]: ...
+
+
 class SklearnLogisticRegression:
     """Wrapper around scikit-learn's LogisticRegression."""
 
@@ -185,7 +194,7 @@ class TrainingPipeline:
 
     def __init__(self, config: ModelConfig = ModelConfig()) -> None:
         self._config = config
-        self._model = None
+        self._model: Optional[_ModelProtocol] = None
         self._metrics: Optional[ModelMetrics] = None
 
     def train(self, X: List[Dict[str, float]], y: List[float]) -> ModelMetrics:
@@ -201,10 +210,12 @@ class TrainingPipeline:
         else:
             self._model = SimpleLogisticRegression(self._config)
 
-        self._model.fit(X_train, y_train)
+        model = self._model
+        assert model is not None
+        model.fit(X_train, y_train)
 
-        y_pred_proba = self._model.predict_proba(X_test)
-        y_pred = self._model.predict(X_test)
+        y_pred_proba = model.predict_proba(X_test)
+        y_pred = model.predict(X_test)
         self._metrics = self._compute_metrics(y_test, y_pred, y_pred_proba)
 
         logger.info(
@@ -253,7 +264,7 @@ class TrainingPipeline:
             f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
             auc = self._compute_auc(y_true, y_proba)
 
-        feature_importance = self._model.get_feature_importance() if self._model else {}
+        feature_importance: Dict[str, float] = self._model.get_feature_importance() if self._model else {}
 
         return ModelMetrics(
             accuracy=accuracy,

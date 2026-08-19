@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class MarketRegistryWatcher:
     def _load_registry(self) -> Optional[dict[str, Any]]:
         try:
             with open(self._file_path, "r") as f:
-                return json.load(f)
+                return cast(dict[str, Any], json.load(f))
         except (FileNotFoundError, json.JSONDecodeError) as exc:
             logger.error("Failed to load market registry: %s", exc)
             return None

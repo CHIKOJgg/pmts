@@ -65,7 +65,7 @@ class LatencyModel:
     submit_to_fill_min: float = 15.0
     submit_to_fill_max: float = 800.0
 
-    def _sample(self, mean, std, lo, hi) -> float:
+    def _sample(self, mean: float, std: float, lo: float, hi: float) -> float:
         return max(lo, min(hi, random.gauss(mean, std)))
 
     def tick_to_signal(self) -> float:
@@ -388,7 +388,7 @@ class BacktestEngine:
         # Latest snapshots for the price_source callback
         self._latest: Dict[Tuple[str, Platform], MarketSnapshot] = {}
 
-        def price_source(mid: str, plat: Platform):
+        def price_source(mid: str, plat: Platform) -> Optional[Tuple[float, float]]:
             s = self._latest.get((mid, plat))
             return (s.yes_mid, s.no_mid) if s else None
 
@@ -439,7 +439,7 @@ class BacktestEngine:
         # Wrapper: intercept FE→SE to pass simulated now_ts (signal age fix)
         # Replace the direct FE→SE callback added in __init__ with a closure
         # that captures the current tick's submit_ts.
-        _current_submit_ts: list = [0]  # mutable cell for closure capture
+        _current_submit_ts: list[int] = [0]  # mutable cell for closure capture
 
         async def _fe_to_se_with_simtime(fv: "FeatureVector") -> None:
             await self._se.on_feature_vector(fv, now_ts=_current_submit_ts[0])
@@ -460,6 +460,11 @@ class BacktestEngine:
 
         # Initialize simulated clock to first tick's timestamp
         self._sim_clock.advance_to(start_ts)
+
+        # Equity snapshot at t=0 so the series starts at initial capital
+        # (periodic samples below begin after the first 100 ticks of trading).
+        mtm = self._portfolio.get_portfolio_mtm()
+        self._equity.append((start_ts, mtm.total_equity_usdc))
 
         for ts, market_id, snap_pm, snap_op in all_ticks:
             total_ticks += 1
@@ -764,7 +769,7 @@ def build_synthetic_tick_stream(
         d_op = random.uniform(200, 2000)
         days = max(0.1, 10.0 - i * 10.0 / n_ticks)
 
-        def _s(mid, depth, plat, fee):
+        def _s(mid: float, depth: float, plat: Platform, fee: int) -> MarketSnapshot:
             no_mid = 1.0 - mid
             yes_bid = max(0.01, round(mid - spread / 2, 4))
             yes_ask = min(0.99, round(mid + spread / 2, 4))

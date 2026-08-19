@@ -6,6 +6,7 @@ that market are recomputed on the next request (O(N) instead of O(N²) per tick)
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from typing import Dict, Set
 
@@ -56,9 +57,9 @@ class CorrelationTracker:
         prices_b = prices_b[-min_len:]
         mean_a = sum(prices_a) / min_len
         mean_b = sum(prices_b) / min_len
-        cov = sum((a - mean_a) * (b - mean_b) for a, b in zip(prices_a, prices_b)) / (min_len - 1)
-        std_a = (sum((a - mean_a) ** 2 for a in prices_a) / (min_len - 1)) ** 0.5
-        std_b = (sum((b - mean_b) ** 2 for b in prices_b) / (min_len - 1)) ** 0.5
+        cov = float(sum((a - mean_a) * (b - mean_b) for a, b in zip(prices_a, prices_b))) / (min_len - 1)
+        std_a = math.sqrt(float(sum((a - mean_a) ** 2 for a in prices_a) / (min_len - 1)))
+        std_b = math.sqrt(float(sum((b - mean_b) ** 2 for b in prices_b) / (min_len - 1)))
         if std_a < 1e-9 or std_b < 1e-9:
             return 0.0
         return cov / (std_a * std_b)

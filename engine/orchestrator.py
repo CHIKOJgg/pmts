@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any, Dict, Optional, Tuple
+from collections import deque
+from dataclasses import asdict
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from ai.enhancer import AISignalEnhancer
 from data.market_data_provider import MarketDataProvider
@@ -18,11 +20,11 @@ from infrastructure.alerting import Alert, AlertRouter, AlertSeverity
 from infrastructure.latency import LatencyTracker, Timer
 from infrastructure.observability import PROPOSALS_TOTAL
 from portfolio.journal import TradeJournal
-from portfolio.manager import FillRecord, PortfolioManager
+from portfolio.manager import FillRecord, PortfolioManager, RedemptionRecord
 from risk.engine import RiskEngine
 from risk.trading_schedule import TradingSchedule
 from src.clock import Clock, LiveClock
-from src.enums import ArbLeg, Platform, StrategyId
+from src.enums import ArbLeg, Outcome, Platform, StrategyId
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,10 @@ class Orchestrator:
         self.proposals_evaluated: int = 0
         self.proposals_approved: int = 0
         self.proposals_rejected: int = 0
+
+        # Ring buffer of recent opportunities (proposals) for the dashboard.
+        # Kept in-memory and bounded so the UI can show "what the bot is seeing".
+        self._recent_opportunities: Deque[Dict[str, Any]] = deque(maxlen=300)
 
         # Execution error tracking for alerting
         self._consecutive_errors: Dict[Platform, int] = {Platform.POLYMARKET: 0, Platform.OPINION: 0}
@@ -202,7 +208,33 @@ class Orchestrator:
             removed,
             cancelled,
         )
+        if outcome in ("yes", "no"):
+            await self._settle_positions(market_id, Outcome(outcome))
         return cancelled
+
+    async def _settle_positions(self, market_id: str, outcome: Outcome) -> None:
+        """Close local positions on resolution so MTM and realised P&L reflect the payout.
+
+        Winning tokens pay 1 USDC each; losing tokens expire worthless. The
+        on-chain redemption itself is triggered by the ResolutionMonitor via the
+        exchange client's ``redeem_market()`` — this only settles the local ledger.
+        """
+        delta = self._portfolio.get_delta(market_id)
+        for platform, winning_qty in (
+            (Platform.POLYMARKET, delta.yes_holdings_pm if outcome == Outcome.YES else delta.no_holdings_pm),
+            (Platform.OPINION, delta.yes_holdings_op if outcome == Outcome.YES else delta.no_holdings_op),
+        ):
+            if winning_qty <= 0:
+                continue
+            await self._portfolio.record_redemption(
+                RedemptionRecord(
+                    market_id=market_id,
+                    platform=platform,
+                    outcome=outcome,
+                    usdc_received=winning_qty,
+                    ts=self._clock.now_ms(),
+                )
+            )
 
     async def emergency_stop(self, reason: str) -> None:
         logger.critical("EMERGENCY STOP: %s", reason)
@@ -267,6 +299,7 @@ class Orchestrator:
         # Check trading schedule
         if not self._trading_schedule.can_trade_market(proposal.market_id):
             self.proposals_rejected += 1
+            self._record_opportunity(proposal, "rejected", reason="trading_schedule")
             logger.debug("Proposal %s rejected: outside trading window", proposal.proposal_id[:8])
             return
 
@@ -277,6 +310,11 @@ class Orchestrator:
 
         if decision.rejected:
             self.proposals_rejected += 1
+            self._record_opportunity(
+                proposal, "rejected",
+                reason=decision.reject_reason.value if decision.reject_reason else "risk",
+                detail=decision.reject_detail,
+            )
             # Release strategy budget allocated before RiskEngine gate (Bug #20)
             if proposal.strategy_id == StrategyId.ARB:
                 self._strategy.notify_arb_terminal(proposal.size_usdc)
@@ -301,8 +339,11 @@ class Orchestrator:
                 proposal.side.value,
             )
             await self._risk.notify_terminal(proposal.proposal_id, proposal.platform, proposal.size_usdc)
+            self._record_opportunity(proposal, "dry_run")
             self.proposals_rejected += 1
             return
+
+        self._record_opportunity(proposal, "approved")
 
         self.proposals_approved += 1
         try:
@@ -500,8 +541,6 @@ class Orchestrator:
 
             # Check if all submitted legs are terminal → clear arb_in_flight
             submitted_pids = [pid for k, pid in grp.items() if isinstance(k, int)]
-
-            pending_leg2 = grp.get("leg2_proposal")
             all_terminal = False
 
             if not submitted_pids:
@@ -598,4 +637,39 @@ class Orchestrator:
 
     def export_trade_journal(self, filename: Optional[str] = None) -> str:
         return self._trade_journal.export_csv(filename)
+
+    # ── Dashboard data accessors ──────────────────────────────────────────────
+
+    def _record_opportunity(
+        self,
+        proposal: OrderProposal,
+        verdict: str,
+        reason: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Append a proposal to the in-memory ring buffer for the dashboard."""
+        self._recent_opportunities.append(
+            {
+                "ts": self._clock.now_ms(),
+                "proposal_id": proposal.proposal_id[:8],
+                "strategy": proposal.strategy_id.value,
+                "market": proposal.market_id,
+                "platform": proposal.platform.value,
+                "side": proposal.side.value,
+                "size_usdc": round(proposal.size_usdc, 2),
+                "verdict": verdict,
+                "reason": reason,
+                "detail": detail,
+            }
+        )
+
+    def get_recent_opportunities(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Newest-first list of recent proposals for the dashboard."""
+        items = list(self._recent_opportunities)
+        return items[-limit:][::-1]
+
+    def get_recent_trades(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Newest-first list of recent fills for the dashboard."""
+        entries = self._trade_journal.get_recent(limit)
+        return [asdict(e) for e in entries][::-1]
 

@@ -46,7 +46,8 @@ class TestFailureModes(unittest.TestCase):
         mock_ws.__aenter__.return_value = mock_ws
         mock_ws.__aiter__.side_effect = [
             asyncio.TimeoutError("Disconnect"), # First connection fails during iteration
-            ["""{"event_type": "order_book_v2", "asset_id": "BTC-Q4", "bids": [{"price": "0.50", "size": "100"}], "asks": [{"price": "0.51", "size": "100"}]}"""],
+            ["""{"event_type": "order_book_v2", "asset_id": "BTC-Q4", "bids": [
+                {"price": "0.50", "size": "100"}], "asks": [{"price": "0.51", "size": "100"}]}"""],
             StopAsyncIteration
         ]
 
@@ -270,7 +271,10 @@ class TestFailureModes(unittest.TestCase):
 
         proposals = []
         for i in range(10):
-            p = OrderProposal(str(i), "M1", Platform.POLYMARKET, Side.BUY_YES, 150.0, 0.50, OrderType.LIMIT, StrategyId.MM, int(time.time()*1000)+10000, 0)
+            p = OrderProposal(
+                str(i), "M1", Platform.POLYMARKET, Side.BUY_YES, 150.0, 0.50,
+                OrderType.LIMIT, StrategyId.MM, int(time.time()*1000)+10000, 0,
+            )
             proposals.append(p)
 
         # available capital = 1000. Each needs 150. Max 6 should pass.

@@ -12,7 +12,7 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    aioredis = None
+    aioredis = None  # type: ignore[assignment]
 
 
 class RedisCache:
@@ -117,7 +117,8 @@ class RedisCache:
 
     async def keys(self, pattern: str = "*") -> List[str]:
         if self._client:
-            return await self._client.keys(pattern)
+            keys = await self._client.keys(pattern)
+            return [k.decode() if isinstance(k, bytes) else k for k in keys]
         import fnmatch
         return [k for k in self._mem_store if fnmatch.fnmatch(k, pattern)]
 

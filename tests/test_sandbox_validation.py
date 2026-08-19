@@ -190,13 +190,11 @@ class TestKillSwitchScenarios(unittest.TestCase):
         # that causes exactly 15% drawdown and verify logging
 
         from portfolio.manager import PortfolioManager
-        from risk.kill_switch import KillSwitch
 
         def price_source(m, p):
             return (0.50, 0.50)
 
         pm = PortfolioManager(10_000.0, price_source)
-        ks = KillSwitch("TestToken123!@#$")
 
         # Simulate drawdown scenario
         # Initial equity $10,000, 15% drawdown = $8,500 equity

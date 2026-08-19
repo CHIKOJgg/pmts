@@ -5,6 +5,8 @@ import tempfile
 import time
 from pathlib import Path
 
+pytest_plugins = ("tests.venue_fixtures",)
+
 # Keep pytest's temp directories inside the workspace so Windows temp ACLs
 # do not break fixtures like tmp_path/tmp_path_factory on this machine.
 # A fresh, unique session directory is used each run so a stale/locked

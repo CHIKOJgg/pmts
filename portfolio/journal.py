@@ -47,7 +47,11 @@ class TradeJournal:
             realised_pnl=fill.realised_pnl,
             hold_time_ms=fill.hold_time_ms,
             slippage_bps=None,
-            strategy_id=fill.strategy_id.value if hasattr(fill.strategy_id, "value") else str(fill.strategy_id),
+            strategy_id=(
+                fill.strategy_id.value
+                if fill.strategy_id is not None and hasattr(fill.strategy_id, "value")
+                else str(fill.strategy_id)
+            ),
             proposal_id=fill.proposal_id,
         )
         self._entries.append(entry)
@@ -73,6 +77,10 @@ class TradeJournal:
     @property
     def total_trades(self) -> int:
         return len(self._entries)
+
+    def get_recent(self, limit: int = 50) -> List[JournalEntry]:
+        """Return up to `limit` most-recent entries (oldest-first)."""
+        return self._entries[-limit:]
 
     @property
     def gross_pnl(self) -> float:

@@ -7,14 +7,14 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 REQUIRED_REGISTRY_KEYS: set[str] = {"polymarket", "opinion", "question"}
 OPTIONAL_REGISTRY_KEYS: set[str] = {"pair_score", "polymarket_question", "opinion_question"}
 ALL_REGISTRY_KEYS: set[str] = REQUIRED_REGISTRY_KEYS | OPTIONAL_REGISTRY_KEYS
 
 
-def validate_market_registry(registry: Dict[str, dict]) -> list[str]:
+def validate_market_registry(registry: Dict[str, Dict[str, Any]]) -> list[str]:
     """Validate market registry structure and return list of errors."""
     errors: list[str] = []
     seen_polymarket: set[str] = set()
@@ -153,7 +153,7 @@ class OpinionConfig:
 class TradingConfig:
     initial_cash_usdc: float = field(default_factory=lambda: _ef("INITIAL_CASH_USDC", 10_000.0))
     markets: List[str] = field(default_factory=list)
-    market_registry: Dict[str, dict] = field(default_factory=dict)
+    market_registry: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     enable_trading: bool = field(default_factory=lambda: _eb("ENABLE_TRADING", False))
     enable_arb: bool = field(default_factory=lambda: _eb("ENABLE_ARB", True))
     enable_mm: bool = field(default_factory=lambda: _eb("ENABLE_MM", True))

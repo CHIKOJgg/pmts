@@ -26,11 +26,12 @@ from src.enums import Platform
 
 if TYPE_CHECKING:
     from data.market_data_provider import MarketDataProvider
+    from src.protocols import PortfolioStore
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BACKTEST_MARKETS = ["BTC-Q4", "ETH-Q1", "SOL-Q2"]
-BACKTEST_RISK_LIMITS = {
+BACKTEST_RISK_LIMITS: dict[str, Any] = {
     "drawdown_kill_pct": 0.20,
     "drawdown_warn_pct": 0.15,
     "max_market_exposure_pct": 1.0,
@@ -104,7 +105,7 @@ def _logical_to_venue_map(settings: Settings, venue: str) -> dict[str, str]:
     return {m: registry[m][venue] for m in settings.trading.markets}
 
 
-def _venue_to_logical_map(settings, venue: str) -> dict[str, str]:
+def _venue_to_logical_map(settings: Settings, venue: str) -> dict[str, str]:
     registry = settings.trading.market_registry
     if not registry:
         return {}
@@ -154,9 +155,11 @@ async def run_live() -> None:
 
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
     database_url = settings.trading.database_url
+    store: PortfolioStore
     if database_url:
-        store = PostgresPortfolioStore(dsn=database_url)
-        await store.connect()
+        pg_store = PostgresPortfolioStore(dsn=database_url)
+        await pg_store.connect()
+        store = pg_store
         logger.info("Using PostgreSQL backend")
     else:
         db_path = getattr(settings.trading, "db_path", "portfolio.db")
@@ -174,7 +177,7 @@ async def run_live() -> None:
     )
     alert_router = AlertRouter(alert_cfg)
 
-    pm_client = PolymarketClient(
+    pm_client_raw = PolymarketClient(
         api_key=settings.polymarket.api_key,
         secret=settings.polymarket.api_secret,
         passphrase=settings.polymarket.passphrase,
@@ -183,7 +186,7 @@ async def run_live() -> None:
         sandbox=settings.polymarket.sandbox,
         market_id_map=_pm_market_id_map(settings),
     )
-    op_client = OpinionClient(
+    op_client_raw = OpinionClient(
         api_key=settings.opinion.api_key,
         wallet_private_key=settings.opinion.wallet_key,
         ctf_exchange_addr=settings.opinion.ctf_exchange_addr,
@@ -191,8 +194,8 @@ async def run_live() -> None:
         sandbox=settings.opinion.sandbox,
         market_id_map=_logical_to_venue_map(settings, "opinion"),
     )
-    pm_client = CircuitBreakerExchangeWrapper(pm_client, base_name="Polymarket")
-    op_client = CircuitBreakerExchangeWrapper(op_client, base_name="Opinion")
+    pm_client = CircuitBreakerExchangeWrapper(pm_client_raw, base_name="Polymarket")
+    op_client = CircuitBreakerExchangeWrapper(op_client_raw, base_name="Opinion")
     pm_ws = PolymarketWSAdapter(
         asset_ids=_venue_token_ids(settings, "pm_yes_token"),
         ws_url=settings.polymarket.ws_url,
@@ -208,7 +211,7 @@ async def run_live() -> None:
 
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws], clock=clock)
 
-    def price_source(market_id: str, platform) -> tuple[float, float]:
+    def price_source(market_id: str, platform: Platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
         return mid if mid is not None else (0.50, 0.50)
 
@@ -307,7 +310,7 @@ async def run_live() -> None:
     # Market registry hot-reload
     market_registry_path = settings.trading.market_registry_path
     from infrastructure.market_watcher import MarketRegistryWatcher
-    def _reload_market_registry(registry: dict) -> None:
+    def _reload_market_registry(registry: dict[str, Any]) -> None:
         logger.info("Market registry hot-reloaded (%d entries)", len(registry))
         new_markets = list(registry.keys())
         if new_markets:
@@ -334,6 +337,12 @@ async def run_live() -> None:
     )
 
     obs_server.set_health_monitor(monitor)
+    obs_server.set_dashboard_sources(
+        portfolio=portfolio,
+        orchestrator=orchestrator,
+        alert_router=alert_router,
+        analytics=analytics,
+    )
     obs_server.set_kill_switch_config(
         token=settings.trading.kill_switch_token,
         reset_callback=orchestrator._on_kill_switch_reset,
@@ -360,7 +369,7 @@ async def run_live() -> None:
 
     # Graceful Shutdown
     shutdown_event = asyncio.Event()
-    def handle_sig(*args):
+    def handle_sig(*args: Any) -> None:
         logger.info("Received shutdown signal...")
         shutdown_event.set()
 
@@ -384,7 +393,7 @@ async def run_live() -> None:
     await resolution_monitor.start()
     await market_watcher.start()
 
-    async def liveness_tick_loop():
+    async def liveness_tick_loop() -> None:
         while True:
             monitor.tick_liveness()
             await asyncio.sleep(5)
@@ -456,9 +465,11 @@ async def run_paper(fill_prob: float = 0.85) -> None:
 
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
     database_url = settings.trading.database_url
+    store: PortfolioStore
     if database_url:
-        store = PostgresPortfolioStore(dsn=database_url)
-        await store.connect()
+        pg_store = PostgresPortfolioStore(dsn=database_url)
+        await pg_store.connect()
+        store = pg_store
         logger.info("Using PostgreSQL backend")
     else:
         db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
@@ -498,7 +509,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
 
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws], alert_router=alert_router, clock=clock)
 
-    def price_source(market_id: str, platform) -> tuple[float, float]:
+    def price_source(market_id: str, platform: Platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
         return mid if mid is not None else (0.50, 0.50)
 
@@ -598,7 +609,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     # Market registry hot-reload
     market_registry_path = settings.trading.market_registry_path
     from infrastructure.market_watcher import MarketRegistryWatcher
-    def _reload_market_registry(registry: dict) -> None:
+    def _reload_market_registry(registry: dict[str, Any]) -> None:
         logger.info("Market registry hot-reloaded (%d entries)", len(registry))
         new_markets = list(registry.keys())
         if new_markets:
@@ -625,6 +636,12 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     )
 
     obs_server.set_health_monitor(monitor)
+    obs_server.set_dashboard_sources(
+        portfolio=portfolio,
+        orchestrator=orchestrator,
+        alert_router=alert_router,
+        analytics=analytics,
+    )
     obs_server.set_kill_switch_config(
         token=settings.trading.kill_switch_token,
         reset_callback=orchestrator._on_kill_switch_reset,
@@ -650,7 +667,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     })
 
     shutdown_event = asyncio.Event()
-    def handle_sig(*args):
+    def handle_sig(*args: Any) -> None:
         logger.info("Received shutdown signal...")
         shutdown_event.set()
 
@@ -673,7 +690,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     await resolution_monitor.start()
     await market_watcher.start()
 
-    async def liveness_tick_loop():
+    async def liveness_tick_loop() -> None:
         while True:
             monitor.tick_liveness()
             await asyncio.sleep(5)
@@ -731,9 +748,11 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
     database_url = settings.trading.database_url
+    store: PortfolioStore
     if database_url:
-        store = PostgresPortfolioStore(dsn=database_url)
-        await store.connect()
+        pg_store = PostgresPortfolioStore(dsn=database_url)
+        await pg_store.connect()
+        store = pg_store
         logger.info("Using PostgreSQL backend")
     else:
         db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
@@ -771,7 +790,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     mdp = MarketDataProvider(adapters=[pm_feed, op_feed], alert_router=alert_router, clock=clock)
 
-    def price_source(market_id: str, platform) -> tuple[float, float]:
+    def price_source(market_id: str, platform: Platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
         return mid if mid is not None else (0.50, 0.50)
 
@@ -882,6 +901,12 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     )
 
     obs_server.set_health_monitor(monitor)
+    obs_server.set_dashboard_sources(
+        portfolio=portfolio,
+        orchestrator=orchestrator,
+        alert_router=alert_router,
+        analytics=analytics,
+    )
     obs_server.set_kill_switch_config(
         token=settings.trading.kill_switch_token,
         reset_callback=orchestrator._on_kill_switch_reset,
@@ -908,7 +933,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     shutdown_event = asyncio.Event()
 
-    def handle_sig(*args):
+    def handle_sig(*args: Any) -> None:
         logger.info("Received shutdown signal...")
         shutdown_event.set()
 
@@ -927,8 +952,9 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     risk.reconcile_reservations()
 
     await orchestrator.start()
+    await reconciler.start()
 
-    async def liveness_tick_loop():
+    async def liveness_tick_loop() -> None:
         while True:
             monitor.tick_liveness()
             await asyncio.sleep(5)
@@ -944,6 +970,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     logger.info("Shutting down offline paper trading...")
     liveness_task.cancel()
+    await reconciler.stop()
     await orchestrator.stop()
     await obs_server.stop()
     await pm_client.close()
@@ -1014,7 +1041,7 @@ async def run_backtest(
     )
     bstore.close()
 
-def _run_sweep_cli(args) -> None:
+def _run_sweep_cli(args: argparse.Namespace) -> None:
     from backtest.sweeper import BacktestSweeper, SweepConfig
     config = SweepConfig(
         min_net_edge_values=args.sweep_min_edge,
@@ -1026,7 +1053,7 @@ def _run_sweep_cli(args) -> None:
         markets=args.sweep_markets,
     )
     sweeper = BacktestSweeper(config)
-    results = sweeper.run()
+    sweeper.run()
     print(sweeper.summary_table())
     best = sweeper.best_by("sharpe_ratio")
     if best:

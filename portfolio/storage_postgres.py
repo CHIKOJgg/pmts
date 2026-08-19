@@ -165,6 +165,16 @@ class PostgresPortfolioStore:
                 return [(r["proposal_id"], r["exchange_order_id"], r["submission_json"]) for r in rows]
         return _run_async(_load())  # type: ignore[no-any-return]
 
+    def update_order_exchange_id(self, proposal_id: str, exchange_order_id: str) -> None:
+        async def _update() -> None:
+            async with self._require_pool().acquire() as conn:
+                await conn.execute(
+                    "UPDATE active_orders SET exchange_order_id = $1 WHERE proposal_id = $2",
+                    exchange_order_id,
+                    proposal_id,
+                )
+        _run_async(_update())
+
     def remove_order(self, proposal_id: str) -> None:
         async def _remove() -> None:
             async with self._require_pool().acquire() as conn:

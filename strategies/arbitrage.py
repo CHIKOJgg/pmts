@@ -6,7 +6,7 @@ import logging
 import math
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from ai.signal_context import SignalContext
 from data.models import FeatureVector, VenueSnapshot
@@ -95,7 +95,7 @@ class ArbConfig:
     ofi_adverse_threshold: float = OFI_ADVERSE_THRESHOLD
     ofi_adverse_mult: float = OFI_ADVERSE_MULT
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.fees is None:
             object.__setattr__(self, "fees", dict(DEFAULT_FEES))
 
@@ -155,7 +155,10 @@ class ArbitrageStrategy:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _fee_bps(self, platform: Platform) -> int:
-        return self._cfg.fees.get(platform, 0)
+        fees = self._cfg.fees
+        if fees is None:
+            return 0
+        return fees.get(platform, 0)
 
     def _adjust_for_ofi(self, raw_edge: float, ofi_a: float, ofi_b: float) -> float:
         ofi_net = ofi_a - ofi_b
@@ -191,7 +194,7 @@ class ArbitrageStrategy:
         yes_ask_b = v_b.mid + v_b.spread / 2
         no_ask_b  = (1.0 - v_b.mid) + v_b.spread / 2
 
-        def _pair_reject(reason: str, **kw) -> ArbEvaluation:
+        def _pair_reject(reason: str, **kw: Any) -> ArbEvaluation:
             return ArbEvaluation(
                 market_id=fv.market_id, evaluated_at=now, signal_age_ms=signal_age_ms,
                 arb_signal=fv.arb_signal, accepted=False, rejection_reason=reason,
@@ -205,7 +208,7 @@ class ArbitrageStrategy:
                 return _pair_reject(f"spread_too_wide:{name}={spread / ask:.3f}")
 
         # Two directions
-        gross_dirs: dict = {
+        gross_dirs: dict[str, tuple[float, float, float, float]] = {
             f"{plat_a.value.upper()}_YES_{plat_b.value.upper()}_NO": (yes_ask_a, no_ask_b, fee_a, fee_b),
             f"{plat_b.value.upper()}_YES_{plat_a.value.upper()}_NO": (yes_ask_b, no_ask_a, fee_b, fee_a),
         }
@@ -221,8 +224,16 @@ class ArbitrageStrategy:
                 continue
 
             is_a_first = direction.startswith(plat_a.value.upper())
-            l1_plat, l1_side, l1_bid = (plat_a, Side.BUY_YES, v_a.mid - v_a.spread / 2) if is_a_first else (plat_b, Side.BUY_YES, v_b.mid - v_b.spread / 2)
-            l2_plat, l2_side, l2_bid = (plat_b, Side.BUY_NO, (1.0 - v_b.mid) - v_b.spread / 2) if is_a_first else (plat_a, Side.BUY_NO, (1.0 - v_a.mid) - v_a.spread / 2)
+            l1_plat, l1_side, l1_bid = (
+                (plat_a, Side.BUY_YES, v_a.mid - v_a.spread / 2)
+                if is_a_first
+                else (plat_b, Side.BUY_YES, v_b.mid - v_b.spread / 2)
+            )
+            l2_plat, l2_side, l2_bid = (
+                (plat_b, Side.BUY_NO, (1.0 - v_b.mid) - v_b.spread / 2)
+                if is_a_first
+                else (plat_a, Side.BUY_NO, (1.0 - v_a.mid) - v_a.spread / 2)
+            )
             l1_depth, l2_depth = (v_a.ask_depth, v_b.ask_depth) if is_a_first else (v_b.ask_depth, v_a.ask_depth)
             l1_ofi, l2_ofi = (v_a.ofi, v_b.ofi) if is_a_first else (v_b.ofi, v_a.ofi)
 
@@ -301,7 +312,7 @@ class ArbitrageStrategy:
             if not valid1 or not valid2:
                 continue
 
-            if best is None or not best.accepted or net_edge > best.net_edge:
+            if best is None or not best.accepted or (best.net_edge is not None and net_edge > best.net_edge):
                 result = ArbEvaluation(
                     market_id=fv.market_id, evaluated_at=now, signal_age_ms=signal_age_ms,
                     arb_signal=fv.arb_signal, accepted=True, rejection_reason=None,
@@ -358,7 +369,13 @@ class ArbitrageStrategy:
                 )
                 if best is None or (result.accepted and not best.accepted):
                     best = result
-                elif result.accepted and best.accepted and result.net_edge > best.net_edge:
+                elif (
+                    result.accepted
+                    and best.accepted
+                    and result.net_edge is not None
+                    and best.net_edge is not None
+                    and result.net_edge > best.net_edge
+                ):
                     best = result
 
         if best is not None:

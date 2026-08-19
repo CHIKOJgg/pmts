@@ -210,7 +210,7 @@ def _first_float(payload: Any, keys: tuple[str, ...]) -> Optional[float]:
 
 
 def _depth_from_book(
-    data: dict,
+    data: dict[str, Any],
     direct_key: str,
     alt_key: str,
     levels: Any,

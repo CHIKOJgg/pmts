@@ -19,7 +19,7 @@ class AuditEvent:
     details: Dict[str, Any]
     event_id: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.event_id:
             self.event_id = f"{self.timestamp}-{self.event_type}-{id(self)}"
 
@@ -49,6 +49,7 @@ class AuditLogger:
             self._rotate_file()
 
         line = json.dumps(asdict(event), separators=(",", ":")) + "\n"
+        assert self._current_file is not None
         with open(self._current_file, "a") as f:
             f.write(line)
         self._current_size += len(line.encode("utf-8"))

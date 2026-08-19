@@ -48,8 +48,8 @@ class TradeReporter:
             TradeReportEntry(
                 timestamp=f.ts,
                 market_id=f.market_id,
-                platform=f.platform.value,
-                side=f.side.value,
+                platform=f.platform,
+                side=f.side,
                 size_usdc=f.filled_usdc,
                 fill_price=f.fill_price,
                 order_id=f.order_id or "",

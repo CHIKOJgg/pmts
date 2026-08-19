@@ -802,7 +802,6 @@ class TestPortfolioIntegration(unittest.TestCase):
         run(pm.record_fill(self._fill(side="buy_yes", usdc=100.0, price=0.40)))
         run(pm.record_fill(self._fill(side="buy_yes", usdc=100.0, price=0.60)))
         # 250 tokens at 0.40 + 166.67 tokens at 0.60 = avg 0.4857
-        delta = pm.get_delta("BTC-Q4")
         pos = pm._positions.get(("BTC-Q4", __import__("src.enums", fromlist=["Platform"]).Platform.POLYMARKET))
         expected_avg = (100.0 + 100.0) / (100.0/0.40 + 100.0/0.60)
         self.assertAlmostEqual(pos.avg_cost_yes, expected_avg, places=4)

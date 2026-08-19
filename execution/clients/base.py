@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -22,6 +22,11 @@ class BaseExchangeClient:
     PLATFORM: Platform = Platform.POLYMARKET
     _ERROR_KEY: str = "error"
 
+    _session: Optional[aiohttp.ClientSession]
+    _host: str
+    _wallet_private_key: str
+    _last_status_filled_usdc: Dict[str, float]
+
     @property
     def platform(self) -> Platform:
         return self.PLATFORM
@@ -36,7 +41,9 @@ class BaseExchangeClient:
                 headers=self._session_headers(),
                 timeout=aiohttp.ClientTimeout(total=30),
             )
-        return self._session
+        session = self._session
+        assert session is not None
+        return session
 
     async def close(self) -> None:
         if self._session and not self._session.closed:

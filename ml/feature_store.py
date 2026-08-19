@@ -16,9 +16,9 @@ class FeatureRecord:
     timestamp_ms: int
     features: Dict[str, float]
     label: Optional[float] = None
-    metadata: Dict[str, Any] = None
+    metadata: Optional[Dict[str, Any]] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.metadata is None:
             self.metadata = {}
 
@@ -62,7 +62,7 @@ class FeatureStore:
         labeled = [r for r in self._store.values() if r.label is not None and not self._is_expired(r)]
         labeled.sort(key=lambda r: r.timestamp_ms)
         X = [r.features for r in labeled]
-        y = [r.label for r in labeled]
+        y: List[float] = [r.label for r in labeled if r.label is not None]
         return X, y
 
     def cleanup(self) -> int:

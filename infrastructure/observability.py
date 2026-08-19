@@ -3,7 +3,8 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, cast
 
 if TYPE_CHECKING:
     from execution.engine import ExecutionEngine
@@ -230,6 +231,15 @@ class ObservabilityServer:
         self.app.router.add_get('/ready', self.handle_readiness)
         self.app.router.add_get('/metrics', self.handle_metrics_prometheus)
         self.app.router.add_get('/metrics/json', self.handle_metrics_json)
+        # Dashboard + data API (served by this same server so the UI just works)
+        self.app.router.add_get('/', self.handle_index)
+        self.app.router.add_get('/dashboard', self.handle_index)
+        self.app.router.add_get('/api/summary', self.handle_summary)
+        self.app.router.add_get('/api/positions', self.handle_positions)
+        self.app.router.add_get('/api/opportunities', self.handle_opportunities)
+        self.app.router.add_get('/api/trades', self.handle_trades)
+        self.app.router.add_get('/api/performance', self.handle_performance)
+        self.app.router.add_get('/api/alerts', self.handle_alerts)
         self.app.router.add_post('/kill-switch/activate', self.handle_kill_switch_activate)
         self.app.router.add_post('/kill-switch/reset', self.handle_kill_switch_reset)
         self.runner: Optional[web.AppRunner] = None
@@ -243,6 +253,12 @@ class ObservabilityServer:
         self._reset_attempts: List[float] = []
         self._reset_rate_limit_window_s: float = 60.0
         self._max_resets_per_window: int = 5
+        # Dashboard data sources (populated from main.py)
+        self._dashboard_path = Path(__file__).parent / "dashboard.html"
+        self._portfolio: Any = None
+        self._orchestrator: Any = None
+        self._alert_router: Any = None
+        self._analytics: Any = None
 
     def register_provider(self, provider: Callable[[], Dict[str, Any]]) -> None:
         """Register a callback that returns a dictionary of metrics for JSON export."""
@@ -250,6 +266,23 @@ class ObservabilityServer:
 
     def set_health_monitor(self, monitor: HealthMonitor) -> None:
         self.health_monitor = monitor
+
+    def set_dashboard_sources(
+        self,
+        portfolio: Any = None,
+        orchestrator: Any = None,
+        alert_router: Any = None,
+        analytics: Any = None,
+    ) -> None:
+        """Wire dashboard data sources. Called from main.py after construction."""
+        if portfolio is not None:
+            self._portfolio = portfolio
+        if orchestrator is not None:
+            self._orchestrator = orchestrator
+        if alert_router is not None:
+            self._alert_router = alert_router
+        if analytics is not None:
+            self._analytics = analytics
 
     async def handle_liveness(self, request: web.Request) -> web.Response:
         """Liveness check (is the event loop stuck?)."""
@@ -283,6 +316,180 @@ class ObservabilityServer:
             except Exception as e:
                 logger.error("Error gathering JSON metrics: %s", e)
         return web.json_response(metrics)
+
+    # ── Dashboard ─────────────────────────────────────────────────────────────
+
+    async def handle_index(self, request: web.Request) -> web.Response:
+        """Serve the single-page dashboard HTML."""
+        try:
+            body = self._dashboard_path.read_text(encoding="utf-8")
+        except OSError:
+            return web.Response(text="dashboard.html not found", status=404)
+        return web.Response(text=body, content_type="text/html")
+
+    def _portfolio_payload(self) -> Dict[str, Any]:
+        if self._portfolio is None:
+            return {}
+        pm = self._portfolio
+        snap = pm.build_snapshot()
+        initial = pm.initial_capital
+        equity = snap["total_mtm_usdc"]
+        return {
+            "total_value": equity,
+            "cash_usdc": snap["total_cash_usdc"],
+            "reserved_capital": getattr(pm, "reserved_capital", 0.0),
+            "initial_capital": initial,
+            "peak_equity": snap["peak_equity_usdc"],
+            "realised_pnl": snap["total_realised_pnl"],
+            "total_return_pct": ((equity - initial) / initial * 100.0) if initial > 0 else 0.0,
+            "drawdown_pct": snap["mtm_drawdown_pct"] * 100.0,
+            "positions_count": len(snap.get("positions", [])),
+        }
+
+    def _positions_payload(self) -> List[Dict[str, Any]]:
+        if self._portfolio is None:
+            return []
+        # Cost basis per (market, platform)
+        cost_map: Dict[Any, float] = {}
+        for p in self._portfolio.get_all_positions():
+            yes_cost = (p.yes_holdings_pm * (p.avg_cost_yes_pm or 0.0)) + (p.yes_holdings_op * (p.avg_cost_yes_op or 0.0))
+            no_cost = (p.no_holdings_pm * (p.avg_cost_no_pm or 0.0)) + (p.no_holdings_op * (p.avg_cost_no_op or 0.0))
+            key = (p.market_id, "polymarket" if (p.yes_holdings_pm or p.no_holdings_pm) else "opinion")
+            cost_map[key] = yes_cost + no_cost
+        out = []
+        snap = self._portfolio.build_snapshot()
+        for pos in snap.get("positions", []):
+            mtm = pos.get("mtm_usdc", 0.0)
+            cost = cost_map.get((pos["market_id"], pos["platform"]), 0.0)
+            out.append({
+                "market_id": pos["market_id"],
+                "platform": pos["platform"],
+                "yes_qty": pos["yes_qty"],
+                "no_qty": pos["no_qty"],
+                "net_delta": pos.get("net_delta", 0.0),
+                "mtm_usdc": mtm,
+                "cost_basis_usdc": cost,
+                "unrealized_pnl": mtm - cost,
+                "realised_pnl": pos.get("realised_pnl", 0.0),
+            })
+        return out
+
+    def _risk_payload(self) -> Dict[str, Any]:
+        risk = getattr(self.health_monitor, "risk", None)
+        if risk is None:
+            return {}
+        return {
+            "kill_switch_active": bool(getattr(risk, "kill_switch_active", False)),
+            "drawdown_pct": getattr(risk, "current_drawdown", 0.0) * 100.0,
+            "reserved_capital": getattr(risk, "reserved_capital", 0.0),
+            "total_evaluated": getattr(risk, "total_evaluated", 0),
+            "total_approved": getattr(risk, "total_approved", 0),
+            "total_rejected": getattr(risk, "total_rejected", 0),
+            "rejections_by_reason": dict(getattr(risk, "rejections_by_reason", {})),
+        }
+
+    def _orchestrator_payload(self) -> Dict[str, Any]:
+        orch = self._orchestrator
+        if orch is None:
+            return {}
+        return {
+            "proposals_evaluated": getattr(orch, "proposals_evaluated", 0),
+            "proposals_approved": getattr(orch, "proposals_approved", 0),
+            "proposals_rejected": getattr(orch, "proposals_rejected", 0),
+        }
+
+    def _performance_payload(self) -> Dict[str, Any]:
+        if self._analytics is None or self._portfolio is None:
+            return {}
+        try:
+            m = self._analytics.compute_metrics(self._portfolio.initial_capital)
+        except Exception:
+            return {}
+        return {
+            "total_return_pct": m.total_return_pct,
+            "sharpe_ratio": m.sharpe_ratio,
+            "sortino_ratio": m.sortino_ratio,
+            "max_drawdown_pct": m.max_drawdown_pct,
+            "win_rate": m.win_rate,
+            "profit_factor": m.profit_factor,
+            "avg_win": m.avg_win,
+            "avg_loss": m.avg_loss,
+            "total_trades": m.total_trades,
+            "avg_hold_time_ms": m.avg_hold_time_ms,
+        }
+
+    def _alerts_payload(self, limit: int = 50) -> List[Dict[str, Any]]:
+        if self._alert_router is None:
+            return []
+        try:
+            recent = self._alert_router.get_recent(limit=limit)
+        except Exception:
+            return []
+        return [
+            {
+                "severity": getattr(a.severity, "value", str(a.severity)),
+                "title": a.title,
+                "message": a.message,
+                "timestamp": a.timestamp,
+            }
+            for a in recent
+        ]
+
+    async def handle_summary(self, request: web.Request) -> web.Response:
+        """Single combined payload the dashboard polls — avoids many round trips."""
+        try:
+            limit = int(request.query.get("limit", "100"))
+        except ValueError:
+            limit = 100
+        summary = {
+            "status": self.health_monitor.check_liveness()["status"] if self.health_monitor else "UNKNOWN",
+            "portfolio": self._portfolio_payload(),
+            "risk": self._risk_payload(),
+            "orchestrator": self._orchestrator_payload(),
+            "performance": self._performance_payload(),
+            "positions": self._positions_payload(),
+            "opportunities": self._orchestrator.get_recent_opportunities(limit) if self._orchestrator else [],
+            "trades": self._orchestrator.get_recent_trades(50) if self._orchestrator else [],
+            "alerts": self._alerts_payload(50),
+            "market_data": self._metrics_provider_market_data(),
+        }
+        return web.json_response(summary)
+
+    def _metrics_provider_market_data(self) -> Dict[str, Any]:
+        for provider in self.metrics_providers:
+            try:
+                data = provider()
+                md = data.get("market_data")
+                if md:
+                    return cast(Dict[str, Any], md)
+            except Exception:
+                continue
+        return {}
+
+    async def handle_positions(self, request: web.Request) -> web.Response:
+        return web.json_response(self._positions_payload())
+
+    async def handle_opportunities(self, request: web.Request) -> web.Response:
+        try:
+            limit = int(request.query.get("limit", "100"))
+        except ValueError:
+            limit = 100
+        items = self._orchestrator.get_recent_opportunities(limit) if self._orchestrator else []
+        return web.json_response(items)
+
+    async def handle_trades(self, request: web.Request) -> web.Response:
+        items = self._orchestrator.get_recent_trades(50) if self._orchestrator else []
+        return web.json_response(items)
+
+    async def handle_performance(self, request: web.Request) -> web.Response:
+        return web.json_response(self._performance_payload())
+
+    async def handle_alerts(self, request: web.Request) -> web.Response:
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except ValueError:
+            limit = 50
+        return web.json_response(self._alerts_payload(limit))
 
     def set_kill_switch_config(
         self,

@@ -18,6 +18,8 @@ from src.enums import OrderType, Platform, Side, StrategyId
 logger = logging.getLogger(__name__)
 
 MM_EXPIRY_MS: int = 30_000  # 30-second MM order lifetime
+MAX_RESERVATION_SHIFT_FRACTION: float = 0.5  # inventory skew ≤ this × half-spread
+MIN_PRICE_INCREMENT: float = 0.001  # min tick, also guards the no-cross clamp
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +36,7 @@ class DeltaNeutralConfig:
     venue_tolerance: float = 0.005  # price within this → use depth as tie-break
     min_days_to_resolution: float = 3.0  # suppress MM within this many days
     gamma: float = 0.10  # Stoikov risk aversion
-    k: float = 1.50  # Stoikov order arrival rate
+    k: float = 150.0  # Stoikov order arrival intensity per price unit (probabilities)
     mm_quote_size_usdc: float = 25.0
     mm_expiry_ms: int = MM_EXPIRY_MS
 
@@ -298,17 +300,30 @@ class DeltaNeutralStrategy:
         T_minus_t = max(0.01, days if days is not None else 1.0)
         delta = fv.portfolio_delta
 
-        # Convert T from days to 30-second units so sigma² × T is dimensionally consistent
-        t_30s_units = T_minus_t * 2880.0  # 24h × 60m × 60s / 30s = 2880
-
-        # Reservation price
-        r_mid = mid - delta * gamma * (sigma**2) * t_30s_units
-        r_mid = max(0.01, min(0.99, r_mid))
+        # Cap the MM time horizon at one day. Stoikov's (T - t) is the
+        # inventory-holding horizon, NOT the time-to-resolution: using the full
+        # days-to-resolution (up to weeks) makes sigma² × T explode and pins
+        # the reservation price to the 0.01/0.99 clamp for any non-zero
+        # inventory — the resulting quotes cross the entire book and get
+        # adversely filled instantly (observed as ~-0.2% P&L in backtests).
+        t_30s_units = min(T_minus_t, 1.0) * 2880.0  # 24h × 60m × 60s / 30s = 2880
 
         # Optimal spread
         base_spread = gamma * (sigma**2) * t_30s_units
         arrival_adj = (2.0 / gamma) * math.log(1.0 + gamma / k)
         half_spread = max(0.005, min(0.05, (base_spread + arrival_adj) / 2.0))
+
+        # Reservation price — the inventory skew is bounded to a fraction of
+        # the half-spread. Beyond that the quotes would collapse to the touch
+        # and the MM would dump its inventory at market on every tick (the
+        # fill model only crosses at the resting best bid/ask, so such quotes
+        # are pure takers that pay the spread each time). The skew then only
+        # biases where inside the book we stand, never crossing it.
+        reservation_shift = delta * gamma * (sigma**2) * t_30s_units
+        max_shift = MAX_RESERVATION_SHIFT_FRACTION * half_spread
+        reservation_shift = max(-max_shift, min(max_shift, reservation_shift))
+        r_mid = mid - reservation_shift
+        r_mid = max(0.01, min(0.99, r_mid))
 
         position_value = abs(delta) * mid  # convert token delta → USDC for unit consistency
         size = self._compute_adaptive_quote_size(position_value, cfg.max_hedge_usdc)
@@ -333,6 +348,17 @@ class DeltaNeutralStrategy:
 
         bid_price = max(0.01, r_mid - half_spread)
         ask_price = min(0.99, r_mid + half_spread)
+
+        # No-cross clamp: a wide inventory skew must not push a quote past the
+        # opposite side of the book — an order inside the touch crosses the
+        # spread and gets adversely filled at the resting best bid/ask. The
+        # skew then only shifts where *inside* the spread we stand, instead of
+        # dumping at market. (touch = mid ± spread/2 by construction.)
+        touch_bid = max(0.01, venue.mid - venue.spread / 2)
+        touch_ask = min(0.99, venue.mid + venue.spread / 2)
+        ask_price = max(ask_price, touch_bid + MIN_PRICE_INCREMENT)
+        bid_price = min(bid_price, touch_ask - MIN_PRICE_INCREMENT)
+
         if ask_price - bid_price < 0.002:
             ask_price = bid_price + 0.002
 
