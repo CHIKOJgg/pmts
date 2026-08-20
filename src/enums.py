@@ -1,5 +1,6 @@
 """src/types.py — Shared enums and type aliases. Zero external dependencies."""
 from __future__ import annotations
+
 from enum import Enum
 from typing import NewType
 

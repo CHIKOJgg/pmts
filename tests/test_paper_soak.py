@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,9 +10,9 @@ from pathlib import Path
 from data.adapters.synthetic import SyntheticMarketFeedAdapter
 from data.market_data_provider import MarketDataProvider
 from data.models import MarketSnapshot
+from scripts.build_market_registry import _logical_id, _normalize_title, _pair_markets
 from scripts.paper_soak import _build_runtime_env, _coverage_ok
 from scripts.run_paper_validation import SYNTHETIC_MARKETS, _write_synthetic_registry
-from scripts.build_market_registry import _logical_id, _normalize_title, _pair_markets
 from src.enums import Platform
 
 

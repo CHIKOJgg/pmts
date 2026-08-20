@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
-
+from typing import Any, Dict, List, Optional
 
 REQUIRED_REGISTRY_KEYS: set[str] = {"polymarket", "opinion", "question"}
 OPTIONAL_REGISTRY_KEYS: set[str] = {"pair_score", "polymarket_question", "opinion_question"}
 ALL_REGISTRY_KEYS: set[str] = REQUIRED_REGISTRY_KEYS | OPTIONAL_REGISTRY_KEYS
 
 
-def validate_market_registry(registry: Dict[str, dict]) -> list[str]:
+def validate_market_registry(registry: Dict[str, Dict[str, Any]]) -> list[str]:
     """Validate market registry structure and return list of errors."""
     errors: list[str] = []
     seen_polymarket: set[str] = set()
@@ -141,11 +140,13 @@ class PolymarketConfig:
 
 @dataclass
 class OpinionConfig:
-    rest_url: str = field(default_factory=lambda: _e("OP_REST_URL", "https://api.opinion.markets/v1"))
-    ws_url: str = field(default_factory=lambda: _e("OP_WS_URL", "wss://ws.opinion.markets"))
+    rest_url: str = field(default_factory=lambda: _e("OP_REST_URL", "https://openapi.opinion.trade/openapi"))
+    ws_url: str = field(default_factory=lambda: _e("OP_WS_URL", "wss://ws.opinion.trade"))
     api_key: str = field(default_factory=lambda: _secret("OP_API_KEY", "OP_API_KEY_FILE"))
     wallet_key: str = field(default_factory=lambda: _secret("OP_WALLET_KEY", "OP_WALLET_KEY_FILE"))
     ctf_exchange_addr: str = field(default_factory=lambda: _e("OP_CTF_EXCHANGE_ADDR", ""))
+    rpc_url: str = field(default_factory=lambda: _e("OP_RPC_URL", "https://bsc-dataseed.binance.org"))
+    multi_sig_addr: str = field(default_factory=lambda: _e("OP_MULTI_SIG_ADDR", ""))
     taker_fee_bps: int = field(default_factory=lambda: _ei("OP_TAKER_FEE_BPS", 25))
     sandbox: bool = field(default_factory=lambda: _eb("OP_SANDBOX", False))
 
@@ -154,7 +155,7 @@ class OpinionConfig:
 class TradingConfig:
     initial_cash_usdc: float = field(default_factory=lambda: _ef("INITIAL_CASH_USDC", 10_000.0))
     markets: List[str] = field(default_factory=list)
-    market_registry: Dict[str, dict] = field(default_factory=dict)
+    market_registry: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     enable_trading: bool = field(default_factory=lambda: _eb("ENABLE_TRADING", False))
     enable_arb: bool = field(default_factory=lambda: _eb("ENABLE_ARB", True))
     enable_mm: bool = field(default_factory=lambda: _eb("ENABLE_MM", True))
@@ -171,6 +172,8 @@ class TradingConfig:
     max_market_exposure_pct: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_PCT", 0.05))
     max_market_exposure_usdc: float = field(default_factory=lambda: _ef("MAX_MARKET_EXP_USDC", 500.0))
     max_net_delta: float = field(default_factory=lambda: _ef("MAX_NET_DELTA", 50.0))
+    db_path: Optional[str] = field(default_factory=lambda: _es("DB_PATH"))
+    market_registry_path: str = field(default_factory=lambda: _e("MARKET_REGISTRY_PATH", "market_registry.json"))
     database_url: Optional[str] = field(default_factory=lambda: _es("DATABASE_URL"))
     redis_url: Optional[str] = field(default_factory=lambda: _es("REDIS_URL"))
     redis_enabled: bool = field(default_factory=lambda: _eb("REDIS_ENABLED", False))
@@ -193,6 +196,10 @@ class TradingConfig:
     poll_normal_s: float = field(default_factory=lambda: _ef("POLL_NORMAL_S", 2.0))
     poll_fast_s: float = field(default_factory=lambda: _ef("POLL_FAST_S", 0.5))
     stale_threshold_ms: int = field(default_factory=lambda: _ei("STALE_THRESHOLD_MS", 2000))
+
+    # Order-state reconciliation: compare locally-tracked open orders against the
+    # exchange's open-order book at this interval (seconds). 0 disables it.
+    reconcile_interval_s: float = field(default_factory=lambda: _ef("RECONCILE_INTERVAL_S", 60.0))
 
 
 @dataclass
@@ -229,6 +236,12 @@ class AlertConfig:
 
 
 @dataclass
+class ObservabilityConfig:
+    bind_host: str = field(default_factory=lambda: _e("OBSERVABILITY_BIND_HOST", "127.0.0.1"))
+    port: int = field(default_factory=lambda: _ei("OBSERVABILITY_PORT", 8080))
+
+
+@dataclass
 class Settings:
     polymarket: PolymarketConfig = field(default_factory=PolymarketConfig)
     opinion: OpinionConfig = field(default_factory=OpinionConfig)
@@ -236,6 +249,7 @@ class Settings:
     ai: AIConfig = field(default_factory=AIConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
     def validate(self, mode: str = "live") -> None:
         """Strict validation of all configuration before startup."""
@@ -328,6 +342,8 @@ class Settings:
                 errors.append("OP_API_KEY is missing")
             if not self.opinion.wallet_key:
                 errors.append("OP_WALLET_KEY is missing")
+            if not self.opinion.rpc_url:
+                errors.append("OP_RPC_URL is missing")
             if not self.opinion.ctf_exchange_addr:
                 errors.append("OP_CTF_EXCHANGE_ADDR is missing")
 

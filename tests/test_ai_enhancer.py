@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-import math
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -88,10 +86,10 @@ class TestAISignalEnhancerCache:
         )
 
         with patch.object(enhancer, "_call_api", new_callable=AsyncMock, return_value=mock_ctx):
-            ctx1 = await enhancer.enhance(fv)
+            await enhancer.enhance(fv)
             assert enhancer.api_calls == 1
 
-            ctx2 = await enhancer.enhance(fv)
+            await enhancer.enhance(fv)
             assert enhancer.cache_hits == 1
             assert enhancer.api_calls == 1
 
@@ -108,10 +106,10 @@ class TestAISignalEnhancerErrors:
         fv = _make_feature_vector()
 
         with patch.object(enhancer, "_call_api", side_effect=Exception("API down")):
-            result1 = await enhancer.enhance(fv)
+            await enhancer.enhance(fv)
             assert enhancer._err_count == 1
 
-            result2 = await enhancer.enhance(fv)
+            await enhancer.enhance(fv)
             assert enhancer._disabled is True
 
         result3 = await enhancer.enhance(fv)
@@ -211,7 +209,10 @@ class TestParseResponse:
 
     def test_strips_markdown_code_blocks(self) -> None:
         fv = _make_feature_vector()
-        response = '```json\n{"regime":"stable","vol_regime":"normal","confidence":0.8,"arb_quality":0.5,"hedge_urgency":0.5,"suppress_mm":false,"reasoning":""}\n```'
+        response = (
+            '```json\n{"regime":"stable","vol_regime":"normal","confidence":0.8,'
+            '"arb_quality":0.5,"hedge_urgency":0.5,"suppress_mm":false,"reasoning":""}\n```'
+        )
 
         ctx = _parse_response(fv, response)
 

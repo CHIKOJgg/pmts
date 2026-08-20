@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -81,16 +81,16 @@ class CancelOrderRequest(BaseModel):
 
 
 def create_app(
-    health_monitor=None,
-    portfolio_manager=None,
-    analytics=None,
-    alert_router=None,
+    health_monitor: Any = None,
+    portfolio_manager: Any = None,
+    analytics: Any = None,
+    alert_router: Any = None,
     market_ids: Optional[List[str]] = None,
     start_time: Optional[float] = None,
-    kill_switch=None,
+    kill_switch: Any = None,
     kill_switch_token: str = "",
-    orchestrator=None,
-    risk_engine=None,
+    orchestrator: Any = None,
+    risk_engine: Any = None,
 ) -> Any:
     if not FASTAPI_AVAILABLE:
         logger.warning("FastAPI not available. API server disabled.")
@@ -99,7 +99,7 @@ def create_app(
     app = FastAPI(title="PMTS API", version="1.0.0")
 
     @app.get("/health", response_model=HealthResponse)
-    async def get_health():
+    async def get_health() -> HealthResponse:
         if health_monitor is None:
             raise HTTPException(status_code=503, detail="Health monitor not available")
         readiness = await health_monitor.check_readiness()
@@ -117,7 +117,7 @@ def create_app(
         )
 
     @app.get("/positions", response_model=List[PositionResponse])
-    async def get_positions(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
+    async def get_positions(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)) -> List[PositionResponse]:
         if portfolio_manager is None:
             raise HTTPException(status_code=503, detail="Portfolio manager not available")
         positions = portfolio_manager.get_all_positions()
@@ -136,7 +136,7 @@ def create_app(
         ]
 
     @app.get("/metrics", response_model=MetricsResponse)
-    async def get_metrics():
+    async def get_metrics() -> MetricsResponse:
         if analytics is None:
             raise HTTPException(status_code=503, detail="Analytics not available")
         initial_cap = portfolio_manager.initial_capital if portfolio_manager else 0
@@ -150,7 +150,7 @@ def create_app(
         )
 
     @app.get("/alerts", response_model=List[AlertResponse])
-    async def get_alerts(limit: int = Query(50, le=200)):
+    async def get_alerts(limit: int = Query(50, le=200)) -> List[AlertResponse]:
         if alert_router is None:
             raise HTTPException(status_code=503, detail="Alert router not available")
         recent = alert_router.get_recent(limit=limit)
@@ -165,13 +165,13 @@ def create_app(
         ]
 
     @app.get("/markets")
-    async def get_markets(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
+    async def get_markets(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)) -> dict[str, Any]:
         all_ids = market_ids or []
         page = all_ids[offset:offset + limit]
         return {"markets": page, "total": len(all_ids), "offset": offset, "limit": limit}
 
     @app.post("/kill-switch/activate", response_model=KillSwitchResponse)
-    async def activate_kill_switch():
+    async def activate_kill_switch() -> KillSwitchResponse:
         if kill_switch is None:
             raise HTTPException(status_code=503, detail="Kill switch not available")
         kill_switch.activate(
@@ -184,7 +184,7 @@ def create_app(
         return KillSwitchResponse(success=True, message="Kill switch activated")
 
     @app.post("/kill-switch/reset", response_model=KillSwitchResponse)
-    async def reset_kill_switch(token: str = Query(..., description="Kill switch reset token")):
+    async def reset_kill_switch(token: str = Query(..., description="Kill switch reset token")) -> KillSwitchResponse:
         if risk_engine is None:
             raise HTTPException(status_code=503, detail="Risk engine not available")
         if not kill_switch_token:
@@ -195,14 +195,14 @@ def create_app(
         return KillSwitchResponse(success=True, message="Kill switch reset")
 
     @app.post("/cancel-order", response_model=KillSwitchResponse)
-    async def cancel_order(req: CancelOrderRequest):
+    async def cancel_order(req: CancelOrderRequest) -> KillSwitchResponse:
         if orchestrator is None:
             raise HTTPException(status_code=503, detail="Orchestrator not available")
         await orchestrator.cancel_proposal(req.proposal_id)
         return KillSwitchResponse(success=True, message=f"Cancel requested for {req.proposal_id[:8]}")
 
     @app.post("/reload/config", response_model=ReloadResponse)
-    async def reload_config():
+    async def reload_config() -> ReloadResponse:
         if risk_engine is None:
             raise HTTPException(status_code=503, detail="Risk engine not available")
         risk_engine.reload_limits()
@@ -214,16 +214,16 @@ def create_app(
 async def run_api_server(
     host: str = "127.0.0.1",
     port: int = 8000,
-    health_monitor=None,
-    portfolio_manager=None,
-    analytics=None,
-    alert_router=None,
+    health_monitor: Any = None,
+    portfolio_manager: Any = None,
+    analytics: Any = None,
+    alert_router: Any = None,
     market_ids: Optional[List[str]] = None,
     start_time: Optional[float] = None,
-    kill_switch=None,
+    kill_switch: Any = None,
     kill_switch_token: str = "",
-    orchestrator=None,
-    risk_engine=None,
+    orchestrator: Any = None,
+    risk_engine: Any = None,
 ) -> None:
     if not FASTAPI_AVAILABLE:
         logger.warning("FastAPI not installed. Run: pip install fastapi uvicorn")

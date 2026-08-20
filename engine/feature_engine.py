@@ -52,6 +52,18 @@ class FeatureEngine:
     def add_callback(self, cb: _FV_CB) -> None:
         self._callbacks.append(cb)
 
+    def replace_callback(self, old: _FV_CB, new: _FV_CB) -> None:
+        """Swap a previously-registered callback without touching private state.
+
+        If ``old`` is not currently registered, ``new`` is appended. This lets
+        callers (e.g. the backtest engine) rewire the FE→SE handoff cleanly.
+        """
+        for i, cb in enumerate(self._callbacks):
+            if cb == old:
+                self._callbacks[i] = new
+                return
+        self._callbacks.append(new)
+
     @property
     def correlation_tracker(self) -> CorrelationTracker:
         return self._correlation

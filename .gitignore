@@ -42,6 +42,8 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.pytest_cache_local/
+.pytest-tmp/
 nosetests.xml
 coverage.xml
 *,cover
@@ -80,6 +82,9 @@ celerybeat-schedule
 # dotenv
 .env
 
+# opencode agent config (local, contains secrets/paths)
+opencode.json
+
 # virtualenv
 venv/
 ENV/
@@ -100,6 +105,7 @@ ENV/
 [Ss]cripts
 pyvenv.cfg
 .venv
+.venv_local/
 pip-selfcheck.json
 
 ### JetBrains template
@@ -183,3 +189,21 @@ fabric.properties
 
 # idea folder, uncomment if you don't need it
 # .idea
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Logs and analysis output
+all_code.txt
+logFile.json
+run*.txt
+test_output.txt
+test_regex*.py
+
+# Cache directories
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/

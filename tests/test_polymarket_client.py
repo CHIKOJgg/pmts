@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from execution.clients.polymarket import PolymarketClient, _assert_protocol_compat
+from execution.clients.polymarket import PolymarketClient
 from execution.engine import ExchangeClient
 from src.enums import Platform
 
@@ -20,9 +20,6 @@ from src.enums import Platform
 from tests.venue_fixtures import (
     _FakeResponse,
     _FakeSession,
-    opinion_order_submission,
-    polymarket_order_submission,
-    temp_dir_windows_safe,
 )
 
 
@@ -62,12 +59,6 @@ class TestPolymarketClientInstantiation:
             host="https://placeholder.invalid",
         )
         assert isinstance(client, ExchangeClient)
-
-    def test_protocol_compat_function_does_not_raise(self) -> None:
-        """Protocol compatibility check should pass."""
-        # This function is now a no-op since validation happens in __init__
-        # The actual validation is tested in test_rejects_empty_api_key and similar
-        _assert_protocol_compat()
 
     def test_rejects_empty_api_key(self) -> None:
         """Client should reject empty API key."""
@@ -921,7 +912,8 @@ class TestPolymarketClientEIP712Signing:
         signature = client._sign_order(order)
 
         assert signature is not None
-        assert len(signature) == 130  # 64 bytes + '0x' prefix
+        assert len(signature) == 130  # r(32) + s(32) + v(1) = 65 bytes, no '0x' prefix
+        assert signature[-2:] in ("1b", "1c")  # v = 27/28 per EIP-712
 
 
 if __name__ == "__main__":

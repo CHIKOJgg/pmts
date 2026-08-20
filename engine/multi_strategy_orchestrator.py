@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import queue
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from engine.strategy_runner import run_strategy_process
 

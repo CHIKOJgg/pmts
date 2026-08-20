@@ -3,19 +3,16 @@ import json
 import logging
 from typing import Any, List, Optional
 
-import websockets
-
-from data.market_data_provider import _SnapshotCB
+from data.adapters.base_ws import BaseWsAdapter
 from data.models import MarketSnapshot
-from infrastructure.observability import API_ERRORS_TOTAL, FEED_LAST_TS, RECONNECT_TOTAL
+from infrastructure.observability import API_ERRORS_TOTAL, FEED_LAST_TS
 from src.clock import Clock, LiveClock
 from src.enums import Platform
 
 logger = logging.getLogger(__name__)
-ConnectionClosed = getattr(getattr(websockets, "exceptions", None), "ConnectionClosed", Exception)
 
 
-class OpinionWSAdapter:
+class OpinionWSAdapter(BaseWsAdapter):
     """
     WebSocket adapter for Opinion Markets.
     Subscribes to tickers for a set of markets.
@@ -31,95 +28,17 @@ class OpinionWSAdapter:
         market_id_map: Optional[dict[str, str]] = None,
         clock: Clock = LiveClock(),
     ) -> None:
-        self._market_ids = market_ids
-        self._ws_url = ws_url
-        self._taker_fee_bps = taker_fee_bps
-        self._market_id_map = market_id_map or {}
-        self._callback: Optional[_SnapshotCB] = None
-        self._clock = clock
+        super().__init__(market_ids, ws_url, taker_fee_bps, market_id_map, clock)
 
-        self._running = False
-        self._task: Optional[asyncio.Task[None]] = None
-
-    @property
-    def platform(self) -> Platform:
-        return self.PLATFORM
-
-    def set_snapshot_callback(self, cb: _SnapshotCB) -> None:
-        self._callback = cb
-
-    async def start(self) -> None:
-        if self._running:
-            return
-        self._running = True
-        self._task = asyncio.create_task(self._run_loop())
-        logger.info("OpinionWSAdapter started for %d markets", len(self._market_ids))
-
-    async def stop(self) -> None:
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        logger.info("OpinionWSAdapter stopped")
-
-    async def _run_loop(self) -> None:
-        retry_delay = 1.0
-        subscribe_task: Optional[asyncio.Task[None]] = None
-        while self._running:
-            if subscribe_task and not subscribe_task.done():
-                try:
-                    subscribe_task.cancel()
-                    await subscribe_task
-                except asyncio.CancelledError:
-                    pass
-
-            RECONNECT_TOTAL.labels(platform=self.PLATFORM.value).inc()
-            try:
-                async with websockets.connect(self._ws_url) as ws:
-                    retry_delay = 1.0
-
-                    params = [f"ticker@{mid}" for mid in self._market_ids]
-                    sub_msg = {"method": "SUBSCRIBE", "params": params, "id": self._clock.now_ms()}
-                    await ws.send(json.dumps(sub_msg))
-                    ack = await asyncio.wait_for(asyncio.ensure_future(ws.recv()), timeout=5.0)
-                    ack_data = json.loads(ack)
-                    if ack_data.get("result") is None:
-                        raise ConnectionError(f"Opinion WS subscribe rejected: {ack_data}")
-                    logger.info("Subscribed to Opinion tickers: %s", params)
-
-                    await self._process_messages(ws)
-            except Exception as exc:
-                if not self._running:
-                    break
-                logger.error("Opinion WS error: %s. Retrying in %.1fs...", exc, retry_delay)
-                API_ERRORS_TOTAL.labels(platform=self.PLATFORM.value, error_type=type(exc).__name__).inc()
-
-                if subscribe_task and not subscribe_task.done():
-                    try:
-                        subscribe_task.cancel()
-                        await subscribe_task
-                    except asyncio.CancelledError:
-                        pass
-                    subscribe_task = None
-
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(retry_delay * 2, 60.0)
-
-    async def _process_messages(self, ws: Any) -> None:
-        try:
-            async for message in ws:
-                if not self._running:
-                    break
-                await self._handle_message(message)
-        except ConnectionClosed:
-            logger.info("Opinion WS connection closed")
-        except Exception as exc:
-            if self._running:
-                logger.error("Error processing Opinion WS messages: %s", exc)
-            raise
+    async def _subscribe(self, ws: Any) -> None:
+        params = [f"ticker@{mid}" for mid in self._market_ids]
+        sub_msg = {"method": "SUBSCRIBE", "params": params, "id": self._clock.now_ms()}
+        await ws.send(json.dumps(sub_msg))
+        ack = await asyncio.wait_for(asyncio.ensure_future(ws.recv()), timeout=5.0)
+        ack_data = json.loads(ack)
+        if ack_data.get("result") is None:
+            raise ConnectionError(f"Opinion WS subscribe rejected: {ack_data}")
+        logger.info("Subscribed to Opinion tickers: %s", params)
 
     async def _handle_message(self, message: Any) -> None:
         try:

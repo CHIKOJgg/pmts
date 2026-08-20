@@ -1,10 +1,9 @@
-import sqlite3
-import logging
 import hashlib
-from typing import Any, Dict, Tuple, Optional, List
+import logging
+import sqlite3
+from typing import Any, Dict, List, Optional, Tuple
 
-
-from portfolio.manager import _Position, FillRecord
+from portfolio.manager import FillRecord, _Position
 from src.enums import Platform, StrategyId
 
 logger = logging.getLogger(__name__)
@@ -123,7 +122,7 @@ class SqlitePortfolioStore:
                     fill.proposal_id, fill.order_id, fill.market_id, fill.platform.value,
                     fill.side, fill.filled_usdc, fill.fill_price, fill.ts
                 ))
-                
+
                 self._conn.execute('''
                     INSERT OR REPLACE INTO positions
                     (market_id, platform, yes_qty, no_qty, avg_cost_yes, avg_cost_no, realised_pnl)
@@ -182,7 +181,7 @@ class SqlitePortfolioStore:
     def load_state(self) -> Dict[str, Any]:
         """Load the entire portfolio state on startup."""
         cur = self._conn.cursor()
-        
+
         state: Dict[str, Any] = {"cash_usdc": None, "peak_equity": None, "closed_pnl": 0.0}
         for row in cur.execute("SELECT key, value FROM state"):
             state[row["key"]] = row["value"]

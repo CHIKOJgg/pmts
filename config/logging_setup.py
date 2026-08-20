@@ -1,5 +1,6 @@
 """config/logging_setup.py — Structured logging configuration."""
 from __future__ import annotations
+
 import json
 import logging
 import logging.handlers
@@ -25,7 +26,7 @@ class JsonFormatter(logging.Formatter):
 
 
 class TextFormatter(logging.Formatter):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             fmt="%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",

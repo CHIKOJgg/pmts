@@ -9,23 +9,29 @@ import asyncio
 import hashlib
 import logging
 import os
-import sys
 import signal
+import sys
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config.settings import get_settings
+from typing import TYPE_CHECKING, Any
+
 from config.logging_setup import configure_logging
-from src.enums import Platform
+from config.settings import Settings, get_settings
 from src.clock import LiveClock
+from src.enums import Platform
+
+if TYPE_CHECKING:
+    from data.market_data_provider import MarketDataProvider
+    from src.protocols import PortfolioStore
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BACKTEST_MARKETS = ["BTC-Q4", "ETH-Q1", "SOL-Q2"]
-BACKTEST_RISK_LIMITS = {
+BACKTEST_RISK_LIMITS: dict[str, Any] = {
     "drawdown_kill_pct": 0.20,
     "drawdown_warn_pct": 0.15,
     "max_market_exposure_pct": 1.0,
@@ -44,14 +50,14 @@ def _stable_seed(value: str) -> int:
     return int.from_bytes(digest[:4], "big")
 
 
-def _venue_market_ids(settings, venue: str) -> list[str]:
+def _venue_market_ids(settings: Settings, venue: str) -> list[str]:
     registry = settings.trading.market_registry
     if not registry:
         return list(settings.trading.markets)
     return [registry[m][venue] for m in settings.trading.markets]
 
 
-def _venue_token_ids(settings, token_field: str) -> list[str]:
+def _venue_token_ids(settings: Settings, token_field: str) -> list[str]:
     """Extract CLOB token IDs from registry for WS subscription."""
     registry = settings.trading.market_registry
     if not registry:
@@ -60,7 +66,7 @@ def _venue_token_ids(settings, token_field: str) -> list[str]:
     return [registry[m].get(token_field, "") for m in settings.trading.markets if registry[m].get(token_field)]
 
 
-def _token_to_logical_map(settings, token_field: str) -> dict[str, str]:
+def _token_to_logical_map(settings: Settings, token_field: str) -> dict[str, str]:
     """Map from CLOB token IDs back to logical market IDs."""
     registry = settings.trading.market_registry
     if not registry:
@@ -73,7 +79,7 @@ def _token_to_logical_map(settings, token_field: str) -> dict[str, str]:
     return result
 
 
-def _pm_market_id_map(settings) -> dict[str, str]:
+def _pm_market_id_map(settings: Settings) -> dict[str, str]:
     """Build a market_id_map for PolymarketClient using YES token IDs.
 
     The PolymarketClient uses this to resolve logical market IDs to CLOB token
@@ -92,21 +98,21 @@ def _pm_market_id_map(settings) -> dict[str, str]:
     return result
 
 
-def _logical_to_venue_map(settings, venue: str) -> dict[str, str]:
+def _logical_to_venue_map(settings: Settings, venue: str) -> dict[str, str]:
     registry = settings.trading.market_registry
     if not registry:
         return {}
     return {m: registry[m][venue] for m in settings.trading.markets}
 
 
-def _venue_to_logical_map(settings, venue: str) -> dict[str, str]:
+def _venue_to_logical_map(settings: Settings, venue: str) -> dict[str, str]:
     registry = settings.trading.market_registry
     if not registry:
         return {}
     return {registry[m][venue]: m for m in settings.trading.markets}
 
 
-def _market_data_metrics(mdp) -> dict:
+def _market_data_metrics(mdp: MarketDataProvider) -> dict[str, Any]:
     return {
         "snapshots_received": mdp.snapshots_received,
         "stale_emitted": mdp.stale_emitted,
@@ -116,19 +122,20 @@ def _market_data_metrics(mdp) -> dict:
     }
 
 async def run_live() -> None:
-    from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
+    from ai.enhancer import AIEnhancerConfig, AISignalEnhancer
     from data.adapters.opinion_ws import OpinionWSAdapter
     from data.adapters.polymarket_ws import PolymarketWSAdapter
     from data.market_data_provider import MarketDataProvider
     from engine.market_monitor import MarketMonitor
     from engine.orchestrator import Orchestrator
-    from engine.strategy_engine import StrategyEngine, StrategyConfig
+    from engine.strategy_engine import StrategyConfig, StrategyEngine
     from execution.clients.opinion import OpinionClient
     from execution.clients.polymarket import PolymarketClient
     from execution.engine import ExecutionEngine
+    from infrastructure.alerting import AlertConfig as AlertCfg
+    from infrastructure.alerting import AlertRouter
     from infrastructure.circuit_breaker import CircuitBreakerExchangeWrapper
     from infrastructure.observability import HealthMonitor, ObservabilityServer
-    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
     from portfolio.analytics import PortfolioAnalytics
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
@@ -145,12 +152,14 @@ async def run_live() -> None:
     logger.info("Live trading initializing: markets=%s", settings.trading.markets)
 
     clock = LiveClock()
-    
+
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
-    database_url = settings.trading.database_url or os.environ.get("DATABASE_URL")
+    database_url = settings.trading.database_url
+    store: PortfolioStore
     if database_url:
-        store = PostgresPortfolioStore(dsn=database_url)
-        await store.connect()
+        pg_store = PostgresPortfolioStore(dsn=database_url)
+        await pg_store.connect()
+        store = pg_store
         logger.info("Using PostgreSQL backend")
     else:
         db_path = getattr(settings.trading, "db_path", "portfolio.db")
@@ -168,7 +177,7 @@ async def run_live() -> None:
     )
     alert_router = AlertRouter(alert_cfg)
 
-    pm_client = PolymarketClient(
+    pm_client_raw = PolymarketClient(
         api_key=settings.polymarket.api_key,
         secret=settings.polymarket.api_secret,
         passphrase=settings.polymarket.passphrase,
@@ -177,7 +186,7 @@ async def run_live() -> None:
         sandbox=settings.polymarket.sandbox,
         market_id_map=_pm_market_id_map(settings),
     )
-    op_client = OpinionClient(
+    op_client_raw = OpinionClient(
         api_key=settings.opinion.api_key,
         wallet_private_key=settings.opinion.wallet_key,
         ctf_exchange_addr=settings.opinion.ctf_exchange_addr,
@@ -185,8 +194,8 @@ async def run_live() -> None:
         sandbox=settings.opinion.sandbox,
         market_id_map=_logical_to_venue_map(settings, "opinion"),
     )
-    pm_client = CircuitBreakerExchangeWrapper(pm_client, base_name="Polymarket")
-    op_client = CircuitBreakerExchangeWrapper(op_client, base_name="Opinion")
+    pm_client = CircuitBreakerExchangeWrapper(pm_client_raw, base_name="Polymarket")
+    op_client = CircuitBreakerExchangeWrapper(op_client_raw, base_name="Opinion")
     pm_ws = PolymarketWSAdapter(
         asset_ids=_venue_token_ids(settings, "pm_yes_token"),
         ws_url=settings.polymarket.ws_url,
@@ -199,10 +208,10 @@ async def run_live() -> None:
         taker_fee_bps=settings.opinion.taker_fee_bps,
         market_id_map=_venue_to_logical_map(settings, "opinion"),
     )
-    
+
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws], clock=clock)
 
-    def price_source(market_id: str, platform) -> tuple[float, float]:
+    def price_source(market_id: str, platform: Platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
         return mid if mid is not None else (0.50, 0.50)
 
@@ -228,7 +237,7 @@ async def run_live() -> None:
 
     kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token, alert_router=alert_router)
     risk = RiskEngine(portfolio=portfolio, kill_switch=kill_switch, limits=risk_limits, store=store, alert_router=alert_router, clock=clock)
-    
+
     ai_cfg = AIEnhancerConfig(
         enabled=settings.ai.enabled,
         use_heuristic_only=settings.ai.heuristic_only,
@@ -267,7 +276,7 @@ async def run_live() -> None:
 
     pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
     op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
-    
+
     orchestrator = Orchestrator(
         mdp=mdp,
         portfolio=portfolio,
@@ -299,9 +308,9 @@ async def run_live() -> None:
     )
 
     # Market registry hot-reload
-    market_registry_path = os.environ.get("MARKET_REGISTRY_PATH", "market_registry.json")
+    market_registry_path = settings.trading.market_registry_path
     from infrastructure.market_watcher import MarketRegistryWatcher
-    def _reload_market_registry(registry: dict) -> None:
+    def _reload_market_registry(registry: dict[str, Any]) -> None:
         logger.info("Market registry hot-reloaded (%d entries)", len(registry))
         new_markets = list(registry.keys())
         if new_markets:
@@ -313,10 +322,10 @@ async def run_live() -> None:
         poll_interval_s=30.0,
     )
 
-    obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_bind_host = settings.observability.bind_host
+    obs_port = settings.observability.port
     obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
-    
+
     monitor = HealthMonitor(
         mdp=mdp,
         engines=[pm_engine, op_engine],
@@ -326,14 +335,20 @@ async def run_live() -> None:
         obs_server=obs_server,
         mode="live",
     )
-    
+
     obs_server.set_health_monitor(monitor)
+    obs_server.set_dashboard_sources(
+        portfolio=portfolio,
+        orchestrator=orchestrator,
+        alert_router=alert_router,
+        analytics=analytics,
+    )
     obs_server.set_kill_switch_config(
         token=settings.trading.kill_switch_token,
         reset_callback=orchestrator._on_kill_switch_reset,
         activate_callback=orchestrator.emergency_stop,
     )
-    
+
     obs_server.register_provider(lambda: {
         "orchestrator": {
             "proposals_evaluated": orchestrator.proposals_evaluated,
@@ -354,7 +369,7 @@ async def run_live() -> None:
 
     # Graceful Shutdown
     shutdown_event = asyncio.Event()
-    def handle_sig(*args):
+    def handle_sig(*args: Any) -> None:
         logger.info("Received shutdown signal...")
         shutdown_event.set()
 
@@ -367,24 +382,35 @@ async def run_live() -> None:
 
     # START
     await obs_server.start()
-    
+
     logger.info("Performing startup reconciliation...")
     await pm_engine.reconcile()
     await op_engine.reconcile()
     risk.reconcile_reservations()
-    
+
     await orchestrator.start()
     await market_monitor.start()
     await resolution_monitor.start()
     await market_watcher.start()
-    
-    async def liveness_tick_loop():
+
+    async def liveness_tick_loop() -> None:
         while True:
             monitor.tick_liveness()
             await asyncio.sleep(5)
-    
+
     liveness_task = asyncio.create_task(liveness_tick_loop(), name="liveness-tick")
-    
+
+    # Periodic order-state reconciliation against the exchange (best-effort drift detection)
+    from infrastructure.reconciliation import OrderReconciler
+
+    reconciler = OrderReconciler(
+        engines=[pm_engine, op_engine],
+        alert_router=alert_router,
+        clock=clock,
+        interval_s=settings.trading.reconcile_interval_s,
+    )
+    await reconciler.start()
+
     logger.info("SYSTEM LIVE TRADING mode.")
 
     try:
@@ -398,6 +424,7 @@ async def run_live() -> None:
     await market_monitor.stop()
     await orchestrator.stop()
     await obs_server.stop()
+    await reconciler.stop()
     await pm_client.close()
     await op_client.close()
     await alert_router.close()
@@ -409,24 +436,25 @@ async def run_live() -> None:
 
 
 async def run_paper(fill_prob: float = 0.85) -> None:
-    from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
+    from ai.enhancer import AIEnhancerConfig, AISignalEnhancer
     from data.adapters.opinion_ws import OpinionWSAdapter
     from data.adapters.polymarket_ws import PolymarketWSAdapter
     from data.market_data_provider import MarketDataProvider
     from engine.market_monitor import MarketMonitor
     from engine.orchestrator import Orchestrator
-    from engine.strategy_engine import StrategyEngine, StrategyConfig
+    from engine.strategy_engine import StrategyConfig, StrategyEngine
     from execution.clients.paper import PaperTradingClient
     from execution.engine import ExecutionEngine
+    from infrastructure.alerting import AlertConfig as AlertCfg
+    from infrastructure.alerting import AlertRouter
     from infrastructure.observability import HealthMonitor, ObservabilityServer
-    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
+    from portfolio.analytics import PortfolioAnalytics
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
     from portfolio.storage_postgres import PostgresPortfolioStore
     from risk.engine import RiskEngine
     from risk.kill_switch import KillSwitch
     from risk.limits import RiskLimits
-    from portfolio.analytics import PortfolioAnalytics
     from strategies.arbitrage import ArbConfig
     from strategies.delta_neutral import DeltaNeutralConfig
 
@@ -434,12 +462,14 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     settings.validate(mode="paper")
 
     logger.info("Paper trading initializing: markets=%s", settings.trading.markets)
-    
+
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
-    database_url = settings.trading.database_url or os.environ.get("DATABASE_URL")
+    database_url = settings.trading.database_url
+    store: PortfolioStore
     if database_url:
-        store = PostgresPortfolioStore(dsn=database_url)
-        await store.connect()
+        pg_store = PostgresPortfolioStore(dsn=database_url)
+        await pg_store.connect()
+        store = pg_store
         logger.info("Using PostgreSQL backend")
     else:
         db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
@@ -476,10 +506,10 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         taker_fee_bps=settings.opinion.taker_fee_bps,
         market_id_map=_venue_to_logical_map(settings, "opinion"),
     )
-    
+
     mdp = MarketDataProvider(adapters=[pm_ws, op_ws], alert_router=alert_router, clock=clock)
 
-    def price_source(market_id: str, platform) -> tuple[float, float]:
+    def price_source(market_id: str, platform: Platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
         return mid if mid is not None else (0.50, 0.50)
 
@@ -544,7 +574,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
 
     pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
     op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
-    
+
     orchestrator = Orchestrator(
         mdp=mdp,
         portfolio=portfolio,
@@ -577,9 +607,9 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     )
 
     # Market registry hot-reload
-    market_registry_path = os.environ.get("MARKET_REGISTRY_PATH", "market_registry.json")
+    market_registry_path = settings.trading.market_registry_path
     from infrastructure.market_watcher import MarketRegistryWatcher
-    def _reload_market_registry(registry: dict) -> None:
+    def _reload_market_registry(registry: dict[str, Any]) -> None:
         logger.info("Market registry hot-reloaded (%d entries)", len(registry))
         new_markets = list(registry.keys())
         if new_markets:
@@ -591,10 +621,10 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         poll_interval_s=30.0,
     )
 
-    obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_bind_host = settings.observability.bind_host
+    obs_port = settings.observability.port
     obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
-    
+
     monitor = HealthMonitor(
         mdp=mdp,
         engines=[pm_engine, op_engine],
@@ -604,8 +634,14 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         obs_server=obs_server,
         mode="paper",
     )
-    
+
     obs_server.set_health_monitor(monitor)
+    obs_server.set_dashboard_sources(
+        portfolio=portfolio,
+        orchestrator=orchestrator,
+        alert_router=alert_router,
+        analytics=analytics,
+    )
     obs_server.set_kill_switch_config(
         token=settings.trading.kill_switch_token,
         reset_callback=orchestrator._on_kill_switch_reset,
@@ -631,7 +667,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
     })
 
     shutdown_event = asyncio.Event()
-    def handle_sig(*args):
+    def handle_sig(*args: Any) -> None:
         logger.info("Received shutdown signal...")
         shutdown_event.set()
 
@@ -643,31 +679,31 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         pass
 
     await obs_server.start()
-    
+
     logger.info("Performing startup reconciliation (paper mode)...")
     await pm_engine.reconcile()
     await op_engine.reconcile()
     risk.reconcile_reservations()
-    
+
     await orchestrator.start()
     await market_monitor.start()
     await resolution_monitor.start()
     await market_watcher.start()
-    
-    async def liveness_tick_loop():
+
+    async def liveness_tick_loop() -> None:
         while True:
             monitor.tick_liveness()
             await asyncio.sleep(5)
-    
+
     liveness_task = asyncio.create_task(liveness_tick_loop(), name="liveness-tick")
-    
+
     logger.info("SYSTEM PAPER TRADING mode. No real capital at risk.")
-    
+
     try:
         await shutdown_event.wait()
     except asyncio.CancelledError:
         pass
-    
+
     logger.info("Shutting down paper trading...")
     liveness_task.cancel()
     await resolution_monitor.stop()
@@ -685,25 +721,25 @@ async def run_paper(fill_prob: float = 0.85) -> None:
 
 
 async def run_paper_offline(fill_prob: float = 0.85) -> None:
-    from ai.enhancer import AISignalEnhancer, AIEnhancerConfig
+    from ai.enhancer import AIEnhancerConfig, AISignalEnhancer
     from data.adapters.synthetic import SyntheticMarketFeedAdapter
     from data.market_data_provider import MarketDataProvider
     from engine.orchestrator import Orchestrator
-    from engine.strategy_engine import StrategyEngine, StrategyConfig
+    from engine.strategy_engine import StrategyConfig, StrategyEngine
     from execution.clients.paper import PaperTradingClient
     from execution.engine import ExecutionEngine
+    from infrastructure.alerting import AlertConfig as AlertCfg
+    from infrastructure.alerting import AlertRouter
     from infrastructure.observability import HealthMonitor, ObservabilityServer
-    from infrastructure.alerting import AlertConfig as AlertCfg, AlertRouter
+    from portfolio.analytics import PortfolioAnalytics
     from portfolio.manager import PortfolioManager
     from portfolio.storage import SqlitePortfolioStore
     from portfolio.storage_postgres import PostgresPortfolioStore
     from risk.engine import RiskEngine
     from risk.kill_switch import KillSwitch
     from risk.limits import RiskLimits
-    from portfolio.analytics import PortfolioAnalytics
     from strategies.arbitrage import ArbConfig
     from strategies.delta_neutral import DeltaNeutralConfig
-    from infrastructure.circuit_breaker import CircuitBreakerExchangeWrapper
 
     settings = get_settings()
     settings.validate(mode="paper")
@@ -711,10 +747,12 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     logger.info("Offline paper trading initializing: markets=%s", settings.trading.markets)
 
     # Use PostgreSQL when DATABASE_URL is set, otherwise SQLite
-    database_url = settings.trading.database_url or os.environ.get("DATABASE_URL")
+    database_url = settings.trading.database_url
+    store: PortfolioStore
     if database_url:
-        store = PostgresPortfolioStore(dsn=database_url)
-        await store.connect()
+        pg_store = PostgresPortfolioStore(dsn=database_url)
+        await pg_store.connect()
+        store = pg_store
         logger.info("Using PostgreSQL backend")
     else:
         db_path = getattr(settings.trading, "db_path", "portfolio_paper.db")
@@ -752,7 +790,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     mdp = MarketDataProvider(adapters=[pm_feed, op_feed], alert_router=alert_router, clock=clock)
 
-    def price_source(market_id: str, platform) -> tuple[float, float]:
+    def price_source(market_id: str, platform: Platform) -> tuple[float, float]:
         mid = mdp.get_mid_prices(market_id, platform)
         return mid if mid is not None else (0.50, 0.50)
 
@@ -823,6 +861,16 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     pm_engine = ExecutionEngine(pm_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
     op_engine = ExecutionEngine(op_client, risk=risk, store=store, mdb=mdp, alert_router=alert_router, clock=clock)
 
+    # Periodic order-state reconciliation against the exchange (best-effort drift detection)
+    from infrastructure.reconciliation import OrderReconciler
+
+    reconciler = OrderReconciler(
+        engines=[pm_engine, op_engine],
+        alert_router=alert_router,
+        clock=clock,
+        interval_s=settings.trading.reconcile_interval_s,
+    )
+
     orchestrator = Orchestrator(
         mdp=mdp,
         portfolio=portfolio,
@@ -838,8 +886,8 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     )
     risk.set_kill_switch_reset_callback(orchestrator._on_kill_switch_reset)
 
-    obs_bind_host = os.environ.get("OBSERVABILITY_BIND_HOST", "127.0.0.1")
-    obs_port = int(os.environ.get("OBSERVABILITY_PORT", "8080"))
+    obs_bind_host = settings.observability.bind_host
+    obs_port = settings.observability.port
     obs_server = ObservabilityServer(port=obs_port, bind_host=obs_bind_host)
 
     monitor = HealthMonitor(
@@ -853,6 +901,12 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     )
 
     obs_server.set_health_monitor(monitor)
+    obs_server.set_dashboard_sources(
+        portfolio=portfolio,
+        orchestrator=orchestrator,
+        alert_router=alert_router,
+        analytics=analytics,
+    )
     obs_server.set_kill_switch_config(
         token=settings.trading.kill_switch_token,
         reset_callback=orchestrator._on_kill_switch_reset,
@@ -879,7 +933,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     shutdown_event = asyncio.Event()
 
-    def handle_sig(*args):
+    def handle_sig(*args: Any) -> None:
         logger.info("Received shutdown signal...")
         shutdown_event.set()
 
@@ -898,8 +952,9 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     risk.reconcile_reservations()
 
     await orchestrator.start()
+    await reconciler.start()
 
-    async def liveness_tick_loop():
+    async def liveness_tick_loop() -> None:
         while True:
             monitor.tick_liveness()
             await asyncio.sleep(5)
@@ -915,6 +970,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
 
     logger.info("Shutting down offline paper trading...")
     liveness_task.cancel()
+    await reconciler.stop()
     await orchestrator.stop()
     await obs_server.stop()
     await pm_client.close()
@@ -927,8 +983,14 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
     logger.info("Offline paper trading shutdown complete.")
 
 
-async def run_backtest(ticks: int, capital: float) -> None:
+async def run_backtest(
+    ticks: int,
+    capital: float,
+    pm_bias: float = 0.0,
+    op_bias: float = 0.0,
+) -> None:
     import time
+
     from backtest.engine import BacktestEngine, build_synthetic_tick_stream
     from risk.limits import RiskLimits
 
@@ -943,6 +1005,8 @@ async def run_backtest(ticks: int, capital: float) -> None:
             market_id,
             n_ticks=per_market_ticks,
             seed=_stable_seed(market_id),
+            pm_bias=pm_bias,
+            op_bias=op_bias,
         )
         for market_id in selected_markets
     }
@@ -977,7 +1041,7 @@ async def run_backtest(ticks: int, capital: float) -> None:
     )
     bstore.close()
 
-def _run_sweep_cli(args) -> None:
+def _run_sweep_cli(args: argparse.Namespace) -> None:
     from backtest.sweeper import BacktestSweeper, SweepConfig
     config = SweepConfig(
         min_net_edge_values=args.sweep_min_edge,
@@ -989,7 +1053,7 @@ def _run_sweep_cli(args) -> None:
         markets=args.sweep_markets,
     )
     sweeper = BacktestSweeper(config)
-    results = sweeper.run()
+    sweeper.run()
     print(sweeper.summary_table())
     best = sweeper.best_by("sharpe_ratio")
     if best:
@@ -1002,6 +1066,11 @@ def main() -> None:
     parser.add_argument("--mode", choices=["backtest", "sweep", "live", "paper", "paper-offline"], default="backtest")
     parser.add_argument("--ticks", type=int, default=2000)
     parser.add_argument("--capital", type=float, default=10000.0)
+    parser.add_argument("--pm-bias", type=float, default=0.0,
+                        help="Persistent Polymarket mispricing bias for synthetic backtest "
+                             "(e.g. -0.03 makes PM systematically cheaper to create a real arb edge)")
+    parser.add_argument("--op-bias", type=float, default=0.0,
+                        help="Persistent Opinion mispricing bias for synthetic backtest")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--paper-fill-prob", type=float, default=0.85, help="Fill probability for paper trading (0.0-1.0)")
@@ -1040,7 +1109,7 @@ def main() -> None:
         return
 
     if args.mode == "backtest":
-        asyncio.run(run_backtest(args.ticks, args.capital))
+        asyncio.run(run_backtest(args.ticks, args.capital, pm_bias=args.pm_bias, op_bias=args.op_bias))
     elif args.mode == "sweep":
         _run_sweep_cli(args)
     elif args.mode == "paper":

@@ -37,7 +37,6 @@ from portfolio.manager import FillRecord, PortfolioManager
 from risk.engine import RiskEngine
 from risk.kill_switch import KillSwitch
 from risk.limits import DEFAULT_LIMITS, RiskLimits
-from src.errors import CrossedBookError, NegativeHoldings
 from src.enums import (
     OrderStatus,
     OrderType,
@@ -46,6 +45,7 @@ from src.enums import (
     Side,
     StrategyId,
 )
+from src.errors import CrossedBookError, NegativeHoldings
 from strategies.arbitrage import ArbConfig, ArbitrageStrategy, estimate_taker_cost
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

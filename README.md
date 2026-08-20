@@ -178,23 +178,27 @@ Before touching any credentials, confirm the system works on your machine:
 python main.py --mode backtest --ticks 2000 --capital 10000 --verbose
 ```
 
-**Expected output (values vary due to randomness):**
+**Example output (values vary due to randomness and the synthetic market model):**
 
 ```
-═══ BACKTEST RESULTS ═══
+════ BACKTEST RESULTS ═══
 Duration:     6.7 days | 2000 ticks
-P&L:          $+34.21  (+0.34%)
-Max Drawdown: 2.14%
-Sharpe:       0.91
-Sortino:      1.23
-Fill rate:    52.3% | Avg fill ratio: 48.7%
+P&L:          $+6.10  (+0.06%)   # varies; can be ~0 or negative
+Max Drawdown: 0.00%
+Sharpe:       N/A  |  Sortino: N/A
 
-Proposals:    412 eval | 231 approved | 181 rejected
-Fills:        89 full | 44 partial | 28 expired
-Avg slippage: 47.3 bps
+Proposals:    19 eval | 19 approved | 0 rejected
+Fills:        14 full | 10 partial | 0 expired
+Fill rate:    100.0% | Avg fill ratio: 77.5%
+Avg slippage: 40.6 bps
 ```
 
-The fill rate of ~50% is intentional — the simulator models thin liquidity realistically.
+> **Important — backtest uses synthetic data.** `build_synthetic_tick_stream` models
+> the *same event* at the same starting mid on both venues, so arbitrage only appears
+> from transient noise. This is honest about edge existence but is **not** a proof of
+> profitability on real Polymarket/Opinion order books. Validate against captured or
+> sandbox data before trusting any P&L number (see §25 Where It Will Fail). The ~50%
+> fill rate in deeper runs is intentional — the simulator models thin liquidity.
 
 **Run the tests:**
 
@@ -683,9 +687,11 @@ EOF
 
 ---
 
-## 11. Implement Exchange Clients
+## 11. Exchange Clients (implemented)
 
-`execution/clients/` has empty stubs. These two files are the only remaining engineering work before live trading. Each must implement the `ExchangeClient` protocol from `execution/engine.py`.
+> **Status:** The `ExchangeClient` implementations in `execution/clients/` are **complete** (`polymarket.py`, `opinion.py`, `paper.py`) and satisfy the `ExchangeClient` protocol from `execution/engine.py`. The reference code below documents the canonical implementation and the auth/signing model — you do **not** need to write them from scratch.
+
+Each client must implement the `ExchangeClient` protocol from `execution/engine.py`.
 
 ### The interface
 
@@ -1253,6 +1259,30 @@ Or restart the process normally — if the drawdown has recovered below the thre
 ---
 
 ## 17. Monitoring Your System
+
+### Web Dashboard (recommended)
+
+The system ships with a live web dashboard, served automatically by the
+ObservabilityServer on the observability port (default **`http://localhost:8080`**).
+Open it in a browser — no extra setup. It shows, in real time:
+
+- **Money first:** Total equity, total return %, realized P&L, open positions (MTM), and unrealized P&L.
+- **What the bot is seeing:** every arbitrage / market-making proposal it evaluates, with the verdict (approved / rejected / dry-run) and the reason for any rejection.
+- **Open positions** with per-position cost basis, mark-to-market, unrealized and realized P&L.
+- **Recent fills**, **performance** (win rate, Sharpe, profit factor, max drawdown), **risk gate** state, **kill switch** controls, and **alerts**.
+
+The dashboard polls `GET /api/summary` every 3 seconds. All endpoints are also
+available as JSON for scripting:
+
+```bash
+curl http://localhost:8080/api/summary        # everything
+curl http://localhost:8080/api/opportunities  # what the bot is evaluating
+curl http://localhost:8080/api/positions      # open positions
+curl http://localhost:8080/api/performance    # performance metrics
+```
+
+> To expose the dashboard to other machines, set `OBSERVABILITY_BIND_HOST=0.0.0.0`
+> (and protect the port). Kill-switch reset still requires your `KILL_SWITCH_TOKEN`.
 
 ### Portfolio snapshot
 

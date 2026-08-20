@@ -8,19 +8,18 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import aiohttp
 from eth_account import Account
 
-from execution.rate_limiter import VenueRateLimiter
-from infrastructure.retry import async_retry
-
+from execution.clients.base import BaseExchangeClient
 from execution.engine import (
     ExchangeClient,
     OpenOrder,
-    OrderStatusFill,
     OrderStatusResponse,
     PlacedOrderResponse,
 )
 from execution.models import OrderSubmission
-from src.errors import ExchangeRejected
+from execution.rate_limiter import VenueRateLimiter
+from infrastructure.retry import async_retry
 from src.enums import Platform
+from src.errors import ExchangeRejected
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ _EIP712_DOMAIN = {
 _SANDBOX_HOST: str = "https://clob-sandbox.polymarket.com"
 
 
-class PolymarketClient:
+class PolymarketClient(BaseExchangeClient):
     """
     Polymarket CLOB REST client implementation.
     Includes HMAC request signing and EIP-712 order signing.
@@ -92,27 +91,6 @@ class PolymarketClient:
         logger.info(
             "PolymarketClient initialized: host=%s, address=%s, sandbox=%s", self._host, self._address, self._sandbox
         )
-
-    @property
-    def platform(self) -> Platform:
-        return self.PLATFORM
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(base_url=self._host, headers={"Content-Type": "application/json"})
-        return self._session
-
-    async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
-        self._wallet_private_key = ""
-        self._last_status_filled_usdc.clear()
-
-    async def _read_json_or_text(self, resp: aiohttp.ClientResponse) -> Any:
-        try:
-            return await resp.json()
-        except Exception:
-            return {"error": await resp.text()}
 
     def _get_auth_headers(self, method: str, path: str, body: str = "") -> Dict[str, str]:
         """Generate HMAC-SHA256 headers for Polymarket L2 Auth."""
@@ -275,19 +253,7 @@ class PolymarketClient:
                 else:
                     cumulative_filled_usdc = cumulative_filled
 
-                previously_seen = self._last_status_filled_usdc.get(exchange_order_id, 0.0)
-                delta_usdc = max(0.0, cumulative_filled_usdc - previously_seen)
-                new_fills = []
-                if delta_usdc > 0 and price > 0:
-                    new_fills.append(
-                        OrderStatusFill(
-                            fill_usdc=delta_usdc,
-                            fill_price=price,
-                            fill_tokens=delta_usdc / price,
-                            ts=int(time.time() * 1000),
-                        )
-                    )
-                    self._last_status_filled_usdc[exchange_order_id] = cumulative_filled_usdc
+                new_fills = self._compute_fill_delta(exchange_order_id, cumulative_filled_usdc, price)
 
                 return OrderStatusResponse(
                     exchange_order_id=exchange_order_id,
@@ -378,13 +344,3 @@ class PolymarketClient:
 
 if TYPE_CHECKING:
     _: ExchangeClient = PolymarketClient(api_key="", secret="", passphrase="", wallet_private_key="0x" + "0" * 64)
-
-
-def _assert_protocol_compat() -> None:
-    """Import-time guard used by tests to ensure protocol shape stays aligned.
-
-    This is intentionally a no-op: the actual validation happens in ``__init__``
-    and is covered by ``test_rejects_empty_api_key`` and similar tests. The
-    function exists only for backwards compatibility with test imports.
-    """
-    return None

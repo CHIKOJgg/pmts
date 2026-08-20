@@ -1,12 +1,16 @@
 """execution/models.py — Order lifecycle data models."""
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
 from src.enums import (
-    ArbLeg, OrderStatus, OrderType,
-    Platform, Side, StrategyId,
+    ArbLeg,
+    OrderStatus,
+    OrderType,
+    Platform,
+    Side,
+    StrategyId,
 )
 
 

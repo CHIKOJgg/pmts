@@ -30,7 +30,7 @@ Current recommendation: block live-capital deployment. Allow only developer back
 - Risk and safety: `risk/engine.py`, `risk/kill_switch.py`, `risk/limits.py`
 - Portfolio and persistence: `portfolio/manager.py`, `portfolio/storage.py`
 - Observability: `infrastructure/observability.py`
-- Tests and tooling: `tests/*`, `test_bug_fixes.py`, `pyproject.toml`, `.github/workflows/ci.yml`
+- Tests and tooling: `tests/*`, `pyproject.toml`, `.github/workflows/ci.yml`
 
 ## Verification Results
 

@@ -1,15 +1,14 @@
 """Tests for WebSocket adapters (Polymarket and Opinion)."""
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from data.adapters.polymarket_ws import PolymarketWSAdapter
 from data.adapters.opinion_ws import OpinionWSAdapter
+from data.adapters.polymarket_ws import PolymarketWSAdapter
 from data.models import MarketSnapshot
 from src.enums import Platform
 

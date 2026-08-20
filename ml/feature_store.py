@@ -1,11 +1,10 @@
 """ml/feature_store.py — Feature store for ML pipeline."""
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -17,9 +16,9 @@ class FeatureRecord:
     timestamp_ms: int
     features: Dict[str, float]
     label: Optional[float] = None
-    metadata: Dict[str, Any] = None
+    metadata: Optional[Dict[str, Any]] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.metadata is None:
             self.metadata = {}
 
@@ -63,7 +62,7 @@ class FeatureStore:
         labeled = [r for r in self._store.values() if r.label is not None and not self._is_expired(r)]
         labeled.sort(key=lambda r: r.timestamp_ms)
         X = [r.features for r in labeled]
-        y = [r.label for r in labeled]
+        y: List[float] = [r.label for r in labeled if r.label is not None]
         return X, y
 
     def cleanup(self) -> int:
@@ -87,14 +86,12 @@ class FeatureStore:
         return (int(time.time() * 1000) - record.timestamp_ms) > self._ttl_ms
 
     def save_to_file(self, filepath: str) -> None:
-        import json
         data = [asdict(r) for r in self._store.values()]
         with open(filepath, "w") as f:
             json.dump(data, f, indent=2)
         logger.info("Saved %d feature records to %s", len(data), filepath)
 
     def load_from_file(self, filepath: str) -> int:
-        import json
         with open(filepath, "r") as f:
             data = json.load(f)
         for item in data:

@@ -48,13 +48,33 @@ directory = "htmlcov"
 
 [tool.mypy]
 python_version = "3.11"
+strict = true
+namespace_packages = true
+explicit_package_bases = true
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false
+ignore_missing_imports = true
+exclude = "(tests|scripts|backtest)/"
+
+# Handle duplicate module names
+[mypy-data.models]
+[mypy-execution.models]
+
+# Allow Any for external dependencies where stubs may be missing
+["mypy-aiohttp.*"]
+ignore_missing_imports = true
+
+["mypy-websockets.*"]
+ignore_missing_imports = true
+
+["mypy-eth_account.*"]
+ignore_missing_imports = true
+
+["mypy-pydantic.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
-line-length = 120
+line-length = 150
 target-version = "py311"
 
 [tool.ruff.lint]

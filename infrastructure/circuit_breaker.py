@@ -141,13 +141,16 @@ class CircuitBreakerExchangeWrapper:
 
     def __init__(self, client: Any, base_name: Optional[str] = None) -> None:
         self._client = client
-        name = base_name or getattr(client, "platform", "unknown").value
+        platform = getattr(client, "platform", "unknown")
+        name = base_name or str(getattr(platform, "value", platform))
         self._breakers: dict[str, CircuitBreaker] = {
             "place_order": CircuitBreaker(f"{name}.place_order", failure_threshold=3, recovery_timeout_s=15.0),
             "cancel_order": CircuitBreaker(f"{name}.cancel_order", failure_threshold=5, recovery_timeout_s=10.0),
             "get_order_status": CircuitBreaker(f"{name}.get_order_status", failure_threshold=5, recovery_timeout_s=10.0),
             "verify_connectivity": CircuitBreaker(f"{name}.verify_connectivity", failure_threshold=2, recovery_timeout_s=60.0),
             "get_open_orders": CircuitBreaker(f"{name}.get_open_orders", failure_threshold=3, recovery_timeout_s=30.0),
+            "get_market": CircuitBreaker(f"{name}.get_market", failure_threshold=3, recovery_timeout_s=30.0),
+            "redeem_market": CircuitBreaker(f"{name}.redeem_market", failure_threshold=3, recovery_timeout_s=60.0),
         }
 
     @property
@@ -172,11 +175,24 @@ class CircuitBreakerExchangeWrapper:
 
     async def verify_connectivity(self) -> bool:
         cb = self._breakers["verify_connectivity"]
-        return await cb.call(self._client.verify_connectivity)
+        return bool(await cb.call(self._client.verify_connectivity))
 
     async def get_open_orders(self, *args: Any, **kwargs: Any) -> Any:
         cb = self._breakers["get_open_orders"]
         return await cb.call(self._client.get_open_orders, *args, **kwargs)
+
+    async def get_market(self, *args: Any, **kwargs: Any) -> Any:
+        cb = self._breakers["get_market"]
+        return await cb.call(self._client.get_market, *args, **kwargs)
+
+    async def redeem_market(self, *args: Any, **kwargs: Any) -> Any:
+        cb = self._breakers["redeem_market"]
+        return await cb.call(self._client.redeem_market, *args, **kwargs)
+
+    async def close(self) -> None:
+        close_fn = getattr(self._client, "close", None)
+        if close_fn is not None:
+            await close_fn()
 
     def get_breaker_states(self) -> dict[str, str]:
         return {name: cb.state.value for name, cb in self._breakers.items()}

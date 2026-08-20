@@ -101,9 +101,6 @@ class BacktestSweeper:
         return self._results
 
     def _run_single(self, params: Dict[str, Any], run_id: str) -> BacktestResult:
-        from engine.strategy_engine import StrategyConfig
-        from strategies.arbitrage import ArbConfig
-        from strategies.delta_neutral import DeltaNeutralConfig
 
         market_ids = self._config.markets or ["btc_prediction", "eth_prediction"]
         selected_markets = market_ids[:2]

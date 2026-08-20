@@ -33,6 +33,7 @@ from risk.kill_switch import KillSwitch
 from risk.limits import DEFAULT_LIMITS, RiskLimits
 from src.clock import SimClock
 from src.enums import OrderStatus, Platform, Side, StrategyId
+from src.errors import NegativeHoldings
 from strategies.arbitrage import ArbConfig
 from strategies.delta_neutral import DeltaNeutralConfig
 
@@ -64,7 +65,7 @@ class LatencyModel:
     submit_to_fill_min: float = 15.0
     submit_to_fill_max: float = 800.0
 
-    def _sample(self, mean, std, lo, hi) -> float:
+    def _sample(self, mean: float, std: float, lo: float, hi: float) -> float:
         return max(lo, min(hi, random.gauss(mean, std)))
 
     def tick_to_signal(self) -> float:
@@ -387,7 +388,7 @@ class BacktestEngine:
         # Latest snapshots for the price_source callback
         self._latest: Dict[Tuple[str, Platform], MarketSnapshot] = {}
 
-        def price_source(mid: str, plat: Platform):
+        def price_source(mid: str, plat: Platform) -> Optional[Tuple[float, float]]:
             s = self._latest.get((mid, plat))
             return (s.yes_mid, s.no_mid) if s else None
 
@@ -436,17 +437,14 @@ class BacktestEngine:
         self._se.add_proposal_callback(_collect)
 
         # Wrapper: intercept FE→SE to pass simulated now_ts (signal age fix)
-        # Remove the direct FE→SE callback added in __init__ and replace with
-        # a closure that captures the current tick's submit_ts.
-        if self._se.on_feature_vector in self._fe._callbacks:
-            self._fe._callbacks.remove(self._se.on_feature_vector)
-
-        _current_submit_ts: list = [0]  # mutable cell for closure capture
+        # Replace the direct FE→SE callback added in __init__ with a closure
+        # that captures the current tick's submit_ts.
+        _current_submit_ts: list[int] = [0]  # mutable cell for closure capture
 
         async def _fe_to_se_with_simtime(fv: "FeatureVector") -> None:
             await self._se.on_feature_vector(fv, now_ts=_current_submit_ts[0])
 
-        self._fe.add_callback(_fe_to_se_with_simtime)
+        self._fe.replace_callback(self._se.on_feature_vector, _fe_to_se_with_simtime)
 
         # Merge all tick streams in chronological order
         all_ticks: List[Tuple[int, str, MarketSnapshot, MarketSnapshot]] = []
@@ -462,6 +460,11 @@ class BacktestEngine:
 
         # Initialize simulated clock to first tick's timestamp
         self._sim_clock.advance_to(start_ts)
+
+        # Equity snapshot at t=0 so the series starts at initial capital
+        # (periodic samples below begin after the first 100 ticks of trading).
+        mtm = self._portfolio.get_portfolio_mtm()
+        self._equity.append((start_ts, mtm.total_equity_usdc))
 
         for ts, market_id, snap_pm, snap_op in all_ticks:
             total_ticks += 1
@@ -519,11 +522,19 @@ class BacktestEngine:
                 self._pending[proposal.proposal_id] = (proposal, submit_ts)
                 self._sim.submit(proposal, submit_ts)
 
-            # Step 5: Process fills
+            # Step 5: Process fills (buys before sells to prevent NegativeHoldings)
             fill_ts = submit_ts + int(self._latency.submit_to_fill())
+            all_events: List[SimFill] = []
             for snap in [snap_pm, snap_op]:
-                for evt in self._sim.process_tick(snap, fill_ts):
-                    await self._handle_fill(evt)
+                all_events.extend(self._sim.process_tick(snap, fill_ts))
+
+            def _buy_key(e: SimFill) -> int:
+                p = self._pending.get(e.proposal_id)
+                return 0 if p is not None and p[0].side.is_buy else 1
+            all_events.sort(key=_buy_key)
+
+            for evt in all_events:
+                await self._handle_fill(evt)
 
             # Equity snapshot every 100 ticks
             if total_ticks % 100 == 0:
@@ -576,7 +587,18 @@ class BacktestEngine:
                 fill_price=evt.fill_price,
                 ts=evt.sim_ts,
             )
-            await self._portfolio.record_fill(fill)
+            try:
+                await self._portfolio.record_fill(fill)
+            except NegativeHoldings:
+                logger.warning(
+                    "Backtest fill skipped: NegativeHoldings for %s %s %s (filled=$%.2f @ %.4f)",
+                    proposal.proposal_id[:8], proposal.side.value, proposal.market_id,
+                    evt.filled_usdc, evt.fill_price,
+                )
+                self._sim.cancel(evt.proposal_id)
+                await self._risk.notify_terminal(evt.proposal_id, proposal.platform, proposal.size_usdc)
+                self._pending.pop(evt.proposal_id, None)
+                return
 
             # Release strategy budget and notify arb clearing if complete
             if proposal.strategy_id == StrategyId.ARB:
@@ -692,8 +714,10 @@ def build_synthetic_tick_stream(
     n_ticks: int = 1_000,
     start_ts_ms: int = -1,  # -1 = use current wall-clock time
     tick_interval_ms: int = 500,
-    initial_pm_mid: float = 0.45,
-    initial_op_mid: float = 0.55,
+    initial_pm_mid: float = 0.50,
+    initial_op_mid: float = 0.50,
+    pm_bias: float = 0.0,
+    op_bias: float = 0.0,
     vol: float = 0.005,
     spread: float = 0.012,
     pm_fee_bps: int = 20,
@@ -703,8 +727,19 @@ def build_synthetic_tick_stream(
     """
     Generate a correlated random-walk tick stream for backtesting.
 
+    The SAME event is modelled at the SAME initial mid on both venues
+    (``initial_pm_mid == initial_op_mid`` by default). Because cross-venue
+    arbitrage only exists when the two venues disagree on the same event,
+    genuine arb opportunities in this generator arise only from transient,
+    independent dislocations in the correlated random walk — not from a
+    permanent hardcoded spread. This keeps backtest P&L honest.
+
+    To stress-test with persistent mispricing, pass non-zero ``pm_bias`` /
+    ``op_bias`` (e.g. ``pm_bias=-0.03`` to make Polymarket systematically
+    cheaper). This is for adversarial testing only, not a realistic baseline.
+
     - Both venues share a common price shock (70% correlated)
-    - Mean-reversion toward 0.5
+    - Mean-reversion toward 0.5 (plus optional persistent bias)
     - Depth varies randomly each tick
     - days_to_resolution decreases linearly from 10 to 0
     """
@@ -722,9 +757,10 @@ def build_synthetic_tick_stream(
     ts = start_ts_ms
 
     for i in range(n_ticks):
-        # Correlated mean-reverting random walk
-        rev_pm = 0.01 * (0.5 - pm)
-        rev_op = 0.01 * (0.5 - op)
+        # Correlated mean-reverting random walk. Targets include the optional
+        # persistent bias so the venues can diverge systematically if requested.
+        rev_pm = 0.01 * ((0.5 + pm_bias) - pm)
+        rev_op = 0.01 * ((0.5 + op_bias) - op)
         common = random.gauss(0, vol)
         pm = max(0.02, min(0.98, pm + 0.7 * common + 0.3 * random.gauss(0, vol) + rev_pm))
         op = max(0.02, min(0.98, op + 0.7 * common + 0.3 * random.gauss(0, vol) + rev_op))
@@ -733,7 +769,7 @@ def build_synthetic_tick_stream(
         d_op = random.uniform(200, 2000)
         days = max(0.1, 10.0 - i * 10.0 / n_ticks)
 
-        def _s(mid, depth, plat, fee):
+        def _s(mid: float, depth: float, plat: Platform, fee: int) -> MarketSnapshot:
             no_mid = 1.0 - mid
             yes_bid = max(0.01, round(mid - spread / 2, 4))
             yes_ask = min(0.99, round(mid + spread / 2, 4))
