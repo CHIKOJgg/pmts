@@ -140,11 +140,13 @@ class PolymarketConfig:
 
 @dataclass
 class OpinionConfig:
-    rest_url: str = field(default_factory=lambda: _e("OP_REST_URL", "https://api.opinion.markets/v1"))
-    ws_url: str = field(default_factory=lambda: _e("OP_WS_URL", "wss://ws.opinion.markets"))
+    rest_url: str = field(default_factory=lambda: _e("OP_REST_URL", "https://openapi.opinion.trade/openapi"))
+    ws_url: str = field(default_factory=lambda: _e("OP_WS_URL", "wss://ws.opinion.trade"))
     api_key: str = field(default_factory=lambda: _secret("OP_API_KEY", "OP_API_KEY_FILE"))
     wallet_key: str = field(default_factory=lambda: _secret("OP_WALLET_KEY", "OP_WALLET_KEY_FILE"))
     ctf_exchange_addr: str = field(default_factory=lambda: _e("OP_CTF_EXCHANGE_ADDR", ""))
+    rpc_url: str = field(default_factory=lambda: _e("OP_RPC_URL", "https://bsc-dataseed.binance.org"))
+    multi_sig_addr: str = field(default_factory=lambda: _e("OP_MULTI_SIG_ADDR", ""))
     taker_fee_bps: int = field(default_factory=lambda: _ei("OP_TAKER_FEE_BPS", 25))
     sandbox: bool = field(default_factory=lambda: _eb("OP_SANDBOX", False))
 
@@ -340,6 +342,8 @@ class Settings:
                 errors.append("OP_API_KEY is missing")
             if not self.opinion.wallet_key:
                 errors.append("OP_WALLET_KEY is missing")
+            if not self.opinion.rpc_url:
+                errors.append("OP_RPC_URL is missing")
             if not self.opinion.ctf_exchange_addr:
                 errors.append("OP_CTF_EXCHANGE_ADDR is missing")
 

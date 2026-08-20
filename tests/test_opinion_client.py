@@ -722,7 +722,8 @@ class TestOpinionClientEIP712Signing:
         signature = client._sign_order(order)
 
         assert signature is not None
-        assert len(signature) == 132  # 65 bytes + '0x' prefix
+        assert len(signature) == 130  # r(32) + s(32) + v(1) = 65 bytes, no '0x' prefix
+        assert signature[-2:] in ("1b", "1c")  # v = 27/28 per EIP-712
 
 
 class TestOpinionClientRateLimiting:

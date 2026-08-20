@@ -82,6 +82,9 @@ celerybeat-schedule
 # dotenv
 .env
 
+# opencode agent config (local, contains secrets/paths)
+opencode.json
+
 # virtualenv
 venv/
 ENV/
