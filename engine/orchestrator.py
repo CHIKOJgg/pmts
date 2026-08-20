@@ -25,6 +25,7 @@ from risk.engine import RiskEngine
 from risk.trading_schedule import TradingSchedule
 from src.clock import Clock, LiveClock
 from src.enums import ArbLeg, Outcome, Platform, StrategyId
+from strategies.arbitrage import ARB_EXPIRY_MS
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +446,8 @@ class Orchestrator:
 
         if strategy_id == StrategyId.ARB:
             self._strategy.notify_arb_terminal(size_usdc)
+        elif strategy_id == StrategyId.HEDGE:
+            self._strategy.notify_hedge_terminal(size_usdc)
         else:
             self._strategy.notify_mm_terminal(size_usdc)
 
@@ -499,6 +502,9 @@ class Orchestrator:
                         unused = leg2_proposal.size_usdc - new_size_usdc
                         if unused > 0.001:
                             self._strategy.notify_arb_terminal(unused)
+                            # Re-anchor the RISK reservation to the scaled size so
+                            # capital is not overstated (scaled-leg-2 leak).
+                            self._risk.adjust_reservation(leg2_proposal.proposal_id, new_size_usdc)
                         # Refresh limit price from current market data to avoid stale price race
                         refreshed_price = self._refresh_leg2_price(leg2_proposal)
                         token_qty = round(new_size_usdc / refreshed_price, 6)
@@ -513,7 +519,7 @@ class Orchestrator:
                                 limit_price=refreshed_price,
                                 order_type=leg2_proposal.order_type,
                                 strategy_id=leg2_proposal.strategy_id,
-                                expiry_ms=leg2_proposal.expiry_ms,
+                                expiry_ms=self._clock.now_ms() + ARB_EXPIRY_MS,
                                 token_quantity=token_qty,
                                 submitted_at=self._clock.now_ms(),
                                 leg_group_id=leg2_proposal.leg_group_id,

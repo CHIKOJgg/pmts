@@ -89,6 +89,24 @@ class AlertRouter:
         success = all(not isinstance(r, Exception) for r in results)
         if success:
             self._total_sent += 1
+        else:
+            active_channels = []
+            if self._config.slack_webhook_url:
+                active_channels.append(f"slack:{self._config.slack_channel}")
+            if self._config.email_username and self._config.email_recipients:
+                active_channels.append(f"email:{','.join(self._config.email_recipients)}")
+            for url in self._config.webhook_urls:
+                active_channels.append(f"webhook:{url}")
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error(
+                        "Alert delivery failed (severity=%s, title=%s, source=%s, channels=%s): %s",
+                        alert.severity.value,
+                        alert.title,
+                        alert.source,
+                        ",".join(active_channels) or "none",
+                        r,
+                    )
         self._history.append(alert)
         return success
 

@@ -22,7 +22,7 @@ items remain. Not "ready to risk real capital unattended" yet.
 - **Order nonce** — monotonic, collision-free counter (fixed: was `now_ms()*1000`, which
   could collide within one millisecond at high throughput).
 - **Clients** — Polymarket (HMAC + EIP-712) and Opinion implemented and wired.
-- **Tests** — 316 passing. Backtest runs end-to-end. Paper/sandbox modes exist.
+- **Tests** — passing (run `pytest` to see the current test count; the suite must pass before live trading). Backtest runs end-to-end. Paper/sandbox modes exist.
 - **Config** — env + file-based secrets, strict `validate()` with a real go/no-go gate.
 
 ## What blocks an unconditional "production ready"

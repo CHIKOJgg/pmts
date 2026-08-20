@@ -16,7 +16,7 @@ from execution.engine import (
 from execution.models import OrderSubmission
 from execution.rate_limiter import VenueRateLimiter
 from infrastructure.retry import async_retry
-from src.enums import Platform
+from src.enums import Platform, Side
 from src.errors import ExchangeRejected
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class OpinionClient(BaseExchangeClient):
         host: Optional[str] = None,
         rate_limit_per_s: int = 5,
         sandbox: bool = False,
-        market_id_map: Optional[Dict[str, str]] = None,
+        market_id_map: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not api_key or not api_key.strip():
             raise ValueError("api_key must not be empty")
@@ -87,6 +87,18 @@ class OpinionClient(BaseExchangeClient):
         logger.info(
             "OpinionClient initialized: host=%s, address=%s, sandbox=%s", self._host, self._address, self._sandbox
         )
+
+    def _resolve_token_id(self, submission: OrderSubmission) -> int:
+        """Pick the correct token id for the order side (YES vs NO), parsed to int."""
+        entry = self._market_id_map.get(submission.market_id)
+        if isinstance(entry, dict):
+            yes_id = entry.get("YES") or entry.get("yes")
+            no_id = entry.get("NO") or entry.get("no")
+            chosen = yes_id if submission.side in (Side.BUY_YES, Side.SELL_YES) else no_id
+            chosen = chosen or yes_id or no_id or submission.market_id
+        else:
+            chosen = entry or submission.market_id
+        return self._parse_market_id(chosen)
 
     def _parse_market_id(self, market_id: str) -> int:
         """Parse market_id to int, supporting decimal, hex, or hashed string."""
@@ -150,22 +162,34 @@ class OpinionClient(BaseExchangeClient):
         # Side mapping: 0 for Buy, 1 for Sell (Typical Opinion side mapping)
         side_val = 0 if submission.side.is_buy else 1
 
-        # Placeholder amounts
-        tokens = round(submission.token_quantity)
-        usdc_amount = round(submission.size_usdc * 1_000_000)
+        # Use the (possibly urgency-crossed) effective price to size the order.
+        price = effective_price if effective_price and 0.001 <= effective_price <= 0.999 else submission.limit_price
+        if not price or price <= 0:
+            price = submission.limit_price
+        size_usdc = max(0.0, submission.size_usdc)
+        token_qty = (
+            round((size_usdc / price) * 1_000_000) if price > 0 else round(submission.token_quantity * 1_000_000)
+        )
 
-        maker_amount, taker_amount = (usdc_amount, tokens) if side_val == 0 else (tokens, usdc_amount)
+        usdc_amount = round(size_usdc * 1_000_000)
+        if submission.side.is_buy:
+            maker_amount = usdc_amount
+            taker_amount = token_qty
+        else:
+            maker_amount = token_qty
+            taker_amount = usdc_amount
 
-        # Use provided nonce for idempotency
+        # Use provided nonce for idempotency; salt is deterministic per nonce so
+        # retries are idempotent (a fresh random salt would double-submit on retry).
         final_nonce = nonce if nonce is not None else int(time.time() * 1000)
 
-        venue_market_id = self._market_id_map.get(submission.market_id, submission.market_id)
+        token_id = self._resolve_token_id(submission)
         order_msg = {
-            "salt": int(uuid.uuid4().int >> 64),
+            "salt": final_nonce,
             "maker": self._address,
             "signer": self._address,
             "taker": "0x0000000000000000000000000000000000000000",
-            "tokenId": self._parse_market_id(venue_market_id),
+            "tokenId": token_id,
             "makerAmount": maker_amount,
             "takerAmount": taker_amount,
             "expiration": int(time.time()) + 3600,
@@ -230,20 +254,17 @@ class OpinionClient(BaseExchangeClient):
                 cumulative_filled = 0.0
 
             price = float(raw.get("averagePrice", raw.get("price", 0.0)) or 0.0)
-            raw_side = raw.get("side", 0)
-            is_sell = raw_side == 1 if isinstance(raw_side, int) else raw_side.upper() == "SELL"
-            if is_sell and price > 0:
-                cumulative_filled_usdc = cumulative_filled * price
-            else:
-                cumulative_filled_usdc = cumulative_filled
+            # Opinion reports sizes in token units; convert to USDC via price.
+            cumulative_filled_usdc = cumulative_filled * price if price > 0 else cumulative_filled
+            remaining_usdc = remaining * price if price > 0 else remaining
 
             new_fills = self._compute_fill_delta(exchange_order_id, cumulative_filled_usdc, price)
             return OrderStatusResponse(
                 exchange_order_id=exchange_order_id,
-                is_live=status in ["open", "partial"],
-                is_cancelled=status == "canceled",
-                is_filled=status == "filled",
-                remaining_usdc=remaining,
+                is_live=status in ("open", "partial", "live", "resting"),
+                is_cancelled=status in ("canceled", "cancelled"),
+                is_filled=status in ("filled", "matched"),
+                remaining_usdc=remaining_usdc,
                 new_fills=new_fills,
             )
 
@@ -259,13 +280,16 @@ class OpinionClient(BaseExchangeClient):
 
             orders = []
             for o in raw if isinstance(raw, list) else []:
+                o_price = float(o.get("price", 1.0)) or 1.0
+                o_orig = float(o.get("originalAmount", 0.0))
+                o_rem = float(o.get("remainingAmount", 0.0))
                 orders.append(
                     OpenOrder(
                         exchange_order_id=o.get("orderId", ""),
                         market_id=o.get("marketId", ""),
                         side="BUY" if o.get("side", 0) == 0 else "SELL",
-                        size_usdc=float(o.get("originalAmount", 0.0)),
-                        filled_usdc=float(o.get("originalAmount", 0.0)) - float(o.get("remainingAmount", 0.0)),
+                        size_usdc=o_orig * o_price,
+                        filled_usdc=max(0.0, o_orig - o_rem) * o_price,
                         limit_price=float(o.get("price", 0.0)),
                         ts=int(time.time() * 1000),
                     )

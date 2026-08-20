@@ -450,6 +450,10 @@ class PortfolioManager:
                 total_pos += yes_qty * yes_mid + no_qty * no_mid
         equity = cash + total_pos
         total_realised = sum(p.realised_pnl for p in self._positions.values()) + closed_pnl
+        # Ratchet peak on mark-to-market so the kill switch reacts to unrealized highs.
+        with self._sync_lock:
+            if equity > self._peak_equity:
+                self._peak_equity = equity
         PORTFOLIO_MTM_USDC.set(equity)
         PORTFOLIO_REALISED_PNL_USDC.set(total_realised)
         CAPITAL_UTILIZATION.set((reserved / equity) if equity > 0 else 0.0)

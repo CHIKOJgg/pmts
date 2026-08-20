@@ -144,6 +144,7 @@ class RiskEngine:
         self._total_reserved: float = 0.0
         self._arb_allocated: float = 0.0
         self._mm_allocated: float = 0.0
+        self._hedge_allocated: float = 0.0
 
         # Lock for atomic capital reservation operations (sync — all calls from event loop)
         self._capital_lock: threading.Lock = threading.Lock()
@@ -155,6 +156,8 @@ class RiskEngine:
                 self._total_reserved += amt
                 if strat == StrategyId.ARB:
                     self._arb_allocated += amt
+                elif strat == StrategyId.HEDGE:
+                    self._hedge_allocated += amt
                 else:
                     self._mm_allocated += amt
             if loaded_res:
@@ -333,12 +336,15 @@ class RiskEngine:
             )
 
         # ── 11. Strategy cap ──────────────────────────────────────────────────
-        strat_used = self._arb_allocated if proposal.strategy_id == StrategyId.ARB else self._mm_allocated
-        strat_cap = (
-            self._limits.max_arb_capital_usdc
-            if proposal.strategy_id == StrategyId.ARB
-            else self._limits.max_mm_capital_usdc
-        )
+        if proposal.strategy_id == StrategyId.ARB:
+            strat_used = self._arb_allocated
+            strat_cap = self._limits.max_arb_capital_usdc
+        elif proposal.strategy_id == StrategyId.HEDGE:
+            strat_used = self._hedge_allocated
+            strat_cap = self._limits.max_hedge_capital_usdc or self._limits.max_mm_capital_usdc
+        else:
+            strat_used = self._mm_allocated
+            strat_cap = self._limits.max_mm_capital_usdc
         if strat_used + proposal.size_usdc > strat_cap:
             return reject(
                 RejectReason.STRATEGY_CAP_EXCEEDED,
@@ -360,6 +366,8 @@ class RiskEngine:
             self._total_reserved += proposal.size_usdc
             if proposal.strategy_id == StrategyId.ARB:
                 self._arb_allocated += proposal.size_usdc
+            elif proposal.strategy_id == StrategyId.HEDGE:
+                self._hedge_allocated += proposal.size_usdc
             else:
                 self._mm_allocated += proposal.size_usdc
         self._portfolio.reserve_capital_sync(proposal.size_usdc)
@@ -399,6 +407,8 @@ class RiskEngine:
                 self._total_reserved = max(0.0, self._total_reserved - reserved_amount)
                 if strategy_id == StrategyId.ARB:
                     self._arb_allocated = max(0.0, self._arb_allocated - reserved_amount)
+                elif strategy_id == StrategyId.HEDGE:
+                    self._hedge_allocated = max(0.0, self._hedge_allocated - reserved_amount)
                 else:
                     self._mm_allocated = max(0.0, self._mm_allocated - reserved_amount)
 
@@ -411,6 +421,38 @@ class RiskEngine:
             self._store.remove_reservation(proposal_id)
 
         await self._portfolio.release_capital(released)
+
+    def adjust_reservation(self, proposal_id: str, new_amount: float) -> None:
+        """Shrink a live reservation to `new_amount` (e.g. an arb leg scaled after a
+        partial first-leg fill). Releases the unused slice from the strategy budget
+        and the portfolio reservation so capital is not overstated."""
+        with self._capital_lock:
+            info = self._reservations.get(proposal_id)
+            if info is None:
+                return
+            old_amount, platform, strategy_id = info
+            delta = old_amount - new_amount
+            if delta <= 0:
+                return
+            self._reservations[proposal_id] = (new_amount, platform, strategy_id)
+            self._total_reserved = max(0.0, self._total_reserved - delta)
+            if strategy_id == StrategyId.ARB:
+                self._arb_allocated = max(0.0, self._arb_allocated - delta)
+            elif strategy_id == StrategyId.HEDGE:
+                self._hedge_allocated = max(0.0, self._hedge_allocated - delta)
+            else:
+                self._mm_allocated = max(0.0, self._mm_allocated - delta)
+            if self._store:
+                try:
+                    self._store.remove_reservation(proposal_id)
+                    self._store.save_reservation(proposal_id, new_amount, platform, strategy_id)
+                except Exception as exc:
+                    logger.error("adjust_reservation: store update failed: %s", exc)
+            self._portfolio.reserve_capital_sync(-delta)
+
+    def notify_hedge_terminal(self, size_usdc: float) -> None:
+        """Release HEDGE strategy budget on terminal (mirrors notify_mm_terminal)."""
+        self._hedge_allocated = max(0.0, self._hedge_allocated - size_usdc)
 
     def notify_fill(self, realised_pnl: float) -> None:
         """Update session PnL tracking after a fill."""
@@ -442,6 +484,8 @@ class RiskEngine:
                     self._total_reserved += amt
                     if strat == StrategyId.ARB:
                         self._arb_allocated += amt
+                    elif strat == StrategyId.HEDGE:
+                        self._hedge_allocated += amt
                     else:
                         self._mm_allocated += amt
 
@@ -474,14 +518,18 @@ class RiskEngine:
                 self._total_reserved = 0.0
                 self._arb_allocated = 0.0
                 self._mm_allocated = 0.0
-            KILL_SWITCH_ACTIVE.set(0.0)
-            if self._store:
-                self._store.save_kill_switch(False)
-            if self._on_kill_switch_reset:
-                try:
-                    self._on_kill_switch_reset()
-                except Exception as exc:
-                    logger.error("Kill switch reset callback failed: %s", exc, exc_info=True)
+                self._hedge_allocated = 0.0
+                self._session_pnl = 0.0
+                self._grace_start_ms = None
+                self._soft_kill_active = False
+                KILL_SWITCH_ACTIVE.set(0.0)
+                if self._store:
+                    self._store.save_kill_switch(False)
+                if self._on_kill_switch_reset:
+                    try:
+                        self._on_kill_switch_reset()
+                    except Exception as exc:
+                        logger.error("Kill switch reset callback failed: %s", exc, exc_info=True)
         return success
 
     def set_kill_switch_reset_callback(self, callback: Optional[Callable[[], None]]) -> None:

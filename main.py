@@ -79,22 +79,40 @@ def _token_to_logical_map(settings: Settings, token_field: str) -> dict[str, str
     return result
 
 
-def _pm_market_id_map(settings: Settings) -> dict[str, str]:
-    """Build a market_id_map for PolymarketClient using YES token IDs.
+def _pm_market_id_map(settings: Settings) -> dict[str, dict[str, str]]:
+    """Build a Polymarket token map: logical market id -> {"YES": token_id, "NO": token_id}.
 
-    The PolymarketClient uses this to resolve logical market IDs to CLOB token
-    IDs for order placement. We use YES tokens as the default mapping; the
-    client's place_order method should be updated to select the correct token
-    based on order side when both YES and NO tokens are available.
+    The client uses this to resolve the correct CLOB token per order side.
+    Markets without token ids are skipped (the client then falls back to the
+    raw market id, which only works for the YES side) so misconfiguration is loud.
     """
     registry = settings.trading.market_registry
     if not registry:
         return {}
-    result = {}
+    result: dict[str, dict[str, str]] = {}
     for m in settings.trading.markets:
-        yes_token = registry[m].get("pm_yes_token", "")
-        if yes_token:
-            result[m] = yes_token
+        entry = registry.get(m, {})
+        yes_t = entry.get("pm_yes_token", "")
+        no_t = entry.get("pm_no_token", "")
+        if not (yes_t or no_t):
+            continue
+        result[m] = {"YES": yes_t, "NO": no_t}
+    return result
+
+
+def _opinion_token_map(settings: Settings) -> dict[str, dict[str, str]]:
+    """Build an Opinion token map: logical market id -> {"YES": token_id, "NO": token_id}."""
+    registry = settings.trading.market_registry
+    if not registry:
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for m in settings.trading.markets:
+        entry = registry.get(m, {})
+        yes_t = entry.get("op_yes_token", "")
+        no_t = entry.get("op_no_token", "")
+        if not (yes_t or no_t):
+            continue
+        result[m] = {"YES": yes_t, "NO": no_t}
     return result
 
 
@@ -192,7 +210,7 @@ async def run_live() -> None:
         ctf_exchange_addr=settings.opinion.ctf_exchange_addr,
         host=settings.opinion.rest_url,
         sandbox=settings.opinion.sandbox,
-        market_id_map=_logical_to_venue_map(settings, "opinion"),
+        market_id_map=_opinion_token_map(settings),
     )
     pm_client = CircuitBreakerExchangeWrapper(pm_client_raw, base_name="Polymarket")
     op_client = CircuitBreakerExchangeWrapper(op_client_raw, base_name="Opinion")
@@ -233,6 +251,9 @@ async def run_live() -> None:
         max_market_exposure_pct=settings.trading.max_market_exposure_pct,
         max_market_exposure_usdc=settings.trading.max_market_exposure_usdc,
         max_net_delta_per_market=settings.trading.max_net_delta,
+        max_arb_capital_usdc=settings.trading.arb_budget_usdc,
+        max_mm_capital_usdc=settings.trading.mm_budget_usdc,
+        max_hedge_capital_usdc=settings.trading.hedge_budget_usdc,
     )
 
     kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token, alert_router=alert_router)
@@ -256,6 +277,7 @@ async def run_live() -> None:
         hedge_enabled=settings.trading.enable_hedge,
         arb_budget_usdc=settings.trading.arb_budget_usdc,
         mm_budget_usdc=settings.trading.mm_budget_usdc,
+        hedge_budget_usdc=settings.trading.hedge_budget_usdc,
     )
     arb_cfg = ArbConfig(
         min_net_edge=settings.trading.min_net_edge,
@@ -531,6 +553,9 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         max_market_exposure_pct=settings.trading.max_market_exposure_pct,
         max_market_exposure_usdc=settings.trading.max_market_exposure_usdc,
         max_net_delta_per_market=settings.trading.max_net_delta,
+        max_arb_capital_usdc=settings.trading.arb_budget_usdc,
+        max_mm_capital_usdc=settings.trading.mm_budget_usdc,
+        max_hedge_capital_usdc=settings.trading.hedge_budget_usdc,
     )
 
     kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token, alert_router=alert_router)
@@ -554,6 +579,7 @@ async def run_paper(fill_prob: float = 0.85) -> None:
         hedge_enabled=settings.trading.enable_hedge,
         arb_budget_usdc=settings.trading.arb_budget_usdc,
         mm_budget_usdc=settings.trading.mm_budget_usdc,
+        hedge_budget_usdc=settings.trading.hedge_budget_usdc,
     )
     arb_cfg = ArbConfig(
         min_net_edge=settings.trading.min_net_edge,
@@ -812,6 +838,9 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
         max_market_exposure_pct=settings.trading.max_market_exposure_pct,
         max_market_exposure_usdc=settings.trading.max_market_exposure_usdc,
         max_net_delta_per_market=settings.trading.max_net_delta,
+        max_arb_capital_usdc=settings.trading.arb_budget_usdc,
+        max_mm_capital_usdc=settings.trading.mm_budget_usdc,
+        max_hedge_capital_usdc=settings.trading.hedge_budget_usdc,
     )
 
     kill_switch = KillSwitch(confirmation_token=settings.trading.kill_switch_token, alert_router=alert_router)
@@ -835,6 +864,7 @@ async def run_paper_offline(fill_prob: float = 0.85) -> None:
         hedge_enabled=settings.trading.enable_hedge,
         arb_budget_usdc=settings.trading.arb_budget_usdc,
         mm_budget_usdc=settings.trading.mm_budget_usdc,
+        hedge_budget_usdc=settings.trading.hedge_budget_usdc,
     )
     arb_cfg = ArbConfig(
         min_net_edge=settings.trading.min_net_edge,

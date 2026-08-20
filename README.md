@@ -1659,13 +1659,13 @@ Leg 2 fills roughly 55–65% of the time in thin prediction markets. Each incomp
 As markets approach 0% or 100%, sophisticated traders know the answer. The 3-day cutoff suppresses quoting but the final days can still accumulate losses. Consider `min_days_to_resolution=7` for extra safety.
 
 **3. Latency**
-The 2-second arb expiry window requires < 500ms total round-trip. On a home internet connection this may be marginal. A VPS in AWS `us-east-1` gives consistent < 80ms to both exchanges and captures 30–50% more arb opportunities.
+The 3-second arb expiry window requires < 500ms total round-trip. On a home internet connection this may be marginal. A VPS in AWS `us-east-1` gives consistent < 80ms to both exchanges and captures 30–50% more arb opportunities.
 
 **4. Capital stranding**
 USDC on Polygon (Polymarket) and BNB Chain (Opinion) cannot move between chains in real time. If arb systematically favours one direction, capital accumulates on one chain and runs out on the other. Check balances weekly and bridge manually via cBridge when one side imbalances beyond 2:1.
 
 **5. Exchange clients** (`execution/clients/`)
-These are the only unimplemented files. Complete implementations are provided in §11.
+These clients are implemented (HMAC + EIP-712 auth in `execution/clients/polymarket.py` and `execution/clients/opinion.py`, plus a `paper.py` simulator). The code shown in §11 is an ILLUSTRATIVE reference for the auth/signing model; the real, complete implementations live in `execution/clients/polymarket.py` and `execution/clients/opinion.py`.
 
 ---
 

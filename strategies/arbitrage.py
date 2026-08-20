@@ -21,7 +21,7 @@ IMPACT_FACTOR: float = 0.018  # sqrt-impact; calibrated to thin prediction marke
 OFI_ADVERSE_THRESHOLD: float = 0.25  # OFI above this → adversity premium
 OFI_ADVERSE_MULT: float = 1.60  # impact multiplier when OFI adverse
 MIN_DEPTH_USDC: float = 10.0  # minimum depth for reliable cost estimate
-FILL_CERTAINTY: float = 0.50  # prediction market books are thinner than displayed
+FILL_CERTAINTY: float = 0.65  # prediction market books are thinner than displayed
 
 ARB_EXPIRY_MS: int = 3_000  # 3-second deadline for both legs (accounts for cross-venue latency)
 
@@ -63,11 +63,13 @@ def estimate_taker_cost(
     fee_usdc = size_usdc * taker_fee_bps / 10_000
 
     spread = max(0.0, ask_price - bid_price)
-    safe_ask = max(0.01, ask_price)
-    spread_usdc = size_usdc * (spread / 2) / safe_ask
+    # Half-spread crossing is already reflected in `gross` (which prices at the ask),
+    # so it is NOT charged again here. (Previously it was double-subtracted.)
+    spread_usdc = 0.0
 
     safe_depth = max(MIN_DEPTH_USDC, depth_usdc)
     impact_frac = IMPACT_FACTOR * math.sqrt(size_usdc / safe_depth)
+    # OFI adversity already scales impact here; no second penalty elsewhere.
     if abs(ofi) > OFI_ADVERSE_THRESHOLD:
         impact_frac *= OFI_ADVERSE_MULT
     impact_usdc = size_usdc * impact_frac
@@ -88,7 +90,7 @@ class ArbConfig:
     min_fill_ratio: float = 0.80
     max_order_usdc: float = 200.0
     min_order_usdc: float = 5.0
-    max_signal_age_ms: int = 1000  # 1 second — accounts for WS latency + pipeline stages
+    max_signal_age_ms: int = 300  # 300ms — stale cross-venue prices are unsafe for arb
     arb_expiry_ms: int = ARB_EXPIRY_MS
     fees: Optional[Dict[Platform, int]] = None  # per-platform fee in bps
     min_days_to_resolution: float = 0.0
@@ -161,10 +163,8 @@ class ArbitrageStrategy:
         return fees.get(platform, 0)
 
     def _adjust_for_ofi(self, raw_edge: float, ofi_a: float, ofi_b: float) -> float:
-        ofi_net = ofi_a - ofi_b
-        if abs(ofi_net) > self._cfg.ofi_adverse_threshold:
-            penalty = 1 + (abs(ofi_net) - self._cfg.ofi_adverse_threshold) * self._cfg.ofi_adverse_mult
-            return raw_edge / penalty
+        # OFI adversity is already applied as a 1.6x impact multiplier inside
+        # estimate_taker_cost (per README §23). No additional penalty here.
         return raw_edge
 
     def _dynamic_min_edge(self, vol_regime: Optional[str]) -> float:
@@ -240,26 +240,39 @@ class ArbitrageStrategy:
             max_order_usdc = self._cfg.max_order_usdc
             if fv.days_to_resolution is not None and fv.days_to_resolution < 1.0:
                 max_order_usdc *= 0.5
-            fillable1 = min(max_order_usdc, l1_depth * self._cfg.fill_certainty)
-            fillable2 = min(max_order_usdc, l2_depth * self._cfg.fill_certainty)
-            raw_size = min(fillable1, fillable2)
 
-            if raw_size < self._cfg.min_order_usdc:
+            # Guard against degenerate/zero prices (would cause div-by-zero below).
+            if l1_ask <= 0 or l2_ask <= 0:
+                return _pair_reject("non_positive_quote", direction=direction)
+            # Equal-token sizing: buy N YES (leg1) + N NO (leg2). Because both
+            # legs buy the SAME number of tokens, the position is delta-neutral
+            # (net delta = 0) regardless of fill ratios, and at resolution
+            # exactly one leg pays $1 per token -> a true self-hedging lock.
+            # N is constrained by per-leg order size and fillable depth.
+            max_tokens1 = min(max_order_usdc / l1_ask, l1_depth * self._cfg.fill_certainty / l1_ask)
+            max_tokens2 = min(max_order_usdc / l2_ask, l2_depth * self._cfg.fill_certainty / l2_ask)
+            n_tokens = min(max_tokens1, max_tokens2)
+            size1 = n_tokens * l1_ask
+            size2 = n_tokens * l2_ask
+            total_notional = size1 + size2
+
+            min_notional = self._cfg.min_order_usdc
+            if n_tokens <= 0 or total_notional < min_notional:
                 self.rejected_depth += 1
                 if best is None or not best.accepted:
                     best = _pair_reject(
-                        f"fillable=${raw_size:.2f}<min=${self._cfg.min_order_usdc:.2f} (d1={l1_depth:.0f} d2={l2_depth:.0f})",
-                        direction=direction, raw_size_usdc=raw_size,
+                        f"fillable=${total_notional:.2f}<min=${min_notional:.2f} (d1={l1_depth:.0f} d2={l2_depth:.0f})",
+                        direction=direction, raw_size_usdc=total_notional,
                     )
                 continue
 
             l1_fee_bps = self._fee_bps(l1_plat)
             l2_fee_bps = self._fee_bps(l2_plat)
-            c1 = estimate_taker_cost(raw_size, l1_ask, l1_bid, l1_depth, l1_fee_bps, l1_ofi)
-            c2 = estimate_taker_cost(raw_size, l2_ask, l2_bid, l2_depth, l2_fee_bps, l2_ofi)
-            c1_frac = c1.as_fraction(raw_size)
-            c2_frac = c2.as_fraction(raw_size)
-            net_edge = gross - c1_frac - c2_frac
+            c1 = estimate_taker_cost(size1, l1_ask, l1_bid, l1_depth, l1_fee_bps, l1_ofi)
+            c2 = estimate_taker_cost(size2, l2_ask, l2_bid, l2_depth, l2_fee_bps, l2_ofi)
+            total_cost = c1.total + c2.total
+            # net_edge is per-token-pair ($1 payoff): gross - cost_per_pair.
+            net_edge = gross - (total_cost / n_tokens if n_tokens > 0 else 0.0)
             net_edge = self._adjust_for_ofi(net_edge, l1_ofi, l2_ofi)
 
             min_net_edge = self._dynamic_min_edge(getattr(fv, "vol_regime", None))
@@ -274,23 +287,32 @@ class ArbitrageStrategy:
             if net_edge < min_net_edge:
                 if best is None or (not best.accepted and (best.net_edge is None or net_edge > best.net_edge)):
                     best = _pair_reject(
-                        f"net_edge={net_edge:.4f}<min={min_net_edge:.4f} (gross={gross:.4f} c1={c1_frac:.4f} c2={c2_frac:.4f})",
-                        direction=direction, leg1_cost_frac=c1_frac, leg2_cost_frac=c2_frac,
-                        net_edge=net_edge, raw_size_usdc=raw_size,
+                        f"net_edge={net_edge:.4f}<min={min_net_edge:.4f} (gross={gross:.4f} cost_pair={total_cost / n_tokens if n_tokens > 0 else 0:.4f})",
+                        direction=direction,
+                        leg1_cost_frac=(c1.total / size1 if size1 > 0 else 0.0),
+                        leg2_cost_frac=(c2.total / size2 if size2 > 0 else 0.0),
+                        net_edge=net_edge, raw_size_usdc=total_notional,
                     )
                 continue
 
             edge_buffer = net_edge - min_net_edge
-            final_size = raw_size
+            final_notional = total_notional
             if edge_buffer < 0.008:
-                final_size = max(self._cfg.min_order_usdc, raw_size * (0.5 + (edge_buffer / 0.008) * 0.5))
+                final_notional = max(
+                    self._cfg.min_order_usdc,
+                    total_notional * (0.5 + (edge_buffer / 0.008) * 0.5),
+                )
+            # Preserve equal-token ratio while scaling total notional.
+            scale = final_notional / total_notional if total_notional > 0 else 1.0
+            final_size1 = size1 * scale
+            final_size2 = size2 * scale
 
             group_id = str(uuid.uuid4())
             expiry_ms = now + self._cfg.arb_expiry_ms
             try:
                 leg1 = OrderProposal(
                     proposal_id=str(uuid.uuid4()), market_id=fv.market_id, platform=l1_plat,
-                    side=l1_side, size_usdc=round(final_size, 2),
+                    side=l1_side, size_usdc=round(final_size1, 2),
                     limit_price=round(max(0.001, min(0.999, l1_ask)), 4),
                     order_type=OrderType.LIMIT, strategy_id=StrategyId.ARB,
                     leg_group_id=group_id, leg_number=ArbLeg.LEG_1,
@@ -298,7 +320,7 @@ class ArbitrageStrategy:
                 )
                 leg2 = OrderProposal(
                     proposal_id=str(uuid.uuid4()), market_id=fv.market_id, platform=l2_plat,
-                    side=l2_side, size_usdc=round(final_size, 2),
+                    side=l2_side, size_usdc=round(final_size2, 2),
                     limit_price=round(max(0.001, min(0.999, l2_ask)), 4),
                     order_type=OrderType.LIMIT, strategy_id=StrategyId.ARB,
                     leg_group_id=group_id, leg_number=ArbLeg.LEG_2,
@@ -317,8 +339,9 @@ class ArbitrageStrategy:
                     market_id=fv.market_id, evaluated_at=now, signal_age_ms=signal_age_ms,
                     arb_signal=fv.arb_signal, accepted=True, rejection_reason=None,
                     direction=direction, pair=pair_label,
-                    leg1_cost_frac=c1_frac, leg2_cost_frac=c2_frac, net_edge=net_edge,
-                    raw_size_usdc=raw_size, final_size_usdc=final_size,
+                    leg1_cost_frac=(c1.total / size1 if size1 > 0 else 0.0),
+                    leg2_cost_frac=(c2.total / size2 if size2 > 0 else 0.0),
+                    net_edge=net_edge, raw_size_usdc=total_notional, final_size_usdc=final_notional,
                     leg1_proposal=leg1, leg2_proposal=leg2,
                 )
                 best = result

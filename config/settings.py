@@ -9,8 +9,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:  # python-dotenv is optional but recommended for local runs
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    load_dotenv = None  # type: ignore[assignment]
+
 REQUIRED_REGISTRY_KEYS: set[str] = {"polymarket", "opinion", "question"}
-OPTIONAL_REGISTRY_KEYS: set[str] = {"pair_score", "polymarket_question", "opinion_question"}
+OPTIONAL_REGISTRY_KEYS: set[str] = {
+    "pair_score",
+    "polymarket_question",
+    "opinion_question",
+    "pm_yes_token",
+    "pm_no_token",
+    "op_yes_token",
+    "op_no_token",
+}
 ALL_REGISTRY_KEYS: set[str] = REQUIRED_REGISTRY_KEYS | OPTIONAL_REGISTRY_KEYS
 
 
@@ -162,6 +175,7 @@ class TradingConfig:
     enable_hedge: bool = field(default_factory=lambda: _eb("ENABLE_HEDGE", True))
     arb_budget_usdc: float = field(default_factory=lambda: _ef("ARB_BUDGET_USDC", 2_000.0))
     mm_budget_usdc: float = field(default_factory=lambda: _ef("MM_BUDGET_USDC", 3_000.0))
+    hedge_budget_usdc: float = field(default_factory=lambda: _ef("HEDGE_BUDGET_USDC", 500.0))
     kill_switch_token: str = field(
         default_factory=lambda: _secret("KILL_SWITCH_TOKEN", "KILL_SWITCH_TOKEN_FILE", "CHANGE-ME")
     )
@@ -265,6 +279,18 @@ class Settings:
                 mapping = self.trading.market_registry.get(market_id)
                 if not mapping:
                     errors.append(f"MARKET_REGISTRY_JSON missing mapping for logical market {market_id}")
+                    continue
+                if mode == "live":
+                    if not mapping.get("pm_yes_token") or not mapping.get("pm_no_token"):
+                        errors.append(
+                            f"MARKET_REGISTRY_JSON market {market_id} missing pm_yes_token/pm_no_token "
+                            f"(required for live Polymarket order routing)"
+                        )
+                    if not mapping.get("op_yes_token") or not mapping.get("op_no_token"):
+                        errors.append(
+                            f"MARKET_REGISTRY_JSON market {market_id} missing op_yes_token/op_no_token "
+                            f"(required for live Opinion order routing)"
+                        )
 
         if self.trading.initial_cash_usdc <= 0:
             errors.append(f"INITIAL_CASH_USDC must be > 0 (current: {self.trading.initial_cash_usdc})")
@@ -324,7 +350,7 @@ class Settings:
                 )
 
         # 2. Polymarket Keys
-        if mode == "live" and self.trading.enable_trading:
+        if mode == "live":
             if not self.polymarket.api_key:
                 errors.append("PM_API_KEY is missing")
             if not self.polymarket.api_secret:
@@ -372,6 +398,11 @@ _settings: Optional[Settings] = None
 def get_settings() -> Settings:
     global _settings
     if _settings is None:
+        if load_dotenv is not None:
+            try:
+                load_dotenv()
+            except Exception:
+                pass
         s = Settings()
         markets_env = os.environ.get("MARKETS", "")
         if markets_env:

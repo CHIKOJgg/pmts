@@ -5,7 +5,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_ai_ipo_2026",
     "polymarket_question": "AI IPO 2026",
-    "question": "AI IPO 2026"
+    "question": "AI IPO 2026",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "BTC-ETF-APPROVAL": {
     "opinion": "op_btc_etf_approval",
@@ -13,7 +17,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_btc_etf_approval",
     "polymarket_question": "BTC ETF APPROVAL",
-    "question": "BTC ETF APPROVAL"
+    "question": "BTC ETF APPROVAL",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "BTC-Q4": {
     "opinion": "op_btc_q4",
@@ -21,7 +29,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_btc_q4",
     "polymarket_question": "BTC Q4",
-    "question": "BTC Q4"
+    "question": "BTC Q4",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "CRYPTO-2026-1": {
     "opinion": "op_crypto_2026_1",
@@ -29,7 +41,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_crypto_2026_1",
     "polymarket_question": "CRYPTO 2026 1",
-    "question": "CRYPTO 2026 1"
+    "question": "CRYPTO 2026 1",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "CRYPTO-2026-2": {
     "opinion": "op_crypto_2026_2",
@@ -37,7 +53,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_crypto_2026_2",
     "polymarket_question": "CRYPTO 2026 2",
-    "question": "CRYPTO 2026 2"
+    "question": "CRYPTO 2026 2",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "ETH-ETF-FLOW": {
     "opinion": "op_eth_etf_flow",
@@ -45,7 +65,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_eth_etf_flow",
     "polymarket_question": "ETH ETF FLOW",
-    "question": "ETH ETF FLOW"
+    "question": "ETH ETF FLOW",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "ETH-Q1": {
     "opinion": "op_eth_q1",
@@ -53,7 +77,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_eth_q1",
     "polymarket_question": "ETH Q1",
-    "question": "ETH Q1"
+    "question": "ETH Q1",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "EU-CPI-2026": {
     "opinion": "op_eu_cpi_2026",
@@ -61,7 +89,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_eu_cpi_2026",
     "polymarket_question": "EU CPI 2026",
-    "question": "EU CPI 2026"
+    "question": "EU CPI 2026",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "FED-CUT-SEP": {
     "opinion": "op_fed_cut_sep",
@@ -69,7 +101,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_fed_cut_sep",
     "polymarket_question": "FED CUT SEP",
-    "question": "FED CUT SEP"
+    "question": "FED CUT SEP",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "GOLD-2500": {
     "opinion": "op_gold_2500",
@@ -77,7 +113,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_gold_2500",
     "polymarket_question": "GOLD 2500",
-    "question": "GOLD 2500"
+    "question": "GOLD 2500",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "MSTR-2026": {
     "opinion": "op_mstr_2026",
@@ -85,7 +125,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_mstr_2026",
     "polymarket_question": "MSTR 2026",
-    "question": "MSTR 2026"
+    "question": "MSTR 2026",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "NASDAQ-2026": {
     "opinion": "op_nasdaq_2026",
@@ -93,7 +137,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_nasdaq_2026",
     "polymarket_question": "NASDAQ 2026",
-    "question": "NASDAQ 2026"
+    "question": "NASDAQ 2026",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "NVDA-2026": {
     "opinion": "op_nvda_2026",
@@ -101,7 +149,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_nvda_2026",
     "polymarket_question": "NVDA 2026",
-    "question": "NVDA 2026"
+    "question": "NVDA 2026",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "OIL-120": {
     "opinion": "op_oil_120",
@@ -109,7 +161,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_oil_120",
     "polymarket_question": "OIL 120",
-    "question": "OIL 120"
+    "question": "OIL 120",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "POLITICS-2026-1": {
     "opinion": "op_politics_2026_1",
@@ -117,7 +173,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_politics_2026_1",
     "polymarket_question": "POLITICS 2026 1",
-    "question": "POLITICS 2026 1"
+    "question": "POLITICS 2026 1",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "POLITICS-2026-2": {
     "opinion": "op_politics_2026_2",
@@ -125,7 +185,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_politics_2026_2",
     "polymarket_question": "POLITICS 2026 2",
-    "question": "POLITICS 2026 2"
+    "question": "POLITICS 2026 2",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "SOL-Q2": {
     "opinion": "op_sol_q2",
@@ -133,7 +197,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_sol_q2",
     "polymarket_question": "SOL Q2",
-    "question": "SOL Q2"
+    "question": "SOL Q2",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "SP500-YEAR-END": {
     "opinion": "op_sp500_year_end",
@@ -141,7 +209,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_sp500_year_end",
     "polymarket_question": "SP500 YEAR END",
-    "question": "SP500 YEAR END"
+    "question": "SP500 YEAR END",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "SPORTS-2026-1": {
     "opinion": "op_sports_2026_1",
@@ -149,7 +221,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_sports_2026_1",
     "polymarket_question": "SPORTS 2026 1",
-    "question": "SPORTS 2026 1"
+    "question": "SPORTS 2026 1",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "SPORTS-2026-2": {
     "opinion": "op_sports_2026_2",
@@ -157,7 +233,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_sports_2026_2",
     "polymarket_question": "SPORTS 2026 2",
-    "question": "SPORTS 2026 2"
+    "question": "SPORTS 2026 2",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "TSLA-2026": {
     "opinion": "op_tsla_2026",
@@ -165,7 +245,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_tsla_2026",
     "polymarket_question": "TSLA 2026",
-    "question": "TSLA 2026"
+    "question": "TSLA 2026",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "US-RECESSION-2026": {
     "opinion": "op_us_recession_2026",
@@ -173,7 +257,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_us_recession_2026",
     "polymarket_question": "US RECESSION 2026",
-    "question": "US RECESSION 2026"
+    "question": "US RECESSION 2026",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "WORLD-2026-1": {
     "opinion": "op_world_2026_1",
@@ -181,7 +269,11 @@
     "pair_score": "1.000",
     "polymarket": "pm_world_2026_1",
     "polymarket_question": "WORLD 2026 1",
-    "question": "WORLD 2026 1"
+    "question": "WORLD 2026 1",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   },
   "WORLD-2026-2": {
     "opinion": "op_world_2026_2",
@@ -189,6 +281,10 @@
     "pair_score": "1.000",
     "polymarket": "pm_world_2026_2",
     "polymarket_question": "WORLD 2026 2",
-    "question": "WORLD 2026 2"
+    "question": "WORLD 2026 2",
+    "pm_yes_token": "",
+    "pm_no_token": "",
+    "op_yes_token": "",
+    "op_no_token": ""
   }
 }

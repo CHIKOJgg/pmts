@@ -70,22 +70,36 @@ class TradeReporter:
         positions: List[Any],
         output_format: str = "csv",
         filename: Optional[str] = None,
+        mark_prices: Optional[Dict[str, Any]] = None,
     ) -> str:
         import time
         timestamp = int(time.time() * 1000)
-        snapshots = [
-            PositionSnapshot(
-                timestamp=timestamp,
-                market_id=p.market_id,
-                platform=p.platform.value,
-                yes_qty=p.yes_qty,
-                no_qty=p.no_qty,
-                avg_cost_yes=p.avg_cost_yes,
-                avg_cost_no=p.avg_cost_no,
-                unrealized_pnl=0.0,
+        snapshots = []
+        for p in positions:
+            # Unrealized P&L = Σ (mark_price - avg_cost) * qty across YES/NO legs.
+            # mark_prices maps market_id -> (yes_mid, no_mid); if absent we cannot
+            # mark the position and report 0.0 rather than a fabricated value.
+            unrealized = 0.0
+            if mark_prices is not None:
+                price = mark_prices.get(p.market_id)
+                if price is not None:
+                    yes_mid, no_mid = price
+                    if p.avg_cost_yes is not None:
+                        unrealized += p.yes_qty * (yes_mid - p.avg_cost_yes)
+                    if p.avg_cost_no is not None:
+                        unrealized += p.no_qty * (no_mid - p.avg_cost_no)
+            snapshots.append(
+                PositionSnapshot(
+                    timestamp=timestamp,
+                    market_id=p.market_id,
+                    platform=p.platform.value,
+                    yes_qty=p.yes_qty,
+                    no_qty=p.no_qty,
+                    avg_cost_yes=p.avg_cost_yes if p.avg_cost_yes is not None else 0.0,
+                    avg_cost_no=p.avg_cost_no if p.avg_cost_no is not None else 0.0,
+                    unrealized_pnl=unrealized,
+                )
             )
-            for p in positions
-        ]
 
         if output_format == "csv":
             return self._write_position_csv(snapshots, filename or "position_report.csv")

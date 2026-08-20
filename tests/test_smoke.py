@@ -115,9 +115,16 @@ def test_backtest_runs_and_trades():
     output = result.stdout + result.stderr
 
     # Must have approved proposals (the engine is wired end-to-end)
-    assert "approved" in output, "No proposals approved"
-    # Must have fills
-    assert "fill" in output.lower() or "filled" in output.lower(), "No fills occurred"
+    approved_match = re.search(r"(\d+)\s+approved", output)
+    assert approved_match is not None, "No proposals approved"
+    assert int(approved_match.group(1)) > 0, "Zero proposals approved"
+
+    # Must have actual fills. Parse the "Fills:" summary line for a numeric count
+    # rather than matching the literal word "fill" (which appears even at 0 fills).
+    fills_match = re.search(r"Fills:\s+(\d+)\s+full\s+\|\s+(\d+)\s+partial", output)
+    assert fills_match is not None, "No 'Fills:' summary line in backtest output"
+    total_fills = int(fills_match.group(1)) + int(fills_match.group(2))
+    assert total_fills > 0, f"Backtest produced zero fills (full={fills_match.group(1)}, partial={fills_match.group(2)})"
 
     # P&L must be present and finite
     pnl_match = re.search(r"P\&L:\s*(\$[+-]?\d+\.\d+)\s+\(([+-]\d+\.\d+)%\)", output)
@@ -295,21 +302,24 @@ def test_risk_engine_latency():
 
 def test_config_validation_coverage():
     """
-    Configuration must be validated before startup.
-
-    This catches configuration bugs that would cause runtime errors.
+    Settings.validate() must run cleanly on a valid config and raise ValueError
+    on clearly invalid input (e.g. drawdown_warn >= drawdown_kill).
     """
-    from config.settings import get_settings
+    from config.settings import Settings
 
-    settings = get_settings()
+    settings = Settings()
 
-    # Verify multiple validation checks exist
-    validation_methods = [
-        "validate",
-    ]
+    # A valid config must not raise.
+    settings.validate("backtest")
 
-    for method in validation_methods:
-        assert hasattr(settings, method), f"Missing validation method: {method}"
+    # Clearly invalid input must raise: drawdown_warn >= drawdown_kill is illegal.
+    settings.trading.drawdown_warn_pct = settings.trading.drawdown_kill_pct
+    try:
+        settings.validate("backtest")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("validate() did not raise on drawdown_warn >= drawdown_kill")
 
 
 def test_backtest_metrics_extraction():

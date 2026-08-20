@@ -152,7 +152,7 @@ class TestDeterminism(unittest.TestCase):
         self.assertEqual(results[0], results[1], f"P&L mismatch: {results[0]} vs {results[1]}")
 
     def test_multiple_seeds_same_behavior(self):
-        """Different seeds with a real edge should all be profitable (valid results)."""
+        """With a real edge (--pm-bias), every run must produce valid, deterministic results."""
         seed_results = []
 
         for seed in [42, 123, 999]:
@@ -171,11 +171,19 @@ class TestDeterminism(unittest.TestCase):
 
             pnl_match = re.search(r"P\&L:\s*(\$[+-]?\d+\.\d+)", output)
             self.assertIsNotNone(pnl_match, f"P&L not found for seed {seed}")
-            seed_results.append(float(pnl_match.group(1).replace("$", "")))
+            pnl = float(pnl_match.group(1).replace("$", ""))
+            self.assertTrue(math.isfinite(pnl), f"Non-finite P&L for seed {seed}: ${pnl}")
 
-        # All seeds must produce a finite, valid P&L (sign not asserted — see note above)
-        for pnl in seed_results:
-            self.assertTrue(math.isfinite(pnl), f"Backtest with seed produced non-finite P&L: ${pnl}")
+            approved_match = re.search(r"(\d+)\s+approved", output)
+            self.assertIsNotNone(approved_match, f"No approved proposals for seed {seed}")
+            approved = int(approved_match.group(1))
+            self.assertGreater(approved, 0, f"Seed {seed} produced no approved trades with a real edge")
+
+            seed_results.append((round(pnl, 4), approved))
+
+        # Same behavior: identical backtest runs must yield identical results.
+        self.assertEqual(seed_results[0], seed_results[1])
+        self.assertEqual(seed_results[1], seed_results[2])
 
 
 # -- Kill Switch Scenario Tests --
@@ -185,28 +193,53 @@ class TestKillSwitchScenarios(unittest.TestCase):
     """Test kill switch triggers correctly in various scenarios."""
 
     def test_drawdown_warning_at_15_percent(self):
-        """Kill switch must log warning when drawdown reaches 15%."""
-        # This is a mock test - in production, you'd set up a scenario
-        # that causes exactly 15% drawdown and verify logging
-
+        """At 15% drawdown the engine warns but must NOT trip the kill switch."""
+        from execution.models import OrderProposal
         from portfolio.manager import PortfolioManager
+        from risk.engine import RiskEngine
+        from risk.kill_switch import KillSwitch
+        from risk.limits import DEFAULT_LIMITS
+        from src.enums import ArbLeg, OrderType, Platform, Side, StrategyId
 
         def price_source(m, p):
             return (0.50, 0.50)
 
         pm = PortfolioManager(10_000.0, price_source)
+        # Peak equity stays $10,000; push cash to $8,500 => 15% drawdown.
+        pm._cash_usdc = 8_500.0
 
-        # Simulate drawdown scenario
-        # Initial equity $10,000, 15% drawdown = $8,500 equity
-        pm._equity = 8_500.0
+        ks = KillSwitch("TestToken123!@#$")
+        engine = RiskEngine(portfolio=pm, kill_switch=ks, limits=DEFAULT_LIMITS)
 
-        # Check warning is logged (would need pytest caplog fixture in real test)
-        # For now, just verify kill switch can compute drawdown correctly
-        from risk.engine import _drawdown
+        proposal = OrderProposal(
+            proposal_id="dd-warn-1",
+            market_id="TEST-1",
+            platform=Platform.POLYMARKET,
+            side=Side.BUY_YES,
+            size_usdc=100.0,
+            limit_price=0.50,
+            order_type=OrderType.LIMIT,
+            strategy_id=StrategyId.ARB,
+            expiry_ms=int(time.time() * 1000) + 3_600_000,
+            source_ts=int(time.time() * 1000),
+            leg_group_id="grp",
+            leg_number=ArbLeg.LEG_1,
+            min_fill_ratio=0.5,
+        )
 
-        dd = _drawdown(peak=10_000.0, current=8_500.0)
+        decision = engine.evaluate(proposal)
 
-        self.assertAlmostEqual(dd, 0.15, places=2)
+        self.assertFalse(ks.is_active, "Kill switch must NOT activate at 15% drawdown")
+        self.assertAlmostEqual(decision.mtm_drawdown_pct, 0.15, places=2)
+        self.assertNotEqual(
+            decision.reject_reason, "drawdown_limit",
+            "15% drawdown should warn, not reject/kill",
+        )
+
+        # At >=20% drawdown the kill switch MUST trip.
+        pm._cash_usdc = 8_000.0
+        engine.evaluate(proposal)
+        self.assertTrue(ks.is_active, "Kill switch must activate at >=20% drawdown")
 
     def test_drawdown_kill_at_20_percent(self):
         """Kill switch must trigger at 20% drawdown."""
@@ -222,37 +255,25 @@ class TestKillSwitchScenarios(unittest.TestCase):
         self.assertAlmostEqual(record.mtm_drawdown, 0.25, places=2)
 
     def test_kill_switch_persists_state(self):
-        """Kill switch state must persist across restarts via SQLite."""
-        import sqlite3
+        """Kill switch state must persist across restarts via the SQLite store."""
+        from portfolio.storage import SqlitePortfolioStore
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test_state.db")
+            db_path = os.path.join(tmpdir, "state.db")
+            store = SqlitePortfolioStore(db_path)
 
-            # Simulate saving kill switch state
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS kill_switch_state (
-                    active INTEGER,
-                    last_activation_ts INTEGER,
-                    reason TEXT
-                )
-            """)
-            cursor.execute(
-                "INSERT OR REPLACE INTO kill_switch_state VALUES (?, ?, ?)",
-                (1, int(time.time() * 1000), "test_trigger"),
-            )
-            conn.commit()
-            conn.close()
+            # Initially inactive
+            self.assertFalse(store.load_kill_switch())
 
-            # Verify state persisted
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT active FROM kill_switch_state")
-            result = cursor.fetchone()[0]
-            conn.close()
+            # Persist an activation and verify it survives a reload
+            store.save_kill_switch(True)
+            self.assertTrue(store.load_kill_switch(), "Kill switch active state did not persist")
 
-            self.assertEqual(result, 1, "Kill switch state did not persist")
+            # Persist a reset and verify it too
+            store.save_kill_switch(False)
+            self.assertFalse(store.load_kill_switch(), "Kill switch reset state did not persist")
+
+            store.close()
 
     def test_kill_switch_reset_requires_token(self):
         """Kill switch reset must require correct confirmation token."""

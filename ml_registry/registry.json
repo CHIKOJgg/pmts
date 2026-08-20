@@ -5,8 +5,8 @@
       "version_id": "v1",
       "created_at": 1778913699511,
       "metrics": {
-        "accuracy": 1.0,
-        "f1": 1.0
+        "accuracy": null,
+        "f1": null
       },
       "config": {},
       "feature_names": [
@@ -14,7 +14,8 @@
         "vol",
         "spread"
       ],
-      "status": "production",
+      "status": "experimental",
+      "note": "Not loaded by the running system; ml/ package is currently orphaned.",
       "description": ""
     }
   }

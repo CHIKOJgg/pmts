@@ -18,7 +18,7 @@ from execution.engine import (
 from execution.models import OrderSubmission
 from execution.rate_limiter import VenueRateLimiter
 from infrastructure.retry import async_retry
-from src.enums import Platform
+from src.enums import Platform, Side
 from src.errors import ExchangeRejected
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class PolymarketClient(BaseExchangeClient):
         host: Optional[str] = None,
         rate_limit_per_s: int = 10,
         sandbox: bool = False,
-        market_id_map: Optional[Dict[str, str]] = None,
+        market_id_map: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not api_key or not api_key.strip():
             raise ValueError("api_key must not be empty")
@@ -91,6 +91,25 @@ class PolymarketClient(BaseExchangeClient):
         logger.info(
             "PolymarketClient initialized: host=%s, address=%s, sandbox=%s", self._host, self._address, self._sandbox
         )
+
+    def _resolve_token_id(self, submission: OrderSubmission) -> str:
+        """Pick the correct CLOB token id for the order side (YES vs NO).
+
+        market_id_map may map a logical market id to either:
+          - a dict {"YES": <id>, "NO": <id>} (preferred), or
+          - a single token-id string (legacy / YES-only fallback).
+        Without this, every NO order would be routed to the YES token.
+        """
+        entry = self._market_id_map.get(submission.market_id)
+        if isinstance(entry, dict):
+            yes_id = entry.get("YES") or entry.get("yes")
+            no_id = entry.get("NO") or entry.get("no")
+            if submission.side in (Side.BUY_YES, Side.SELL_YES):
+                return yes_id or no_id or submission.market_id
+            return no_id or yes_id or submission.market_id
+        if entry:
+            return entry
+        return submission.market_id
 
     def _get_auth_headers(self, method: str, path: str, body: str = "") -> Dict[str, str]:
         """Generate HMAC-SHA256 headers for Polymarket L2 Auth."""
@@ -154,14 +173,30 @@ class PolymarketClient(BaseExchangeClient):
     ) -> PlacedOrderResponse:
         """Submit a limit order to Polymarket CLOB."""
         await self._limiter.acquire()
-        tokens = round(submission.token_quantity)
-        usdc_amount = round(submission.size_usdc * 1_000_000)
 
-        if "BUY" in submission.side.value:
+        # Resolve the correct token (YES vs NO) for this order side.
+        token_id = self._resolve_token_id(submission)
+
+        # Use the (possibly urgency-crossed) effective price to size the order.
+        price = effective_price if effective_price and 0.001 <= effective_price <= 0.999 else submission.limit_price
+        if not price or price <= 0:
+            price = submission.limit_price
+        size_usdc = max(0.0, submission.size_usdc)
+        token_qty = (
+            round((size_usdc / price) * 1_000_000) if price > 0 else round(submission.token_quantity * 1_000_000)
+        )
+
+        # Polymarket CLOB sizing convention:
+        #   BUY  -> makerAmount = USDC offered,  takerAmount = tokens wanted
+        #           (price == makerAmount / takerAmount)
+        #   SELL -> makerAmount = tokens offered, takerAmount = USDC wanted
+        #           (price == takerAmount / makerAmount)
+        usdc_amount = round(size_usdc * 1_000_000)
+        if submission.side.is_buy:
             maker_amount = usdc_amount
-            taker_amount = tokens
+            taker_amount = token_qty
         else:
-            maker_amount = tokens
+            maker_amount = token_qty
             taker_amount = usdc_amount
 
         # Use provided nonce for idempotency, fallback to timestamp
@@ -170,7 +205,7 @@ class PolymarketClient(BaseExchangeClient):
         order_params = {
             "maker": self._address,
             "signer": self._address,
-            "tokenId": self._market_id_map.get(submission.market_id, submission.market_id),
+            "tokenId": token_id,
             "makerAmount": str(maker_amount),
             "takerAmount": str(taker_amount),
             "side": "BUY" if submission.side.is_buy else "SELL",
@@ -232,9 +267,9 @@ class PolymarketClient(BaseExchangeClient):
                 raw = await self._read_json_or_text(resp)
 
                 status = raw.get("status", "").lower()
-                is_filled = status == "filled"
-                is_cancelled = status == "canceled"
-                is_live = status == "open" or status == "partial"
+                is_filled = status in ("filled", "matched")
+                is_cancelled = status in ("canceled", "cancelled")
+                is_live = status in ("open", "partial", "live", "resting")
                 remaining = float(raw.get("remainingSize", raw.get("remaining_size", 0.0)) or 0.0)
                 original = raw.get("originalSize", raw.get("size", raw.get("makerAmount")))
                 filled_raw = raw.get("filledSize", raw.get("filledAmount", raw.get("filled_size")))
@@ -246,12 +281,9 @@ class PolymarketClient(BaseExchangeClient):
                     cumulative_filled = 0.0
 
                 price = float(raw.get("averagePrice", raw.get("price", raw.get("limitPrice", 0.0))) or 0.0)
-                raw_side = raw.get("side", "BUY")
-                is_sell = raw_side.upper() == "SELL" if isinstance(raw_side, str) else raw_side == 1
-                if is_sell and price > 0:
-                    cumulative_filled_usdc = cumulative_filled * price
-                else:
-                    cumulative_filled_usdc = cumulative_filled
+                # Polymarket reports sizes in token units; convert to USDC via price.
+                cumulative_filled_usdc = cumulative_filled * price if price > 0 else cumulative_filled
+                remaining_usdc = remaining * price if price > 0 else remaining
 
                 new_fills = self._compute_fill_delta(exchange_order_id, cumulative_filled_usdc, price)
 
@@ -260,7 +292,7 @@ class PolymarketClient(BaseExchangeClient):
                     is_live=is_live,
                     is_cancelled=is_cancelled,
                     is_filled=is_filled,
-                    remaining_usdc=remaining,
+                    remaining_usdc=remaining_usdc,
                     new_fills=new_fills,
                 )
 
@@ -283,13 +315,16 @@ class PolymarketClient(BaseExchangeClient):
 
                 orders = []
                 for o in raw if isinstance(raw, list) else []:
+                    o_price = float(o.get("price", 1.0)) or 1.0
+                    o_orig = float(o.get("originalSize", 0.0))
+                    o_rem = float(o.get("remainingSize", 0.0))
                     orders.append(
                         OpenOrder(
                             exchange_order_id=o.get("orderID", ""),
                             market_id=o.get("tokenId", ""),
                             side=o.get("side", "BUY"),
-                            size_usdc=float(o.get("originalSize", 0.0)),
-                            filled_usdc=float(o.get("originalSize", 0.0)) - float(o.get("remainingSize", 0.0)),
+                            size_usdc=o_orig * o_price,
+                            filled_usdc=max(0.0, o_orig - o_rem) * o_price,
                             limit_price=float(o.get("price", 0.0)),
                             ts=int(time.time() * 1000),
                         )

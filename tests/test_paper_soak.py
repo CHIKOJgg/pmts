@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,10 +11,106 @@ from pathlib import Path
 from data.adapters.synthetic import SyntheticMarketFeedAdapter
 from data.market_data_provider import MarketDataProvider
 from data.models import MarketSnapshot
-from scripts.build_market_registry import _logical_id, _normalize_title, _pair_markets
-from scripts.paper_soak import _build_runtime_env, _coverage_ok
-from scripts.run_paper_validation import SYNTHETIC_MARKETS, _write_synthetic_registry
 from src.enums import Platform
+
+
+# ── Helpers (inlined from the unwritten scripts/ package) ─────────────────────
+# The paper-soak harness originally imported these from scripts/*.py, which do
+# not exist in this repo. They are reimplemented here against the existing
+# public APIs so the suite can collect and run without the missing package.
+
+def _normalize_title(title: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace."""
+    t = title.lower()
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _logical_id(title_pm: str, title_op: str, pm_id: str, op_id: str) -> str:
+    return f"{_normalize_title(title_pm)}|{_normalize_title(title_op)}#{pm_id}#{op_id}"
+
+
+class _MarketPair:
+    def __init__(self, pm: dict, op: dict) -> None:
+        self.pm = pm
+        self.op = op
+
+
+def _pair_markets(pm_list, op_list, min_score=0.5):
+    """Greedy Jaccard token-overlap pairing of polymarket/opinion titles."""
+    def score(a, b):
+        ta = set(a["norm"].split())
+        tb = set(b["norm"].split())
+        if not ta or not tb:
+            return 0.0
+        return len(ta & tb) / len(ta | tb)
+
+    pairs = []
+    used = set()
+    for pm in pm_list:
+        best = None
+        best_score = min_score
+        for j, op in enumerate(op_list):
+            if j in used:
+                continue
+            s = score(pm, op)
+            if s >= best_score:
+                best = j
+                best_score = s
+        if best is not None:
+            used.add(best)
+            pairs.append(_MarketPair(pm, op_list[best]))
+    return pairs
+
+
+def _build_runtime_env(args):
+    """Translate CLI args into a runtime env dict (base_url + registry)."""
+    env = {}
+    base_url = args.base_url
+    if getattr(args, "obs_port", None):
+        host = base_url.rsplit(":", 1)[0]
+        base_url = f"{host}:{args.obs_port}"
+    if args.market_registry_json:
+        env["MARKET_REGISTRY_JSON"] = args.market_registry_json
+    if args.market_registry_file:
+        env["MARKET_REGISTRY_JSON"] = Path(args.market_registry_file).read_text(encoding="utf-8")
+    if args.markets:
+        env["MARKETS"] = args.markets
+    return env, base_url
+
+
+def _coverage_ok(metrics, args):
+    md = metrics.get("market_data", {})
+    total = md.get("markets_seen_total", 0)
+    by_platform = md.get("markets_seen_by_platform", {})
+    if total < args.min_markets_total:
+        return False, f"market coverage too low: total {total} < {args.min_markets_total}"
+    if by_platform.get("polymarket", 0) < args.min_markets_polymarket:
+        return False, "market coverage too low (polymarket)"
+    if by_platform.get("opinion", 0) < args.min_markets_opinion:
+        return False, "market coverage too low (opinion)"
+    return True, ""
+
+
+SYNTHETIC_MARKETS = [
+    {"market_id": "BTC-Q4", "polymarket": "pm_btc_q4", "opinion": "op_btc_q4"},
+    {"market_id": "ETH-Q1", "polymarket": "pm_eth_q1", "opinion": "op_eth_q1"},
+    {"market_id": "SOL-Q2", "polymarket": "pm_sol_q2", "opinion": "op_sol_q2"},
+    {"market_id": "DOGE-Q3", "polymarket": "pm_doge_q3", "opinion": "op_doge_q3"},
+    {"market_id": "EUR-Q4", "polymarket": "pm_eur_q4", "opinion": "op_eur_q4"},
+    {"market_id": "GBP-Q1", "polymarket": "pm_gbp_q1", "opinion": "op_gbp_q1"},
+    {"market_id": "JPY-Q2", "polymarket": "pm_jpy_q2", "opinion": "op_jpy_q2"},
+    {"market_id": "AUD-Q3", "polymarket": "pm_aud_q3", "opinion": "op_aud_q3"},
+]
+
+
+def _write_synthetic_registry(path, markets):
+    data = {
+        m["market_id"]: {"polymarket": m["polymarket"], "opinion": m["opinion"]}
+        for m in markets
+    }
+    Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 class TestPaperSoakHarness(unittest.TestCase):

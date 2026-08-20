@@ -1,6 +1,6 @@
 # FEASIBILITY_REPORT — реальная эксплуатация PMTS
 
-Дата: 2026-08-19. Статус репозитория: pytest 324 passed, mypy strict green (71 файлов),
+Дата: 2026-08-19. Статус репозитория: pytest passing (run `pytest` to see the current test count; the suite must pass before live trading), mypy strict green (71 файлов),
 ruff check green. Бэктест 2000 тиков: P&L −0.77%, Sharpe −280 (см. §4).
 
 ---

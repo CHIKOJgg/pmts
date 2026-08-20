@@ -34,6 +34,7 @@ class StrategyConfig:
     arb_enabled: bool = True
     mm_enabled: bool = True
     hedge_enabled: bool = True
+    hedge_budget_usdc: float = 500.0
     mm_platforms: List[Platform] = field(default_factory=lambda: list(Platform))
 
 
@@ -78,6 +79,7 @@ class StrategyEngine:
         self._clock: Clock = clock
         self._arb_alloc: float = 0.0
         self._mm_alloc: float = 0.0
+        self._hedge_alloc: float = 0.0
         self._market: Dict[str, _MarketState] = {}
         self._callbacks: List[_ProposalCB] = []
 
@@ -133,6 +135,9 @@ class StrategyEngine:
     def notify_mm_terminal(self, size_usdc: float) -> None:
         self._mm_alloc = max(0.0, self._mm_alloc - size_usdc)
 
+    def notify_hedge_terminal(self, size_usdc: float) -> None:
+        self._hedge_alloc = max(0.0, self._hedge_alloc - size_usdc)
+
     def notify_arb_cleared(self, market_id: str, leg_group_id: str) -> None:
         """Call when BOTH legs of an arb group have reached terminal state."""
         st = self._market.get(market_id)
@@ -144,6 +149,7 @@ class StrategyEngine:
         """Clear per-market arb locks, budgets, and cooldown timers after a kill-switch reset."""
         self._arb_alloc = 0.0
         self._mm_alloc = 0.0
+        self._hedge_alloc = 0.0
         for st in self._market.values():
             st.last_arb_ts = 0
             st.last_mm_ts = 0
@@ -171,6 +177,10 @@ class StrategyEngine:
     @property
     def mm_available_budget(self) -> float:
         return max(0.0, self._config.mm_budget_usdc - self._mm_alloc)
+
+    @property
+    def hedge_available_budget(self) -> float:
+        return max(0.0, self._config.hedge_budget_usdc - self._hedge_alloc)
 
     # ── Internal evaluators ───────────────────────────────────────────────────
 
@@ -211,11 +221,13 @@ class StrategyEngine:
             return None
 
         size = result.proposal.size_usdc
-        if size > self.mm_available_budget:
+        # Hedging is risk-reducing and gets its own (small) dedicated budget so it
+        # is never starved by resting MM quotes.
+        if size > self.hedge_available_budget:
             self.suppressed_bud += 1
             return None
 
-        self._mm_alloc += size
+        self._hedge_alloc += size
         st.last_hedge_ts = now
         self.hedge_emitted += 1
         return result.proposal

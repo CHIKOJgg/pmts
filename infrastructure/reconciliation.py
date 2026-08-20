@@ -72,49 +72,128 @@ class OrderReconciler:
                 logger.warning("OrderReconciler loop error: %s", exc)
 
     async def run_once(self) -> dict[str, int]:
-        """Reconcile every engine once. Returns drift counts per venue."""
+        """Reconcile every engine once. Returns drift counts per venue.
+
+        Drift is now *acted* upon, not just logged:
+          - only_local  : a locally-open order that is no longer on the exchange.
+                          Cancel it via the owning engine so we don't keep
+                          tracking phantom fills.
+          - only_remote : an order open on the exchange but untracked locally
+                          (missed fill / phantom local state). Emit a HIGH alert
+                          and, if safe, attempt to cancel it on the exchange to
+                          avoid phantom exposure. Local portfolio state is never
+                          modified blindly.
+        """
         drift: dict[str, int] = {}
         for engine in self._engines:
+            platform = engine._client.platform.value
             try:
-                remote_ids = {
-                    o.exchange_order_id
-                    for o in await engine._client.get_open_orders()
-                    if o.exchange_order_id
-                }
+                remote_orders = await engine._client.get_open_orders()
             except Exception as exc:
                 logger.warning(
                     "Reconciliation fetch failed for %s: %s",
-                    engine._client.platform.value,
+                    platform,
                     exc,
                 )
                 continue
+
+            remote_map = {o.exchange_order_id: o for o in remote_orders if o.exchange_order_id}
+            remote_ids = set(remote_map)
 
             local_ids = engine.get_open_exchange_order_ids()
             only_remote = remote_ids - local_ids
             only_local = local_ids - remote_ids
             total = len(only_remote) + len(only_local)
-            drift[engine._client.platform.value] = total
+            drift[platform] = total
 
-            if total > 0:
+            if total == 0:
+                continue
+
+            # ── Act: cancel stale locally-tracked orders ───────────────────────
+            for ex_id in only_local:
+                proposal_id = engine._exch_to_proposal.get(ex_id)
+                if proposal_id is None:
+                    logger.warning(
+                        "Reconciliation: local order %s on %s has no proposal mapping; skipping cancel",
+                        ex_id,
+                        platform,
+                    )
+                    continue
+                try:
+                    await engine.cancel(proposal_id)
+                    logger.info(
+                        "Reconciliation: cancelled stale local order %s (%s) on %s",
+                        ex_id,
+                        proposal_id,
+                        platform,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Reconciliation: failed to cancel local-only order %s on %s: %s",
+                        ex_id,
+                        platform,
+                        exc,
+                    )
+
+            # ── Act: alert + attempt to cancel phantom remote orders ───────────
+            for ex_id in only_remote:
+                remote_order = remote_map.get(ex_id)
+                market_id = remote_order.market_id if remote_order is not None else ""
+                if market_id:
+                    try:
+                        await engine._client.cancel_order(ex_id, market_id)
+                        logger.info(
+                            "Reconciliation: cancelled phantom remote order %s on %s",
+                            ex_id,
+                            platform,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Reconciliation: failed to cancel remote-only order %s on %s: %s",
+                            ex_id,
+                            platform,
+                            exc,
+                        )
+
                 msg = (
-                    f"Order drift on {engine._client.platform.value}: "
-                    f"{len(only_remote)} open on exchange but untracked locally, "
-                    f"{len(only_local)} tracked locally but not on exchange"
+                    f"Phantom remote order on {platform}: {ex_id} is open on the "
+                    f"exchange but untracked locally (possible missed fill / drift)"
                 )
                 logger.warning(msg)
                 if self._alert_on_drift and self._alert_router:
                     await self._alert_router.send(
                         Alert(
-                            severity=AlertSeverity.WARNING,
-                            title="Order Reconciliation Drift",
+                            severity=AlertSeverity.HIGH,
+                            title="Order Reconciliation: Phantom Remote Order",
                             message=msg,
                             source="OrderReconciler",
                             metadata={
-                                "platform": engine._client.platform.value,
-                                "only_remote": len(only_remote),
-                                "only_local": len(only_local),
+                                "platform": platform,
+                                "exchange_order_id": ex_id,
                             },
                         )
                     )
+
+            # ── Keep the original aggregate drift alert ────────────────────────
+            msg = (
+                f"Order drift on {platform}: "
+                f"{len(only_remote)} open on exchange but untracked locally, "
+                f"{len(only_local)} tracked locally but not on exchange"
+            )
+            logger.warning(msg)
+            if self._alert_on_drift and self._alert_router:
+                await self._alert_router.send(
+                    Alert(
+                        severity=AlertSeverity.WARNING,
+                        title="Order Reconciliation Drift",
+                        message=msg,
+                        source="OrderReconciler",
+                        metadata={
+                            "platform": platform,
+                            "only_remote": len(only_remote),
+                            "only_local": len(only_local),
+                        },
+                    )
+                )
         self.last_drift = drift
         return drift
